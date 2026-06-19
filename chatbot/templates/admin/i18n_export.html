@@ -1,0 +1,148 @@
+{% extends "admin/base_site.html" %} {% load static %} {% block title %}Export
+I18n Translations{% endblock %} {% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:chatbot_i18ntag_changelist' %}">I18n Tags</a>
+  &rsaquo; Export
+</div>
+{% endblock %} {% block content %}
+<div id="content-main" class="export-container">
+  <h1 class="page-title">Export I18n Translations</h1>
+  <p class="subtitle">Select a language to export all translations as JSON.</p>
+
+  <form method="post" class="export-form">
+    {% csrf_token %}
+
+    <div class="form-group">
+      <label for="language">Select Language:</label>
+      <select id="language" name="language" required>
+        <option value="all" selected>All Languages</option>
+        {% for code, name in languages %}
+        <option value="{{ code }}">{{ name }} ({{ code }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn primary">Export</button>
+      <a href="{% url 'admin:chatbot_i18ntag_changelist' %}" class="btn cancel"
+        >Cancel</a
+      >
+    </div>
+  </form>
+</div>
+
+<style>
+  .export-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 30px;
+  }
+
+  .page-title {
+    font-size: 26px;
+    font-weight: 600;
+    color: #222;
+    margin-bottom: 10px;
+  }
+
+  .subtitle {
+    color: #666;
+    font-size: 15px;
+    margin-bottom: 25px;
+  }
+
+  .info-box {
+    background: #e7f3ff;
+    border: 1px solid #b3d7ff;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+
+  .info-box code {
+    background: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+  }
+
+  /* Form styling */
+  .form-group {
+    margin-bottom: 20px;
+  }
+
+  label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #333;
+  }
+
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background-color: #fff;
+    font-size: 15px;
+    transition: border-color 0.2s ease;
+  }
+
+  select:focus {
+    border-color: #0b57d0;
+    outline: none;
+  }
+
+  /* Buttons */
+  .form-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 15px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 500;
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    font-size: 14px;
+  }
+
+  .btn-icon {
+    font-size: 16px;
+  }
+
+  .btn.primary {
+    background: #0b57d0;
+    color: white;
+  }
+
+  .btn.primary:hover {
+    background: #094fc1;
+  }
+
+  .btn.primary:disabled {
+    background: #9fc3eb;
+    cursor: not-allowed;
+  }
+
+  .btn.cancel {
+    background: #f8f8f8;
+    color: #555;
+    border: 1px solid #ccc;
+  }
+
+  .btn.cancel:hover {
+    background: #eee;
+  }
+</style>
+{% endblock %}

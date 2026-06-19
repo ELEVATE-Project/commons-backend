@@ -1,0 +1,20 @@
+<h2>Review Data</h2>
+
+<!-- Pagination Controls Top -->
+{% include 'admin/batch_upload/components/pagination_controls.html' with position='top' %}
+
+<div id="extractedDataContainer" class="data-grid"></div>
+
+<!-- Image Modal -->
+<div id="imageModal" class="image-modal">
+    <span class="close-modal" onclick="closeImageModal()">&times;</span>
+    <img class="image-modal-content" id="modalImage">
+</div>
+
+<!-- Pagination Controls Bottom -->
+{% include 'admin/batch_upload/components/pagination_controls.html' with position='bottom' %}
+
+<div class="button-group">
+    <div></div>
+    <button class="btn btn-primary" id="saveBtn">Save All</button>
+</div>

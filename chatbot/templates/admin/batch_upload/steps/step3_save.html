@@ -1,0 +1,30 @@
+<h2>Save Results</h2>
+
+<div class="summary-grid">
+    <div class="summary-card">
+        <h3>Total Files</h3>
+        <div class="value" id="totalFiles">0</div>
+    </div>
+    <div class="summary-card">
+        <h3>Successful</h3>
+        <div class="value" id="finalSuccessCount">0</div>
+    </div>
+    <div class="summary-card">
+        <h3>Failed</h3>
+        <div class="value" id="failedCount">0</div>
+    </div>
+</div>
+
+<!-- Add retry all button here -->
+<div style="text-align: center; margin: 20px 0;">
+    <button class="btn btn-primary" id="retryAllBtn" style="display: none;" onclick="retryAllFailed()">
+        Retry All Failed Saves
+    </button>
+</div>
+
+<div class="results-list" id="resultsList"></div>
+
+<div class="button-group">
+    <div></div>
+    <a href="{% url 'admin:chatbot_media_changelist' %}" class="btn btn-primary">Exit</a>
+</div>

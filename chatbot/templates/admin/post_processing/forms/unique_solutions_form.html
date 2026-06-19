@@ -1,0 +1,91 @@
+<div class="form-row">
+    <div class="form-group">
+        <label for="max-workers">Max Workers:</label>
+        <input type="number" id="max-workers" name="max_workers" value="4" min="1" max="8" class="form-input">
+        <span class="help-text">How many parallel workers to use for processing.</span>
+    </div>
+
+    <div class="form-group">
+        <label for="batch-size">Batch Size:</label>
+        <input type="number" id="batch-size" name="batch_size" value="100" min="1" max="1000" class="form-input">
+        <span class="help-text">How many solutions to process together in each batch.</span>
+    </div>
+</div>
+
+<div class="form-row">
+    <div class="form-group">
+        <label for="max-iterations">Max Iterations:</label>
+        <input type="number" id="max-iterations" name="max_iterations" value="10" min="1" max="50" class="form-input">
+        <span class="help-text">The system will keep filtering duplicates until this many rounds.</span>
+    </div>
+
+    <div class="form-group">
+        <label for="filter-threshold">Filter Threshold (%):</label>
+        <input type="number" id="filter-threshold" name="filter_threshold" value="10" min="1" max="100" step="0.1" class="form-input">
+        <span class="help-text">Stop processing when filtering is lower than this percentage. Lower percentage means aggressive filtering.</span>
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="solutions-input-file">Upload Input File:</label>
+    <input type="file" id="solutions-input-file" name="input_file" accept=".json" class="form-input file-input">
+    <span class="help-text">JSON file containing the data to process</span>
+    <span id="solutions-file-error" class="error-message hidden">Either input file or date range is required</span>
+</div>
+
+<!-- Visual OR divider -->
+<div class="or-divider">
+    <span>OR</span>
+</div>
+
+<div class="form-group date-range-group">
+    <label>Date Range (DD-MM-YYYY):</label>
+    <div class="date-inputs">
+        <div class="date-field">
+            <label for="solutions-date-from">From:</label>
+            <input type="text" id="solutions-date-from" name="date_from" placeholder="DD-MM-YYYY" class="form-input date-input" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="date-field">
+            <label for="solutions-date-till">Till:</label>
+            <input type="text" id="solutions-date-till" name="date_till" placeholder="DD-MM-YYYY" class="form-input date-input" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+    </div>
+    <span class="help-text">Select a date range to fetch solutions from the database. Both start and end dates are included in the results.</span>
+    <span id="solutions-date-error" class="error-message hidden">Please select a date range or upload a file above.</span>
+</div>
+
+<div class="form-actions">
+    <button type="submit" class="run-button" id="solutions-run-btn">
+        <span class="btn-text">Run</span>
+        <span class="btn-loading hidden">Running...</span>
+    </button>
+    <button type="button" class="run-button hidden" id="solutions-view-status-btn" onclick="checkTaskStatus()">
+        <span class="btn-text">View Status</span>
+        <span class="btn-loading hidden">Checking...</span>
+    </button>
+    <span id="solutions-success-message" class="success-message hidden">✅ Script initiated successfully!</span>
+</div>
+
+<div id="solutions-task-started-message" class="task-started-message hidden">
+    <span id="solutions-task-message-text">Task started!</span>
+</div>
+
+<div id="solutions-result-section" class="result-section hidden">
+    <h3>📊 Processing Results</h3>
+    <div class="result-item">
+        <label>Status:</label>
+        <span id="solutions-result-status"></span>
+    </div>
+    <div class="result-item">
+        <label>Iterations Completed:</label>
+        <span id="solutions-result-iterations"></span>
+    </div>
+    <div class="result-item">
+        <label>Final Count:</label>
+        <span id="solutions-result-final-count"></span>
+    </div>
+    <div class="result-item">
+        <label>Output File:</label>
+        <span id="solutions-result-output-file"></span>
+    </div>
+</div>

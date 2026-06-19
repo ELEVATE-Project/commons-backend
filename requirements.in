@@ -1,0 +1,160 @@
+############################
+# Web / Backend
+############################
+Django
+djangorestframework
+djangorestframework-simplejwt
+channels
+channels-redis
+asgiref
+daphne
+
+fastapi
+uvicorn
+uvloop
+httptools
+watchfiles
+
+celery
+redis
+flower
+
+############################
+# Django Admin / Extensions
+############################
+django-admin-rangefilter
+django-jazzmin
+django-tailwind
+django-extensions
+django-cors-headers
+django-filter
+django-simple-history
+django-crontab
+django-import-export
+django-countries
+django-debug-toolbar
+
+############################
+# Auth / Security
+############################
+auth0-python
+cryptography
+bcrypt
+PyJWT
+
+############################
+# Storage / Cloud
+############################
+boto3
+django-storages
+django-s3-storage
+google-cloud-storage
+google-cloud-texttospeech
+google-cloud-speech
+google-cloud-translate
+google-cloud-aiplatform
+psycopg2-binary
+
+############################
+# AI / LLM Core
+############################
+openai
+instructor
+litellm
+
+############################
+# LangChain ecosystem
+############################
+langchain
+langchain-openai
+langgraph
+
+############################
+# LlamaIndex ecosystem
+############################
+llama-index
+llama-parse
+
+############################
+# Vector DB / Search
+############################
+chromadb
+qdrant-client
+lancedb
+
+############################
+# Evaluation / Observability
+############################
+deepeval
+langfuse
+posthog
+
+############################
+# AI utilities / Providers
+############################
+embedchain
+tiktoken
+sarvamai
+
+############################
+# Data / NLP
+############################
+numpy<2
+pandas
+nltk
+datasets
+huggingface-hub
+
+############################
+# Files / Docs / OCR
+############################
+pypdf
+PyPDF2
+pdfplumber
+pdf2image
+PyMuPDF
+pytesseract
+python-docx
+docx2txt
+openpyxl
+
+############################
+# Media / Image
+############################
+pillow
+pillow-heif
+pydub
+
+############################
+# General utilities
+############################
+requests
+httpx
+orjson
+rich
+tqdm
+tenacity
+python-dotenv
+jsonschema
+jsonpatch
+json-repair
+retrying
+Markdown
+
+############################
+# Dev / Testing
+############################
+pytest
+pytest-xdist
+pytest-repeat
+
+############################
+# Django / Cache / Redis
+############################
+django-redis
+
+############################
+# DRF / Schema utilities
+############################
+coreapi
+coreschema
