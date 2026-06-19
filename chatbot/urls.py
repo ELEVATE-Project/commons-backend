@@ -14,7 +14,7 @@ from chatbot.views.gotenberg_view import generate_pdf_view, generate_pdf_view_v2
 from chatbot.views.kafka_views import sync_user_project_view
 from chatbot.views.location_views import get_location_view, get_ip_location_view
 from chatbot.views.Media.media_views import MediaSearchView
-from chatbot.views.Media.media_api_views import MediaSearchV2View
+from chatbot.views.Media.media_api_views import FetchThemeView, MediaSearchV2View
 from chatbot.views.profile_views import create_profile_views
 from django.urls import path, include
 from chatbot.views import api_views
@@ -112,6 +112,8 @@ urlpatterns = [
          name="project-solution-download-track"),
 
     path("api/search/", MediaSearchView.as_view(), name="media-search"),
+    path("fetch-theme", FetchThemeView.as_view(), name="fetch-theme-no-slash"),
+    path("fetch-theme/", FetchThemeView.as_view(), name="fetch-theme"),
 
     # path('admin/media/batch-upload/', BatchMediaUploadView.as_view(), name='batch_media_upload'),
     path('admin/media/batch-upload/', BatchMediaUploadView.as_view(), name='chatbot_media_batch_upload'),
@@ -142,8 +144,6 @@ urlpatterns = [
     path('google-drive/', google_drive_integration.GoogleDriveIntegrationView.as_view(), name='google_drive_integration'),
     path('google-drive/auth/', google_drive_integration.GoogleDriveAuthView.as_view(), name='google_drive_auth'),
     path('google-drive/callback/', google_drive_integration.GoogleDriveCallbackView.as_view(), name='google_drive_callback'),
-    path('google-drive/files/', google_drive_integration.GoogleDriveFilesView.as_view(), name='google_drive_files'),
-    path('google-drive/files/<str:file_id>/download/', google_drive_integration.GoogleDriveFileDownloadView.as_view(), name='google_drive_file_download'),
     path('google-drive/files/import/', google_drive_integration.GoogleDriveFileImportView.as_view(), name='google_drive_file_import'),
     
     # Media Search V2 - Vector Database powered search
