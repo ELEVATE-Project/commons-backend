@@ -1,0 +1,739 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n admin_urls %}
+
+{% block title %}Post Processing - {{ model_name|title }}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    .post-processing-container {
+        max-width: 100%;
+        width: 100%;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .post-processing-container h1 {
+        margin-bottom: 30px;
+        color: #333;
+        border-bottom: 2px solid #417690;
+        padding-bottom: 10px;
+    }
+
+    .dropdown-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+    }
+
+    .dropdown-section label {
+        display: block;
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: #333;
+        font-size: 14px;
+    }
+
+    .processing-dropdown {
+        width: 100%;
+        max-width: 400px;
+        padding: 12px 15px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background-color: #fff;
+        cursor: pointer;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .processing-dropdown:focus {
+        outline: none;
+        border-color: #417690;
+        box-shadow: 0 0 0 3px rgba(65, 118, 144, 0.15);
+    }
+
+    .processing-options-section {
+        padding: 25px;
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    .processing-options-section.hidden {
+        display: none;
+    }
+
+    .processing-specific-fields {
+        display: block;
+    }
+
+    .processing-specific-fields.hidden {
+        display: none !important;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+        font-size: 13px;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .form-row .form-group {
+        flex: 1;
+        min-width: 250px;
+    }
+
+    .form-input {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-input:focus {
+        outline: none;
+        border-color: #417690;
+        box-shadow: 0 0 0 3px rgba(65, 118, 144, 0.15);
+    }
+
+    .file-input {
+        padding: 8px;
+        background: #f8f9fa;
+    }
+
+    .help-text {
+        display: block;
+        margin-top: 5px;
+        font-size: 12px;
+        color: #666;
+    }
+
+    .date-range-group > label {
+        margin-bottom: 15px;
+    }
+
+    .date-inputs {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .date-field {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .date-field label {
+        margin-bottom: 5px;
+        font-weight: 500;
+        font-size: 12px;
+        color: #555;
+    }
+
+    .form-actions {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .run-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 150px;
+        padding: 12px 30px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        background-color: #417690;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background-color 0.2s, transform 0.1s;
+    }
+
+    .run-button:hover:not(:disabled) {
+        background-color: #205067;
+    }
+
+    .run-button:active:not(:disabled) {
+        transform: scale(0.98);
+    }
+
+    .run-button:disabled {
+        background-color: #999;
+        cursor: not-allowed;
+    }
+
+    .btn-text.hidden,
+    .btn-loading.hidden {
+        display: none;
+    }
+    
+    /* General hidden class for any element */
+    .hidden {
+        display: none !important;
+    }
+
+    .success-message {
+        color: #28a745;
+        font-weight: 600;
+        font-size: 14px;
+    }
+
+    .success-message.hidden {
+        display: none;
+    }
+    
+    .task-started-message {
+        margin-top: 15px;
+        padding: 12px 20px;
+        background: #e7f3ff;
+        border-left: 4px solid #417690;
+        border-radius: 4px;
+        color: #0d47a1;
+        font-weight: 500;
+        font-size: 14px;
+    }
+    
+    .task-started-message.hidden {
+        display: none;
+    }
+
+    .result-section {
+        margin-top: 20px;
+        padding: 20px;
+        background: #f0f9f0;
+        border-radius: 8px;
+        border: 1px solid #28a745;
+    }
+
+    .result-section.hidden {
+        display: none;
+    }
+
+    .result-section h3 {
+        margin: 0 0 15px 0;
+        color: #28a745;
+        font-size: 16px;
+    }
+
+    .result-item {
+        margin-bottom: 10px;
+        font-size: 14px;
+    }
+
+    .result-item label {
+        font-weight: 600;
+        color: #333;
+        display: inline-block;
+        min-width: 150px;
+    }
+
+    .result-item a {
+        color: #417690;
+        text-decoration: underline;
+    }
+
+    .error-message {
+        color: #dc3545;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+
+    .error-message.hidden {
+        display: none;
+    }
+
+    .required {
+        color: #dc3545;
+        font-weight: bold;
+    }
+
+    .or-divider {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 30px 0 20px 0;
+    }
+
+    .or-divider span {
+        background: #fff;
+        color: #888;
+        font-weight: 600;
+        padding: 0 18px;
+        font-size: 15px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .or-divider:before {
+        content: "";
+        flex: 1;
+        border-bottom: 1.5px dashed #bbb;
+        margin-right: -10px;
+        z-index: 0;
+    }
+
+    .or-divider:after {
+        content: "";
+        flex: 1;
+        border-bottom: 1.5px dashed #bbb;
+        margin-left: -10px;
+        z-index: 0;
+    }
+
+    .info-message {
+        background-color: #e3f2fd;
+        border: 1px solid #90caf9;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+    }
+
+    .info-message svg {
+        flex-shrink: 0;
+        margin-top: 2px;
+    }
+
+    .info-message p {
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    .info-message p:first-of-type {
+        font-weight: 600;
+        color: #1976d2;
+        margin-bottom: 8px;
+    }
+
+    .info-message p:last-of-type {
+        color: #333;
+    }
+
+    @media (max-width: 768px) {
+        .post-processing-container {
+            padding: 15px;
+        }
+        .form-row {
+            flex-direction: column;
+        }
+        .date-inputs {
+            flex-direction: column;
+        }
+        .or-divider span {
+            font-size: 13px;
+            padding: 0 10px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='chatbot' %}">{{ 'chatbot'|capfirst }}</a>
+    &rsaquo; <a href="{% url 'admin:chatbot_story_changelist' %}">Stories</a>
+    &rsaquo; Post Processing
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="post-processing-container">
+    <h1>Post Processing</h1>
+
+    <div class="info-message">
+        <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1976d2" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            <div>
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #1976d2;">Do Not Reload Page</p>
+                <p style="margin: 0; line-height: 1.5; color: #333;">
+                    Reloading page will remove the current progress.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="dropdown-section">
+        <label for="processing-type">Select Processing Type:</label>
+        <select id="processing-type" class="processing-dropdown">
+            <option value="">-- Select an option --</option>
+            {% for ptype in processing_types %}
+            <option value="{{ ptype.value }}">{{ ptype.label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div id="processing-options" class="processing-options-section hidden">
+        <form id="processing-form" method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" name="processing_type" id="form-processing-type" value="">
+
+            <!-- Dynamic form fields will be loaded here based on processing type -->
+            <div id="dynamic-form-fields">
+                
+                {% for ptype in processing_types %}
+                <div id="form-{{ ptype.value }}" class="processing-specific-fields hidden" data-processing-type="{{ ptype.value }}">
+                    {% if ptype.value == 'unique_challenges' %}
+                        {% include 'admin/post_processing/forms/unique_challenges_form.html' %}
+                    {% elif ptype.value == 'unique_solutions' %}
+                        {% include 'admin/post_processing/forms/unique_solutions_form.html' %}
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const processingTypeSelect = document.getElementById('processing-type');
+    const processingOptionsSection = document.getElementById('processing-options');
+    const formProcessingType = document.getElementById('form-processing-type');
+    const processingForm = document.getElementById('processing-form');
+    
+    // Function to get elements from the currently visible form
+    const getVisibleFormElements = () => {
+        const visibleForm = document.querySelector('.processing-specific-fields:not(.hidden)');
+        if (!visibleForm) return null;
+        
+        const processingType = visibleForm.dataset.processingType;
+        const prefix = processingType === 'unique_challenges' ? 'challenges' : 'solutions';
+        
+        return {
+            inputFile: visibleForm.querySelector('input[name="input_file"]'),
+            dateFromInput: visibleForm.querySelector('input[name="date_from"]'),
+            dateTillInput: visibleForm.querySelector('input[name="date_till"]'),
+            fileError: visibleForm.querySelector(`#${prefix}-file-error`),
+            dateError: visibleForm.querySelector(`#${prefix}-date-error`),
+            runBtn: visibleForm.querySelector(`#${prefix}-run-btn`),
+            btnText: visibleForm.querySelector(`#${prefix}-run-btn .btn-text`),
+            btnLoading: visibleForm.querySelector(`#${prefix}-run-btn .btn-loading`),
+            successMessage: visibleForm.querySelector(`#${prefix}-success-message`),
+            resultSection: visibleForm.querySelector(`#${prefix}-result-section`),
+            resultStatus: visibleForm.querySelector(`#${prefix}-result-status`),
+            resultIterations: visibleForm.querySelector(`#${prefix}-result-iterations`),
+            resultFinalCount: visibleForm.querySelector(`#${prefix}-result-final-count`),
+            resultOutputFile: visibleForm.querySelector(`#${prefix}-result-output-file`),
+            viewStatusBtn: visibleForm.querySelector(`#${prefix}-view-status-btn`),
+            taskStartedMessage: visibleForm.querySelector(`#${prefix}-task-started-message`),
+            taskMessageText: visibleForm.querySelector(`#${prefix}-task-message-text`)
+        };
+    };
+    
+    // Auto-format date inputs
+    const formatDateInput = (input) => {
+        if (!input) return;
+        input.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length >= 2) value = value.slice(0, 2) + '-' + value.slice(2);
+            if (value.length >= 5) value = value.slice(0, 5) + '-' + value.slice(5);
+            if (value.length > 10) value = value.slice(0, 10);
+            e.target.value = value;
+        });
+    };
+    
+    // Apply date formatting to all date inputs
+    document.querySelectorAll('input[name="date_from"], input[name="date_till"]').forEach(formatDateInput);
+
+    // Show/hide processing options based on selection
+    processingTypeSelect.addEventListener('change', function() {
+        const selectedValue = this.value;
+
+        formProcessingType.value = selectedValue;
+        processingOptionsSection.classList.toggle('hidden', !selectedValue);
+
+        // Hide and DISABLE all forms first
+        document.querySelectorAll('.processing-specific-fields').forEach(field => {
+            field.classList.add('hidden');
+
+            // Disable all inputs inside hidden forms
+            field.querySelectorAll('input, select, textarea, button').forEach(input => {
+                input.disabled = true;
+            });
+        });
+
+        // Show and ENABLE selected form
+        if (selectedValue) {
+            const selectedFormFields = document.getElementById(`form-${selectedValue}`);
+            if (selectedFormFields) {
+                selectedFormFields.classList.remove('hidden');
+
+                selectedFormFields.querySelectorAll('input, select, textarea, button').forEach(input => {
+                    input.disabled = false;
+                });
+            }
+        }
+
+        // Reset result sections
+        document.querySelectorAll('[id$="-result-section"]').forEach(el => el.classList.add('hidden'));
+        document.querySelectorAll('[id$="-success-message"]').forEach(el => el.classList.add('hidden'));
+        document.querySelectorAll('[id$="-view-status-btn"]').forEach(el => el.classList.add('hidden'));
+        document.querySelectorAll('[id$="-task-started-message"]').forEach(el => el.classList.add('hidden'));
+    });
+
+    // Validate at least one input (file or date range)
+    const validateInputs = () => {
+        const elements = getVisibleFormElements();
+        if (!elements) return false;
+        
+        const hasFile = elements.inputFile && elements.inputFile.files.length > 0;
+        const hasDateFrom = elements.dateFromInput && elements.dateFromInput.value.trim() !== '';
+        const hasDateTill = elements.dateTillInput && elements.dateTillInput.value.trim() !== '';
+        const hasDateRange = hasDateFrom && hasDateTill;
+
+        if (elements.fileError) elements.fileError.classList.add('hidden');
+        if (elements.dateError) elements.dateError.classList.add('hidden');
+
+        if (!hasFile && !hasDateRange) {
+            if (!hasFile && elements.fileError) elements.fileError.classList.remove('hidden');
+            if (!hasDateRange && elements.dateError) elements.dateError.classList.remove('hidden');
+            return false;
+        }
+        return true;
+    };
+
+    // Display results
+    const displayResults = (data) => {
+        const elements = getVisibleFormElements();
+        if (!elements) return;
+        
+        // If we received a task_id, this is an async task
+        if (data.task_id) {
+            showTaskStartedMessage(data.task_id, data.message);
+            return;
+        }
+        
+        // Otherwise, display the results (for completed tasks)
+        if (elements.resultSection) {
+            elements.resultSection.classList.remove('hidden');
+            
+            if (elements.resultStatus) elements.resultStatus.textContent = data.message || 'Completed';
+            if (elements.resultIterations) elements.resultIterations.textContent = data.iterations || 'N/A';
+            if (elements.resultFinalCount) elements.resultFinalCount.textContent = data.final_count || 'N/A';
+            if (elements.resultOutputFile) {
+                if (data.output_file) {
+                    const fileUrl = data.output_file;
+                    const filename = fileUrl.split('/').pop();
+
+                    elements.resultOutputFile.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <input type="text"
+                                       value="${fileUrl}"
+                                       readonly
+                                       style="flex:1; padding:6px; font-size:12px;"
+                                       onclick="this.select()">
+
+                                <button type="button"
+                                        onclick="navigator.clipboard.writeText('${fileUrl}'); this.innerText='Copied!'; setTimeout(() => this.innerText='Copy URL', 1500);"
+                                        style="padding:6px 10px; font-size:12px; cursor:pointer;">
+                                    Copy URL
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    elements.resultOutputFile.textContent = 'N/A';
+                }
+            }
+        }
+    };
+    
+    let currentTaskId = null;
+    
+    const showTaskStartedMessage = (taskId, message) => {
+        currentTaskId = taskId;
+        const elements = getVisibleFormElements();
+        if (!elements) return;
+        
+        // Hide run button, show view status button
+        if (elements.runBtn) elements.runBtn.style.display = 'none';
+        
+        // Show task started message
+        if (elements.taskStartedMessage) {
+            elements.taskStartedMessage.classList.remove('hidden');
+            if (elements.taskMessageText) {
+                elements.taskMessageText.textContent = message || 'Task started successfully!';
+            }
+        }
+        
+        // Show view status button
+        if (elements.viewStatusBtn) {
+            elements.viewStatusBtn.classList.remove('hidden');
+        }
+    };
+    
+    // Make checkTaskStatus globally accessible for onclick handler
+    window.checkTaskStatus = function() {
+        if (!currentTaskId) {
+            alert('No active task to check');
+            return;
+        }
+        
+        const elements = getVisibleFormElements();
+        if (!elements || !elements.viewStatusBtn) return;
+        
+        const statusBtn = elements.viewStatusBtn;
+        const statusBtnText = statusBtn.querySelector('.btn-text');
+        const statusBtnLoading = statusBtn.querySelector('.btn-loading');
+        
+        // Disable button and show loading
+        statusBtn.disabled = true;
+        if (statusBtnText) statusBtnText.classList.add('hidden');
+        if (statusBtnLoading) statusBtnLoading.classList.remove('hidden');
+        
+        // Fetch task status
+        fetch(`${window.location.href}?task_id=${currentTaskId}`, {
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.state === 'SUCCESS') {
+                if (data.success) {
+                    // Task completed successfully
+                    displayResults(data);
+                    if (elements.successMessage) {
+                        elements.successMessage.classList.remove('hidden');
+                        elements.successMessage.textContent = '✅ Task completed successfully!';
+                    }
+                    
+                    // Hide task started message and status button
+                    if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+                    statusBtn.classList.add('hidden');
+                    if (elements.runBtn) elements.runBtn.style.display = 'inline-flex';
+                    
+                    currentTaskId = null;
+                } else {
+                    // Task completed but with error
+                    alert('Task failed: ' + (data.error || 'Unknown error'));
+                    // Reset UI to allow retry
+                    if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+                    if (elements.successMessage) elements.successMessage.classList.add('hidden');
+                    statusBtn.classList.add('hidden');
+                    if (elements.runBtn) elements.runBtn.style.display = 'inline-flex';
+                    currentTaskId = null;
+                }
+            } else if (data.state === 'FAILURE') {
+                alert('Task failed: ' + (data.error || 'Unknown error'));
+                // Reset UI to allow retry
+                if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+                if (elements.successMessage) elements.successMessage.classList.add('hidden');
+                statusBtn.classList.add('hidden');
+                if (elements.runBtn) elements.runBtn.style.display = 'inline-flex';
+                currentTaskId = null;
+            } else if (data.state === 'PENDING') {
+                alert('⏳ Task is waiting in queue. Please try again in a moment.');
+            } else {
+                alert(`Task state: ${data.state}`);
+            }
+        })
+        .catch(error => {
+            alert('Failed to check task status: ' + error.message);
+        })
+        .finally(() => {
+            // Re-enable button
+            statusBtn.disabled = false;
+            if (statusBtnText) statusBtnText.classList.remove('hidden');
+            if (statusBtnLoading) statusBtnLoading.classList.add('hidden');
+        });
+    };
+
+    // Handle form submission
+    processingForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        if (!formProcessingType.value) {
+            alert('Please select a processing type');
+            return;
+        }
+
+        if (!validateInputs()) {
+            alert('Please provide either an input file or a date range');
+            return;
+        }
+
+        const elements = getVisibleFormElements();
+        if (!elements) return;
+        
+        // Clear previous states
+        if (elements.successMessage) elements.successMessage.classList.add('hidden');
+        if (elements.resultSection) elements.resultSection.classList.add('hidden');
+        if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+        if (elements.viewStatusBtn) elements.viewStatusBtn.classList.add('hidden');
+        
+        // Show loading state
+        if (elements.runBtn) {
+            elements.runBtn.disabled = true;
+            if (elements.btnText) elements.btnText.classList.add('hidden');
+            if (elements.btnLoading) elements.btnLoading.classList.remove('hidden');
+        }
+
+        const formData = new FormData(processingForm);
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (elements.successMessage) {
+                    elements.successMessage.classList.remove('hidden');
+                    elements.successMessage.textContent = '✅ Script initiated successfully!';
+                }
+                displayResults(data);
+            } else {
+                // Error case - reset UI to initial state
+                alert('Error: ' + (data.error || 'Unknown error'));
+                if (elements.runBtn) elements.runBtn.style.display = 'inline-flex';
+                if (elements.viewStatusBtn) elements.viewStatusBtn.classList.add('hidden');
+                if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+            }
+        })
+        .catch(error => {
+            alert('Request failed: ' + error.message);
+            // Reset UI on network error
+            if (elements.runBtn) elements.runBtn.style.display = 'inline-flex';
+            if (elements.viewStatusBtn) elements.viewStatusBtn.classList.add('hidden');
+            if (elements.taskStartedMessage) elements.taskStartedMessage.classList.add('hidden');
+        })
+        .finally(() => {
+            // Reset loading state
+            if (elements.runBtn) {
+                elements.runBtn.disabled = false;
+                if (elements.btnText) elements.btnText.classList.remove('hidden');
+                if (elements.btnLoading) elements.btnLoading.classList.add('hidden');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

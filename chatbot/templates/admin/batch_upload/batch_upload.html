@@ -1,0 +1,96 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n admin_urls %}
+
+{% block title %}Batch Upload{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<!-- Include CSS -->
+<style>
+    {% include 'admin/batch_upload/css/batch_upload.css' %}
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='chatbot' %}">{{ 'chatbot'|capfirst }}</a>
+    &rsaquo; <a href="{% url 'admin:chatbot_media_changelist' %}">Media</a>
+    &rsaquo; Batch Upload
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="batch-upload-container">
+    <h1>Batch Upload</h1>
+
+    {% include 'admin/batch_upload/includes/step_indicator.html' %}
+    {% include 'admin/batch_upload/includes/status_messages.html' %}
+
+    <!-- Step 1: Upload -->
+    <div id="step1" class="content-section active">
+        {% include 'admin/batch_upload/steps/step1_upload.html' %}
+    </div>
+
+    <!-- Step 2: Review -->
+    <div id="step2" class="content-section">
+        {% include 'admin/batch_upload/steps/step2_review.html' %}
+    </div>
+
+    <!-- Step 3: Save Results -->
+    <div id="step3" class="content-section">
+        {% include 'admin/batch_upload/steps/step3_save.html' %}
+    </div>
+
+    {% include 'admin/batch_upload/includes/modals.html' %}
+</div>
+
+<!-- Pass file types data to JavaScript -->
+{{ file_types|json_script:"file-types-data" }}
+{{ existing_manual_tags|json_script:"existing-manual-tags" }}
+{{ master_document_types|json_script:"master-document-types" }}
+
+<!-- Bridge Django template variables to JavaScript -->
+<script>
+    // Django template variables that need to be passed to external JS
+    window.BATCH_UPLOAD_CONFIG = {
+        mediaTypes: {{ media_types|safe }},
+        mediaTypesJS: [
+            {% for value, label in media_types %}
+            { value: "{{ value }}", label: "{{ label }}" },
+            {% endfor %}
+        ],
+        priorities: {{ priorities|safe }},
+        defaultBotId: {{ default_bot_id|default:"null" }},
+        botProfileId: 1,
+        urls: {
+            mediaChangeList: "{% url 'admin:chatbot_media_changelist' %}",
+            batchExtract: "{% url 'admin:chatbot_media_batch_extract' %}",
+            batchSave: "{% url 'admin:chatbot_media_batch_save' %}",
+            taskStatus: "{% url 'admin:chatbot_media_task_status' %}",
+            retryExtract: "{% url 'admin:chatbot_media_retry_extract' %}",
+            retrySave: "{% url 'admin:chatbot_media_retry_save' %}",
+            vectorDbStatus: "{% url 'admin:chatbot_media_vector_db_task_status' %}",
+            getCachedItem: "{% url 'admin:chatbot_media_get_cached_item' %}"
+        },
+        {% if user_company %}
+        userCompany: {
+            slug: "{{ user_company.slug|escapejs }}",
+            name: "{{ user_company.name|escapejs }}"
+        },
+        {% endif %}
+        {% if user.is_authenticated %}
+            {% with user_profile=user.profile %}
+                {% if user_profile and user_profile.company %}
+        userCompanyName: "{{ user_profile.company.name|escapejs }}",
+                {% endif %}
+            {% endwith %}
+        {% endif %}
+    };
+</script>
+
+<!-- Include JavaScript -->
+<script>
+    {% include 'admin/batch_upload/js/batch_upload.js' %}
+</script>
+{% endblock %}

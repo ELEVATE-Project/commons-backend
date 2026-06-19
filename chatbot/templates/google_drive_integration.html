@@ -1,0 +1,358 @@
+{% extends 'admin/base_site.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Google Drive Integration</h2>
+
+    <div class="card">
+        <div class="card-body">
+
+            <button id="connect-google-drive" class="btn btn-primary">
+                Connect Google Drive
+            </button>
+
+            <div class="mt-4">
+                <label for="folder-url">
+                    Google Drive Folder URL
+                </label>
+
+                <input
+                    type="text"
+                    id="folder-url"
+                    class="form-control"
+                    placeholder="https://drive.google.com/drive/folders/xxxxxxxxxxxxxxxx"
+                />
+
+                <button
+                    id="load-folder-files"
+                    class="btn btn-secondary mt-2"
+                    disabled>
+                    Load Files
+                </button>
+            </div>
+
+            <div id="file-list" class="mt-4" style="display:none;">
+                <h4>Files in Selected Folder</h4>
+
+                <div class="mb-2">
+                    <button
+                        id="select-all"
+                        class="btn btn-sm btn-outline-primary">
+                        Select All
+                    </button>
+
+                    <button
+                        id="unselect-all"
+                        class="btn btn-sm btn-outline-secondary">
+                        Unselect All
+                    </button>
+                </div>
+
+                <ul class="list-group" id="files"></ul>
+
+                <button
+                    id="upload-files"
+                    class="btn btn-success mt-3"
+                    disabled>
+                    Import Selected Files
+                </button>
+            </div>
+
+            <p id="status-message" class="mt-3"></p>
+
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    const connectButton = document.getElementById('connect-google-drive');
+    const loadFolderButton = document.getElementById('load-folder-files');
+    const folderUrlInput = document.getElementById('folder-url');
+
+    const importButton = document.getElementById('upload-files');
+
+    const fileList = document.getElementById('files');
+    const fileListWrapper = document.getElementById('file-list');
+
+    const selectAllButton = document.getElementById('select-all');
+    const unselectAllButton = document.getElementById('unselect-all');
+
+    const statusMessage = document.getElementById('status-message');
+
+    function setStatus(message, isError=false) {
+        statusMessage.textContent = message || '';
+        statusMessage.style.color = isError ? '#ba2121' : '#417690';
+    }
+
+    connectButton.addEventListener('click', function () {
+        window.location.href = 'auth/';
+    });
+
+    if (window.location.search.includes('connected=1')) {
+        loadFolderButton.disabled = false;
+        setStatus(
+            'Google Drive connected. Paste a folder URL and click Load Files.'
+        );
+    }
+
+    loadFolderButton.addEventListener('click', function () {
+
+        const folderUrl = folderUrlInput.value.trim();
+
+        if (!folderUrl) {
+            setStatus(
+                'Please enter a Google Drive folder URL.',
+                true
+            );
+            return;
+        }
+
+        fetchFiles(folderUrl);
+    });
+
+    function fetchFiles(folderUrl) {
+
+        setStatus('Loading files from Google Drive folder...');
+
+        fileList.innerHTML = '';
+
+                fetch(
+            'files/?folder_url=' +
+            encodeURIComponent(folderUrl)
+        )
+        .then(async function(response) {
+
+            const text = await response.text();
+
+            console.log(text);
+
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                throw new Error(
+                    'Server returned HTML instead of JSON. Check Django logs.'
+                );
+            }
+        })
+        .then(function(response) {
+
+            fileListWrapper.style.display = 'block';
+
+            if (!response.files.length) {
+
+                importButton.disabled = true;
+
+                setStatus(
+                    'No files found in selected folder.'
+                );
+
+                return;
+            }
+
+            response.files.forEach(function(file) {
+
+                const item = document.createElement('li');
+                item.className = 'list-group-item';
+
+                const checkbox = document.createElement('input');
+
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input me-2';
+                checkbox.value = file.id;
+
+                checkbox.addEventListener(
+                    'change',
+                    updateImportButtonState
+                );
+
+                const label = document.createElement('span');
+
+                let fileSize = '';
+
+                if (file.size) {
+                    fileSize =
+                        ' (' +
+                        Math.round(file.size / 1024) +
+                        ' KB)';
+                }
+
+                label.textContent =
+                    file.name +
+                    fileSize;
+
+                item.appendChild(checkbox);
+                item.appendChild(label);
+
+                fileList.appendChild(item);
+            });
+
+            updateImportButtonState();
+
+            setStatus(
+                response.files.length +
+                ' file(s) found.'
+            );
+        })
+        .catch(function(error) {
+
+            setStatus(
+                error.message,
+                true
+            );
+        });
+    }
+
+    function updateImportButtonState() {
+
+        const checkedFiles =
+            document.querySelectorAll(
+                '#files input[type="checkbox"]:checked'
+            );
+
+        importButton.disabled =
+            checkedFiles.length === 0;
+    }
+
+    selectAllButton.addEventListener(
+        'click',
+        function() {
+
+            document
+                .querySelectorAll(
+                    '#files input[type="checkbox"]'
+                )
+                .forEach(function(cb) {
+                    cb.checked = true;
+                });
+
+            updateImportButtonState();
+        }
+    );
+
+    unselectAllButton.addEventListener(
+        'click',
+        function() {
+
+            document
+                .querySelectorAll(
+                    '#files input[type="checkbox"]'
+                )
+                .forEach(function(cb) {
+                    cb.checked = false;
+                });
+
+            updateImportButtonState();
+        }
+    );
+
+    importButton.addEventListener(
+        'click',
+        function() {
+
+            const selectedFiles =
+                Array.from(
+                    document.querySelectorAll(
+                        '#files input[type="checkbox"]:checked'
+                    )
+                )
+                .map(function(input) {
+                    return input.value;
+                });
+
+            if (!selectedFiles.length) {
+
+                setStatus(
+                    'Please select at least one file.',
+                    true
+                );
+
+                return;
+            }
+
+            importButton.disabled = true;
+
+            setStatus(
+                'Importing selected files...'
+            );
+
+            fetch(
+                'files/import/',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type':
+                            'application/json',
+                        'X-CSRFToken':
+                            '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify({
+                        file_ids: selectedFiles
+                    })
+                }
+            )
+            .then(function(response) {
+
+                return response.json().then(
+                    function(data) {
+
+                        if (!response.ok) {
+                            throw new Error(
+                                data.error ||
+                                'Import failed'
+                            );
+                        }
+
+                        return data;
+                    }
+                );
+            })
+            .then(function(response) {
+
+                const successCount =
+                    response.results.filter(
+                        function(result) {
+                            return result.success;
+                        }
+                    ).length;
+
+                const failedCount =
+                    response.results.length -
+                    successCount;
+
+                if (failedCount > 0) {
+
+                    setStatus(
+                        successCount +
+                        ' imported, ' +
+                        failedCount +
+                        ' failed.',
+                        true
+                    );
+
+                } else {
+
+                    setStatus(
+                        successCount +
+                        ' file(s) imported successfully.'
+                    );
+                }
+            })
+            .catch(function(error) {
+
+                setStatus(
+                    error.message,
+                    true
+                );
+            })
+            .finally(function() {
+
+                updateImportButtonState();
+            });
+        }
+    );
+});
+</script>
+
+{% endblock %}

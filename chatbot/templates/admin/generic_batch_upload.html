@@ -1,0 +1,1181 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n %}
+
+{% block title %}Batch Import - {{ model_name }}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* Clean, modern styling */
+    :root {
+        --primary-color: #417690;
+        --success-color: #5cb85c;
+        --error-color: #dc3545;
+        --warning-color: #ffc107;
+        --border-radius: 8px;
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    .batch-import-container {
+        max-width: 100%;
+        width: 100%;
+        margin: 0 auto;
+        background-color: white;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Step Indicator */
+    .step-indicator {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 40px;
+        gap: 40px;
+    }
+
+    .step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        opacity: 0.5;
+        transition: opacity 0.3s;
+    }
+
+    .step.active {
+        opacity: 1;
+    }
+
+    .step.completed .step-number {
+        background-color: var(--success-color);
+    }
+
+    .step-number {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background-color: #ddd;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        transition: all 0.3s;
+    }
+
+    .step.active .step-number {
+        background-color: var(--primary-color);
+    }
+
+    /* Content Sections */
+    .content-section {
+        display: none;
+        animation: fadeIn 0.3s;
+    }
+
+    .content-section.active {
+        display: block;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    /* Step 1: Upload Section */
+    .model-info {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: var(--border-radius);
+        margin-bottom: 20px;
+    }
+
+    .field-selection {
+        margin: 20px 0;
+    }
+
+    .field-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 10px;
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: var(--border-radius);
+    }
+
+    .field-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .field-item input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+
+    .field-item label {
+        cursor: pointer;
+        flex: 1;
+    }
+
+    .field-required {
+        color: var(--error-color);
+        font-weight: bold;
+    }
+
+    .upload-area {
+        border: 2px dashed #ccc;
+        border-radius: var(--border-radius);
+        padding: 40px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background-color: #fafafa;
+    }
+
+    .upload-area:hover {
+        border-color: var(--primary-color);
+        background-color: #f0f9ff;
+    }
+
+    .upload-area.dragover {
+        border-color: var(--primary-color);
+        background-color: #e8f5e9;
+    }
+
+    /* Step 2: Review Section */
+    .data-preview {
+        overflow-x: auto;
+        margin: 20px 0;
+    }
+
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    .data-table th {
+        background-color: var(--primary-color);
+        color: white;
+        padding: 12px;
+        text-align: left;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .data-table td {
+        padding: 10px;
+        border: 1px solid #ddd;
+    }
+
+    .data-table tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
+
+    .data-table tr:hover {
+        background-color: #e8f5e9;
+    }
+
+    .cell-editable {
+        cursor: text;
+        position: relative;
+    }
+
+    .cell-editable:hover {
+        background-color: #fff3cd;
+    }
+
+    .cell-error {
+        background-color: #f8d7da !important;
+        color: var(--error-color);
+    }
+
+    .cell-warning {
+        background-color: #fff3cd !important;
+    }
+
+    .error-summary {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 15px;
+        border-radius: var(--border-radius);
+        margin-bottom: 20px;
+    }
+
+    .validation-errors {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .error-item {
+        margin-bottom: 5px;
+        font-size: 14px;
+    }
+
+    /* Step 3: Import Results */
+    .import-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin: 30px 0;
+    }
+
+    .summary-card {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: var(--border-radius);
+        text-align: center;
+        border: 2px solid transparent;
+    }
+
+    .summary-card.success {
+        border-color: var(--success-color);
+    }
+
+    .summary-card.error {
+        border-color: var(--error-color);
+    }
+
+    .summary-card h3 {
+        margin: 0 0 10px 0;
+        color: #666;
+        font-size: 14px;
+        text-transform: uppercase;
+    }
+
+    .summary-card .value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #333;
+    }
+
+    .import-log {
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 20px;
+        background-color: #f8f9fa;
+        border-radius: var(--border-radius);
+    }
+
+    .log-item {
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .log-item.success {
+        background-color: #d4edda;
+        color: #155724;
+    }
+
+    .log-item.error {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+
+    .log-item .icon {
+        font-size: 20px;
+    }
+
+    /* Buttons */
+    .button-group {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 30px;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: var(--border-radius);
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .btn-primary {
+        background-color: var(--primary-color);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background-color: #2c5aa0;
+    }
+
+    .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background-color: #545b62;
+    }
+
+    .btn-success {
+        background-color: var(--success-color);
+        color: white;
+    }
+
+    .btn-danger {
+        background-color: var(--error-color);
+        color: white;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+    .btn-sm {
+        padding: 5px 15px;
+        font-size: 14px;
+    }
+
+    /* Loading */
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+
+    .loading-content {
+        background-color: white;
+        padding: 30px;
+        border-radius: var(--border-radius);
+        text-align: center;
+    }
+
+    .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid var(--primary-color);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Utilities */
+    .text-muted {
+        color: #6c757d;
+    }
+
+    .text-center {
+        text-align: center;
+    }
+
+    .mt-3 {
+        margin-top: 1rem;
+    }
+
+    .alert {
+        padding: 12px;
+        border-radius: var(--border-radius);
+        margin-bottom: 20px;
+    }
+
+    .alert-info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+    }
+
+    /* Pagination */
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        margin: 20px 0;
+    }
+
+    .page-btn {
+        padding: 5px 10px;
+        border: 1px solid #ddd;
+        background: white;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    .page-btn.active {
+        background-color: var(--primary-color);
+        color: white;
+    }
+
+    .page-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .file-info {
+        margin-top: 20px;
+        padding: 15px;
+        background-color: #e8f5e9;
+        border-radius: var(--border-radius);
+        display: none;
+        position: relative;
+    }
+
+    .file-info .btn-danger {
+        margin-top: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="batch-import-container">
+    <h1>Batch Import: {{ model_verbose_name|default:"Records" }}</h1>
+
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+        <div class="step active" data-step="1">
+            <div class="step-number">1</div>
+            <span class="step-label">Configure & Upload</span>
+        </div>
+        <div class="step" data-step="2">
+            <div class="step-number">2</div>
+            <span class="step-label">Review & Validate</span>
+        </div>
+        <div class="step" data-step="3">
+            <div class="step-number">3</div>
+            <span class="step-label">Import Results</span>
+        </div>
+    </div>
+
+    <!-- Step 1: Configure & Upload -->
+    <div id="step1" class="content-section active">
+        <h2>Configure Import Settings</h2>
+
+        <div class="model-info">
+            <h3>Model: {{ model_verbose_name }}</h3>
+            <p class="text-muted">{{ model_description|default:"Select fields to import and upload your data file." }}</p>
+        </div>
+
+        <!-- Field Selection -->
+        <div class="field-selection">
+            <h3>Select Fields to Import</h3>
+            <div class="alert alert-info">
+                <strong>Note:</strong> Required fields are marked with * and cannot be unchecked.
+            </div>
+
+            <div class="field-list" id="fieldList">
+                <!-- Fields will be populated by JavaScript -->
+            </div>
+
+            <div class="mt-3">
+                <button class="btn btn-secondary" onclick="selectAllFields()">Select All</button>
+                <button class="btn btn-secondary" onclick="deselectAllFields()">Clear All</button>
+                <button class="btn btn-primary" onclick="downloadTemplate()">Download Template</button>
+            </div>
+        </div>
+
+        <!-- File Upload -->
+        <div class="upload-area" id="uploadArea">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#417690" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <p style="margin-top: 20px; font-size: 18px;">Drag and drop your file here or click to browse</p>
+            <p class="text-muted">Supported formats: CSV, Excel (.xlsx, .xls)</p>
+            <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display: none;">
+        </div>
+
+        <div class="file-info" id="fileInfo">
+            <h4>File Selected:</h4>
+            <p id="fileName"></p>
+            <p id="fileSize"></p>
+            <button class="btn btn-danger btn-sm" onclick="clearUploadedFile()">Remove File</button>
+        </div>
+
+        <div class="button-group">
+            <a href="{{ back_url }}" class="btn btn-secondary">Cancel</a>
+            <button class="btn btn-primary" id="processBtn" onclick="processFile()" disabled>Process File</button>
+        </div>
+    </div>
+
+    <!-- Step 2: Review & Validate -->
+    <div id="step2" class="content-section">
+        <h2>Review & Validate Data</h2>
+
+        <div id="validationSummary"></div>
+
+        <div class="data-preview">
+            <table class="data-table" id="dataTable">
+                <!-- Table will be populated by JavaScript -->
+            </table>
+        </div>
+
+        <div class="pagination" id="pagination"></div>
+
+        <div class="button-group">
+            <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+            <button class="btn btn-danger" id="removeErrorsBtn" onclick="removeErrorRows()" style="display: none;">Remove Error Rows</button>
+            <button class="btn btn-primary" id="importBtn" onclick="importData()">Import Valid Rows</button>
+        </div>
+    </div>
+
+    <!-- Step 3: Import Results -->
+    <div id="step3" class="content-section">
+        <h2>Import Results</h2>
+
+        <div class="import-summary">
+            <div class="summary-card success">
+                <h3>Successful</h3>
+                <div class="value" id="successCount">0</div>
+            </div>
+            <div class="summary-card error">
+                <h3>Failed</h3>
+                <div class="value" id="errorCount">0</div>
+            </div>
+            <div class="summary-card">
+                <h3>Total Processed</h3>
+                <div class="value" id="totalCount">0</div>
+            </div>
+        </div>
+
+        <div class="import-log" id="importLog">
+            <!-- Log entries will be populated here -->
+        </div>
+
+        <div class="button-group">
+            <button class="btn btn-secondary" onclick="startNewImport()">New Import</button>
+            <a href="{{ back_url }}" class="btn btn-primary">Back to List</a>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p id="loadingText">Processing...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Pass data from Django -->
+<script>
+const modelData = {{ model_data|safe }};
+const csrfToken = '{{ csrf_token }}';
+
+// Debug: Check if modelData is valid
+console.log('Raw model data:', {{ model_data|safe }});
+if (!modelData || !modelData.fields) {
+    console.error('Model data is invalid or missing fields');
+}
+
+// Global variables
+let selectedFields = new Set();
+let uploadedFile = null;
+let parsedData = [];
+let currentPage = 1;
+let rowsPerPage = 50;
+let validationErrors = {};
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Model data:', modelData);  // Debug log
+    initializeFieldList();
+    setupFileUpload();
+});
+
+// Initialize field list
+function initializeFieldList() {
+    const fieldList = document.getElementById('fieldList');
+    fieldList.innerHTML = '';
+
+    // Check if modelData exists and has fields
+    if (!modelData || !modelData.fields || !Array.isArray(modelData.fields)) {
+        console.error('Invalid model data:', modelData);
+        fieldList.innerHTML = '<p class="error">Error loading fields. Please refresh the page.</p>';
+        return;
+    }
+
+    console.log(`Loading ${modelData.fields.length} fields`);
+
+    modelData.fields.forEach(field => {
+        const fieldItem = document.createElement('div');
+        fieldItem.className = 'field-item';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `field_${field.name}`;
+        checkbox.value = field.name;
+        checkbox.checked = field.required || field.default_selected;
+        checkbox.disabled = field.required;
+
+        if (field.required || field.default_selected) {
+            selectedFields.add(field.name);
+        }
+
+        checkbox.addEventListener('change', function() {
+            if (this.checked) {
+                selectedFields.add(field.name);
+            } else {
+                selectedFields.delete(field.name);
+            }
+            updateProcessButton();
+        });
+
+        const label = document.createElement('label');
+        label.htmlFor = `field_${field.name}`;
+        label.innerHTML = `
+            ${field.verbose_name}
+            ${field.required ? '<span class="field-required">*</span>' : ''}
+            <span class="text-muted">(${field.type})</span>
+        `;
+
+        fieldItem.appendChild(checkbox);
+        fieldItem.appendChild(label);
+        fieldList.appendChild(fieldItem);
+    });
+
+    console.log('Fields loaded successfully');
+}
+
+// File upload setup
+function setupFileUpload() {
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFile(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFile(e.target.files[0]);
+        }
+    });
+}
+
+// Handle file selection
+function handleFile(file) {
+    const validTypes = ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(csv|xlsx|xls)$/i)) {
+        alert('Please upload a CSV or Excel file.');
+        return;
+    }
+
+    uploadedFile = file;
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = `Size: ${(file.size / 1024).toFixed(2)} KB`;
+    document.getElementById('fileInfo').style.display = 'block';
+    updateProcessButton();
+}
+
+// Clear uploaded file
+function clearUploadedFile() {
+    uploadedFile = null;
+    document.getElementById('fileInput').value = '';
+    document.getElementById('fileName').textContent = '';
+    document.getElementById('fileSize').textContent = '';
+    document.getElementById('fileInfo').style.display = 'none';
+    updateProcessButton();
+}
+
+// Update process button state
+function updateProcessButton() {
+    const processBtn = document.getElementById('processBtn');
+    processBtn.disabled = !uploadedFile || selectedFields.size === 0;
+}
+
+// Field selection helpers
+function selectAllFields() {
+    document.querySelectorAll('#fieldList input[type="checkbox"]:not(:disabled)').forEach(cb => {
+        cb.checked = true;
+        selectedFields.add(cb.value);
+    });
+    updateProcessButton();
+}
+
+function deselectAllFields() {
+    document.querySelectorAll('#fieldList input[type="checkbox"]:not(:disabled)').forEach(cb => {
+        cb.checked = false;
+        selectedFields.delete(cb.value);
+    });
+    updateProcessButton();
+}
+
+// Download template
+function downloadTemplate() {
+    if (selectedFields.size === 0) {
+        alert('Please select at least one field.');
+        return;
+    }
+
+    showLoading('Generating template...');
+
+    fetch('{{ template_url }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            model: modelData.model,
+            fields: Array.from(selectedFields)
+        })
+    })
+    .then(response => response.blob())
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${modelData.model}_template.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        hideLoading();
+    })
+    .catch(error => {
+        hideLoading();
+        alert('Error generating template: ' + error);
+    });
+}
+
+// Process uploaded file
+function processFile() {
+    if (!uploadedFile) return;
+
+    showLoading('Processing file...');
+    parsedData = [];
+    validationErrors = {};
+
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        try {
+            if (uploadedFile.name.endsWith('.csv')) {
+                parseCSV(e.target.result);
+            } else {
+                parseExcel(e.target.result);
+            }
+
+            validateData();
+            goToStep(2);
+            renderDataTable();
+            hideLoading();
+        } catch (error) {
+            hideLoading();
+            alert('Error processing file: ' + error.message);
+        }
+    };
+
+    if (uploadedFile.name.endsWith('.csv')) {
+        reader.readAsText(uploadedFile);
+    } else {
+        reader.readAsBinaryString(uploadedFile);
+    }
+}
+
+// Parse CSV
+function parseCSV(content) {
+    const lines = content.split('\n').filter(line => line.trim());
+    if (lines.length < 2) {
+        throw new Error('File must contain headers and at least one data row.');
+    }
+
+    const headers = lines[0].split(',').map(h => h.trim());
+
+    for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        const row = {};
+
+        headers.forEach((header, index) => {
+            if (selectedFields.has(header)) {
+                row[header] = values[index] || '';
+            }
+        });
+
+        parsedData.push(row);
+    }
+}
+
+// Parse Excel (simplified - in production, use a library like SheetJS)
+function parseExcel(content) {
+    // This is a placeholder - in production, you'd use SheetJS or similar
+    alert('Excel parsing would be implemented with a library like SheetJS');
+    throw new Error('Excel parsing not implemented in this demo');
+}
+
+// Validate data
+function validateData() {
+    validationErrors = {};
+    let errorCount = 0;
+
+    parsedData.forEach((row, index) => {
+        const rowErrors = [];
+
+        // Check required fields
+        modelData.fields.forEach(field => {
+            if (field.required && selectedFields.has(field.name)) {
+                if (!row[field.name] || row[field.name].trim() === '') {
+                    rowErrors.push(`${field.verbose_name} is required`);
+                }
+            }
+
+            // Type validation
+            if (row[field.name] && selectedFields.has(field.name)) {
+                const value = row[field.name];
+
+                switch (field.type) {
+                    case 'IntegerField':
+                        if (!/^\d+$/.test(value)) {
+                            rowErrors.push(`${field.verbose_name} must be a number`);
+                        }
+                        break;
+                    case 'EmailField':
+                        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+                            rowErrors.push(`${field.verbose_name} must be a valid email`);
+                        }
+                        break;
+                    case 'DateField':
+                        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                            rowErrors.push(`${field.verbose_name} must be in YYYY-MM-DD format`);
+                        }
+                        break;
+                    // Add more type validations as needed
+                }
+
+                // Choice field validation
+                if (field.choices && field.choices.length > 0) {
+                    const validChoices = field.choices.map(c => c[0]);
+                    if (!validChoices.includes(value)) {
+                        // Show the actual database values in the error message
+                        const choiceDisplay = field.choices.map(c => `"${c[0]}" (${c[1]})`).join(', ');
+                        rowErrors.push(`${field.verbose_name} must be one of: ${choiceDisplay}`);
+                    }
+                }
+
+                // Max length validation
+                if (field.max_length && value.length > field.max_length) {
+                    rowErrors.push(`${field.verbose_name} exceeds max length of ${field.max_length}`);
+                }
+            }
+        });
+
+        if (rowErrors.length > 0) {
+            validationErrors[index] = rowErrors;
+            errorCount++;
+        }
+    });
+
+    // Update validation summary
+    const summaryDiv = document.getElementById('validationSummary');
+    if (errorCount > 0) {
+        summaryDiv.innerHTML = `
+            <div class="error-summary">
+                <h4>Validation Errors Found</h4>
+                <p>${errorCount} rows have errors. Review and fix them below or remove error rows.</p>
+                <div class="validation-errors">
+                    ${Object.entries(validationErrors).slice(0, 5).map(([index, errors]) => `
+                        <div class="error-item">
+                            Row ${parseInt(index) + 2}: ${errors.join(', ')}
+                        </div>
+                    `).join('')}
+                    ${errorCount > 5 ? `<p>... and ${errorCount - 5} more errors</p>` : ''}
+                </div>
+            </div>
+        `;
+        document.getElementById('removeErrorsBtn').style.display = 'inline-block';
+    } else {
+        summaryDiv.innerHTML = `
+            <div class="alert alert-info">
+                <strong>Success!</strong> All ${parsedData.length} rows passed validation.
+            </div>
+        `;
+        document.getElementById('removeErrorsBtn').style.display = 'none';
+    }
+}
+
+// Render data table
+function renderDataTable() {
+    const table = document.getElementById('dataTable');
+    const start = (currentPage - 1) * rowsPerPage;
+    const end = start + rowsPerPage;
+    const pageData = parsedData.slice(start, end);
+
+    // Create header
+    let html = '<thead><tr><th>Row</th>';
+    selectedFields.forEach(field => {
+        const fieldInfo = modelData.fields.find(f => f.name === field);
+        html += `<th>${fieldInfo ? fieldInfo.verbose_name : field}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Create rows
+    pageData.forEach((row, index) => {
+        const actualIndex = start + index;
+        const hasError = validationErrors[actualIndex];
+
+        html += `<tr class="${hasError ? 'row-error' : ''}">`;
+        html += `<td>${actualIndex + 2}</td>`; // +2 because row 1 is headers
+
+        selectedFields.forEach(field => {
+            const value = row[field] || '';
+            const cellClass = hasError && validationErrors[actualIndex].some(e => e.includes(field)) ? 'cell-error' : '';
+
+            html += `<td class="cell-editable ${cellClass}"
+                        contenteditable="true"
+                        data-row="${actualIndex}"
+                        data-field="${field}"
+                        onblur="updateCellValue(this)">${value}</td>`;
+        });
+
+        html += '</tr>';
+    });
+
+    html += '</tbody>';
+    table.innerHTML = html;
+
+    // Update pagination
+    updatePagination();
+}
+
+// Update cell value
+function updateCellValue(cell) {
+    const row = parseInt(cell.dataset.row);
+    const field = cell.dataset.field;
+    const newValue = cell.textContent.trim();
+
+    parsedData[row][field] = newValue;
+
+    // Re-validate this row
+    validateData();
+
+    // Re-render if validation state changed
+    if (cell.classList.contains('cell-error') && !validationErrors[row]) {
+        cell.classList.remove('cell-error');
+    } else if (!cell.classList.contains('cell-error') && validationErrors[row]) {
+        renderDataTable();
+    }
+}
+
+// Update pagination
+function updatePagination() {
+    const totalPages = Math.ceil(parsedData.length / rowsPerPage);
+    const pagination = document.getElementById('pagination');
+
+    let html = '';
+
+    // Previous button
+    html += `<button class="page-btn" onclick="changePage(${currentPage - 1})"
+             ${currentPage === 1 ? 'disabled' : ''}>Previous</button>`;
+
+    // Page numbers
+    for (let i = 1; i <= Math.min(totalPages, 5); i++) {
+        html += `<button class="page-btn ${i === currentPage ? 'active' : ''}"
+                 onclick="changePage(${i})">${i}</button>`;
+    }
+
+    if (totalPages > 5) {
+        html += `<span>...</span>`;
+        html += `<button class="page-btn" onclick="changePage(${totalPages})">${totalPages}</button>`;
+    }
+
+    // Next button
+    html += `<button class="page-btn" onclick="changePage(${currentPage + 1})"
+             ${currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
+
+    html += `<span style="margin-left: 20px;">Page ${currentPage} of ${totalPages}</span>`;
+
+    pagination.innerHTML = html;
+}
+
+// Change page
+function changePage(page) {
+    const totalPages = Math.ceil(parsedData.length / rowsPerPage);
+    if (page >= 1 && page <= totalPages) {
+        currentPage = page;
+        renderDataTable();
+    }
+}
+
+// Remove error rows
+function removeErrorRows() {
+    if (!confirm('Are you sure you want to remove all rows with errors?')) {
+        return;
+    }
+
+    // Filter out error rows
+    parsedData = parsedData.filter((row, index) => !validationErrors[index]);
+
+    // Reset validation
+    validationErrors = {};
+    currentPage = 1;
+
+    validateData();
+    renderDataTable();
+}
+
+// Import data
+function importData() {
+    const validRows = parsedData.filter((row, index) => !validationErrors[index]);
+
+    if (validRows.length === 0) {
+        alert('No valid rows to import.');
+        return;
+    }
+
+    if (!confirm(`Import ${validRows.length} valid rows?`)) {
+        return;
+    }
+
+    showLoading(`Importing ${validRows.length} records...`);
+
+    // Process in batches
+    const batchSize = 100;
+    const batches = [];
+
+    for (let i = 0; i < validRows.length; i += batchSize) {
+        batches.push(validRows.slice(i, i + batchSize));
+    }
+
+    let successCount = 0;
+    let errorCount = 0;
+    const importLog = document.getElementById('importLog');
+    importLog.innerHTML = '';
+
+    // Process batches sequentially
+    processBatch(0);
+
+    function processBatch(batchIndex) {
+        if (batchIndex >= batches.length) {
+            // All done
+            document.getElementById('successCount').textContent = successCount;
+            document.getElementById('errorCount').textContent = errorCount;
+            document.getElementById('totalCount').textContent = successCount + errorCount;
+            hideLoading();
+            goToStep(3);
+            return;
+        }
+
+        const batch = batches[batchIndex];
+
+        fetch('{{ import_url }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                model: modelData.model,
+                data: batch
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            // Process results
+            result.results.forEach((item, index) => {
+                const logItem = document.createElement('div');
+                logItem.className = `log-item ${item.success ? 'success' : 'error'}`;
+
+                const rowNum = batchIndex * batchSize + index + 1;
+
+                logItem.innerHTML = `
+                    <span class="icon">${item.success ? '✓' : '✗'}</span>
+                    <span>Row ${rowNum}: ${item.message || (item.success ? 'Imported successfully' : 'Import failed')}</span>
+                `;
+
+                importLog.appendChild(logItem);
+
+                if (item.success) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            });
+
+            // Update loading message
+            const processed = (batchIndex + 1) * batchSize;
+            showLoading(`Importing records... ${Math.min(processed, validRows.length)}/${validRows.length}`);
+
+            // Process next batch
+            processBatch(batchIndex + 1);
+        })
+        .catch(error => {
+            hideLoading();
+            alert('Import error: ' + error);
+        });
+    }
+}
+
+// Navigation
+function goToStep(step) {
+    // Update step indicator
+    document.querySelectorAll('.step').forEach((el, index) => {
+        if (index + 1 < step) {
+            el.classList.add('completed');
+        }
+        el.classList.toggle('active', index + 1 === step);
+    });
+
+    // Show corresponding content
+    document.querySelectorAll('.content-section').forEach(section => {
+        section.classList.remove('active');
+    });
+    document.getElementById(`step${step}`).classList.add('active');
+}
+
+// Start new import
+function startNewImport() {
+    if (confirm('Start a new import? All current data will be lost.')) {
+        location.reload();
+    }
+}
+
+// Loading overlay
+function showLoading(text) {
+    document.getElementById('loadingText').textContent = text;
+    document.getElementById('loadingOverlay').style.display = 'flex';
+}
+
+function hideLoading() {
+    document.getElementById('loadingOverlay').style.display = 'none';
+}
+</script>
+{% endblock %}

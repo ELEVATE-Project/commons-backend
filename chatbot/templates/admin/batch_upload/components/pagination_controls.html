@@ -1,0 +1,18 @@
+<div class="pagination-controls">
+    <div class="pagination-info">
+        Showing <span id="currentItemIndex{% if position == 'bottom' %}Bottom{% endif %}">1</span>
+        of <span id="totalItems{% if position == 'bottom' %}Bottom{% endif %}">0</span> files
+    </div>
+    <div class="pagination-nav">
+        <button class="page-btn" id="firstPageBtn{% if position == 'bottom' %}Bottom{% endif %}" onclick="goToPage(1)">&lt;&lt;</button>
+        <button class="page-btn" id="prevPageBtn{% if position == 'bottom' %}Bottom{% endif %}" onclick="goToPrevPage()">&lt;</button>
+        <span id="pageNumbers{% if position == 'bottom' %}Bottom{% endif %}"></span>
+        <button class="page-btn" id="nextPageBtn{% if position == 'bottom' %}Bottom{% endif %}" onclick="goToNextPage()">&gt;</button>
+        <button class="page-btn" id="lastPageBtn{% if position == 'bottom' %}Bottom{% endif %}" onclick="goToPage(totalPages)">&gt;&gt;</button>
+    </div>
+    <div class="page-jump">
+        <span>Go to page:</span>
+        <input type="number" id="pageJumpInput{% if position == 'bottom' %}Bottom{% endif %}" min="1" value="1">
+        <button onclick="jumpToPage{% if position == 'bottom' %}Bottom{% endif %}()">Go</button>
+    </div>
+</div>
