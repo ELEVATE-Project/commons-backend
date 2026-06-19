@@ -1,0 +1,56 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+{% load admin_urls static admin_list %}
+
+{% block object-tools-items %}
+{{ block.super }}
+{% if has_add_permission %}
+
+{# Upload button for batch upload #}
+{% if has_batch_upload %}
+<li style="list-style-type: none">
+  <a href="{{ batch_upload_url }}" class="btn btn-success">
+    <i class="fas fa-upload"></i> {% trans 'Upload' %}
+  </a>
+</li>
+{% endif %}
+
+{# Upload button for Media model #}
+{% if opts.model_name == 'media' %}
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="google-drive/" class="btn btn-success">
+    <i class="fas fa-cloud-upload-alt"></i> {% trans 'Add drive' %}
+  </a>
+</li>
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="{% url 'admin:chatbot_media_batch_upload' %}" class="btn btn-success">
+    <i class="fas fa-upload"></i> {% trans 'Upload media' %}
+  </a>
+</li>
+{% endif %}
+
+{# Post Processing button for Story model #}
+{% if opts.model_name == 'story' and show_post_processing_button %}
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="{% url 'admin:chatbot_story_post_processing' %}" class="btn btn-warning" style="background-color: #f0ad4e; color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;">
+    <i class="fas fa-cogs"></i> {% trans 'Post Processing' %}
+  </a>
+</li>
+{% endif %}
+
+{# Export and Import buttons for CompanyBot model #}
+{% if opts.model_name == 'companybot' %}
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="{% url 'admin:chatbot_companybot_export' %}" class="btn btn-info">
+    <i class="fas fa-file-export"></i> {% trans 'Export All Bots' %}
+  </a>
+</li>
+<li style="padding-left: 5px; list-style-type: none">
+  <a href="{% url 'admin:chatbot_companybot_import' %}" class="btn btn-primary">
+    <i class="fas fa-file-import"></i> {% trans 'Import Bots' %}
+  </a>
+</li>
+{% endif %}
+
+{% endif %}
+{% endblock %}
