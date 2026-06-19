@@ -275,6 +275,13 @@ class BatchMediaSaveView(View):
 
             # Step 3: Create and save media
             try:
+                fallback_description = f"Extracted from {filename}" if filename else ''
+                description = (
+                    item_data.get('summary')
+                    or item_data.get('description')
+                    or fallback_description
+                )
+
                 organization_instance = None
                 if item_data.get('organization_slug'):
                     try:
@@ -283,10 +290,10 @@ class BatchMediaSaveView(View):
                         print(f"Warning: Company with slug {item_data['organization_slug']} not found")
 
                 media = Media(
-                    name=item_data['name'],
-                    media_type=item_data['media_type'],
-                    priority=item_data['priority'],
-                    description=item_data['description'],
+                    name=item_data.get('title') or item_data.get('name') or filename,
+                    media_type=item_data.get('media_type', FileTypeChoices.TXT.value),
+                    priority=item_data.get('priority', 'P1'),
+                    description=description,
                     company_bot_id=company_bot_id,
                     organization=organization_instance,
                 )
@@ -758,10 +765,10 @@ class BatchMediaSaveView(View):
 
             # Create subdocument media
             subdoc_media = Media(
-                name=subdoc_title,
+                name=subdoc_data.get('title') or subdoc_title or filename,
                 media_type=subdoc_data.get('media_type', FileTypeChoices.TXT.value),
                 priority=parent_media.priority,
-                description=subdoc_data.get('description', subdoc_data.get('summary', '')),
+                description=subdoc_data.get('summary') or subdoc_data.get('description') or '',
                 company_bot_id=company_bot_id,
                 parent=actual_parent,
                 organization=organization_instance,

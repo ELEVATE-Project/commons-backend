@@ -319,6 +319,24 @@ class BatchMediaTaskStatusView(View):
         original_filename = ai_data.get('original_filename')
         repaired_structured_content = repair_structured_content(ai_data.get('structured_content'))
 
+        def get_summary_text(data, structured_content):
+            for key in ('summary', 'description', 'abstract'):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+            if isinstance(structured_content, dict):
+                for key, value in structured_content.items():
+                    if str(key).strip().lower() in ('summary', 'description', 'abstract'):
+                        if isinstance(value, str) and value.strip():
+                            return value.strip()
+                        if isinstance(value, list):
+                            values = [str(item).strip() for item in value if str(item).strip()]
+                            if values:
+                                return '\n'.join(values)
+
+            return ''
+
         # Get media type first to check if it's Excel
         media_type_value = self.get_main_doc_media_type(ai_data)
 
@@ -327,9 +345,10 @@ class BatchMediaTaskStatusView(View):
         main_url = main_urls[0] if main_urls else ''
         is_main_excel = self.is_excel_file(original_filename, media_type_value) or self.is_excel_file(main_url, media_type_value)
         print("AI DATA ------->", ai_data)
+        summary_text = get_summary_text(ai_data, repaired_structured_content)
         main_data = {
             'title': original_filename if (original_filename and not is_template) else ai_data.get('title', ''),
-            'summary': ai_data.get('summary', ''),
+            'summary': summary_text,
             'extracted_text': ai_data.get('exact_content', '') if is_main_excel else '',
             'organization': ai_data.get('organization', '') or company_name or '',
             'geography': to_title_case(ai_data.get('geography', '')),
@@ -370,6 +389,8 @@ class BatchMediaTaskStatusView(View):
         data = {
             'auto_tags': auto_tags,
             'enhanced_data': {
+                'title': main_data['title'],
+                'summary': main_data['summary'],
                 'description': main_data['summary'],
                 'extracted_text': main_data['extracted_text'],
                 'organization': main_data['organization'],
