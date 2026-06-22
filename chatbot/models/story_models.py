@@ -182,6 +182,8 @@ class Tag(models.Model):
     )
 
     description = models.TextField(null=True, blank=True)
+    is_theme = models.BooleanField(default=False)
+    icon = models.CharField(max_length=1000, null=True, blank=True)
 
     created_by = models.ForeignKey(Profile, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

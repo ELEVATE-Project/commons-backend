@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django import forms
 from django.shortcuts import render
 from django.http import HttpResponseRedirect
 from django.contrib.admin.decorators import action
@@ -15,11 +16,10 @@ from chatbot.views.Media.save_views import BatchMediaSaveView, BatchMediaRetrySa
 from chatbot.views.Media.status_views import BatchMediaTaskStatusView, VectorDBTaskStatusView
 from chatbot.views.Media.upload_views import BatchMediaUploadView
 from chatbot.views.Media.google_drive_integration import (
+    GoogleDriveIntegrationView,
     GoogleDriveAuthView,
     GoogleDriveCallbackView,
-    GoogleDriveFilesView,
-    GoogleDriveFileImportView,
-    GoogleDriveIntegrationView,
+    GoogleDriveFileImportView
 )
 
 
@@ -126,7 +126,14 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         ]
 
         if obj and obj.pk:
-            if obj.tags.filter(created_by_id=1).exists():
+            has_auto_tags = obj.tags.filter(
+                source_type__in=[
+                    TagSourceChoices.AI_EXTRACTED,
+                    TagSourceChoices.AI_GENERATED,
+                ]
+            ).exists()
+
+            if has_auto_tags:
                 fieldsets.append(
                     ('Auto Tags', {
                         'fields': ('auto_tags',),
@@ -224,9 +231,6 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             path('google-drive/callback/',
                  self.admin_site.admin_view(GoogleDriveCallbackView.as_view()),
                  name='chatbot_media_google_drive_callback'),
-            path('google-drive/files/',
-                 self.admin_site.admin_view(GoogleDriveFilesView.as_view()),
-                 name='chatbot_media_google_drive_files'),
             path('google-drive/files/import/',
                  self.admin_site.admin_view(GoogleDriveFileImportView.as_view()),
                  name='chatbot_media_google_drive_file_import'),
@@ -271,14 +275,40 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             )
 
 
+class MasterTagAdminForm(forms.ModelForm):
+    is_theme = forms.TypedChoiceField(
+        choices=((False, 'False'), (True, 'True')),
+        coerce=lambda value: value in (True, 'True', 'true', '1', 1),
+        initial=False,
+        required=True,
+        label='Is theme'
+    )
+
+    class Meta:
+        model = Tag
+        fields = '__all__'
+
+
 @admin.register(Tag)
 class MasterTagAdmin(BatchUploadMixin, admin.ModelAdmin):
-    list_display = ('name', 'status', 'source_type', 'created_by', 'created_at')
+    form = MasterTagAdminForm
+    list_display = ('name', 'status', 'is_theme_value', 'source_type', 'created_by', 'created_at')
     list_filter = (
         CustomAdvanceDateFilter,
         'name',
+        'is_theme',
         'created_by',
         'source_type'
+    )
+    fields = (
+        'name',
+        'status',
+        'description',
+        'is_theme',
+        'icon',
+        'source_type',
+        'company',
+        'created_by'
     )
     raw_id_fields = ('created_by',)
     readonly_fields = ('source_type', 'company', 'created_by')
@@ -287,7 +317,13 @@ class MasterTagAdmin(BatchUploadMixin, admin.ModelAdmin):
     ordering = ('-created_at',)
 
     enable_batch_upload = True
-    batch_upload_fields = ['name', 'status', 'description', 'created_by']
+    batch_upload_fields = ['name', 'status', 'description', 'is_theme', 'icon', 'created_by']
+
+    def is_theme_value(self, obj):
+        return 'True' if obj.is_theme else 'False'
+
+    is_theme_value.short_description = 'Is theme'
+    is_theme_value.admin_order_field = 'is_theme'
 
     def save_model(self, request, obj, form, change):
         print("In save")

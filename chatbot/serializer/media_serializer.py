@@ -11,7 +11,7 @@ media_base_url = os.getenv("MEDIA_BASE_URL")
 class S3UrlMixin:
     def resolve_s3_url(self, obj):
         linked_file = obj.subdocuments.filter(
-            key_values__key__iregex=r'^document[_\s]type$',
+            key_values__key__iregex=r'^document[ _]type$',
             key_values__value__icontains="source document"
         ).first()
 
@@ -19,7 +19,7 @@ class S3UrlMixin:
             return linked_file.get_s3_url()
 
         if obj.parent:
-            parent_kv = obj.parent.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+            parent_kv = obj.parent.key_values.filter(key__iregex=r'^document[ _]type$').first()
             parent_doc_type = parent_kv.value.lower() if parent_kv and parent_kv.value else None
             if parent_doc_type in ["template", "source document"]:
                 return obj.get_s3_url()
@@ -28,7 +28,7 @@ class S3UrlMixin:
 
     def resolve_thumbnail_url(self, obj):
         linked_file = obj.subdocuments.filter(
-            key_values__key__iregex=r'^document[_\s]type$',
+            key_values__key__iregex=r'^document[ _]type$',
             key_values__value__icontains="source document"
         ).first()
 
@@ -38,7 +38,7 @@ class S3UrlMixin:
             return None
 
         if obj.parent:
-            parent_kv = obj.parent.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+            parent_kv = obj.parent.key_values.filter(key__iregex=r'^document[ _]type$').first()
             parent_doc_type = parent_kv.value.lower() if parent_kv and parent_kv.value else None
             if parent_doc_type in ["template", "source document"]:
                 if obj.thumbnail:
@@ -149,7 +149,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
                 ).get(id=media_id)
 
                 source_child = media_obj.subdocuments.filter(
-                    key_values__key__iregex=r'^document[_\s]type$',
+                    key_values__key__iregex=r'^document[ _]type$',
                     key_values__value__icontains='source document'
                 ).first()
 
@@ -413,7 +413,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         return None
 
     def get_document_type(self, obj):
-        document_type = obj.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+        document_type = obj.key_values.filter(key__iregex=r'^document[ _]type$').first()
         return document_type.value if document_type else None
 
     def get_key_entities(self, obj):
@@ -427,7 +427,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
             return obj.overridden_media_type
 
         source_child = obj.subdocuments.filter(
-            key_values__key__iregex=r'^document[_\s]type$',
+            key_values__key__iregex=r'^document[ _]type$',
             key_values__value__icontains='source document'
         ).first()
 
@@ -441,7 +441,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
             return obj.overridden_media_type_display
 
         source_child = obj.subdocuments.filter(
-            key_values__key__iregex=r'^document[_\s]type$',
+            key_values__key__iregex=r'^document[ _]type$',
             key_values__value__icontains='source document'
         ).first()
 
@@ -497,7 +497,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
             organization_name = obj.organization.name
 
         geography = obj.key_values.filter(key__iexact='GEOGRAPHY').first()
-        document_type = obj.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+        document_type = obj.key_values.filter(key__iregex=r'^document[ _]type$').first()
 
         if title and title.value:
             basic_info.append(f"<div><b>Title:</b> {title.value}</div>")
@@ -516,7 +516,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         filtered_kvs = obj.key_values.exclude(
             Q(key__in=['TITLE', 'ORGANIZATION', 'KEY ENTITIES', 'GEOGRAPHY',
                        'ORIGINAL_FILE_URL', 'FOUND_IN_DOCUMENT', 'DOCUMENT TYPE REASON']) |
-            Q(key__iregex=r'^document[_\s]type$') |
+            Q(key__iregex=r'^document[ _]type$') |
             Q(key__isnull=True, value__isnull=True) |
             Q(key='', value='')
         )
@@ -534,7 +534,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         if not filtered_kvs.exists() and not basic_info:
             metadata_kvs = obj.key_values.filter(
                 Q(key__in=['TITLE', 'KEY ENTITIES', 'GEOGRAPHY']) |
-                Q(key__iregex=r'^document[_\s]type$')
+                Q(key__iregex=r'^document[ _]type$')
             ).exclude(
                 Q(key__isnull=True, value__isnull=True) |
                 Q(key='', value='')
@@ -574,7 +574,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         children = obj.subdocuments.all()
 
         for child in children:
-            child_doc_type_kv = child.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+            child_doc_type_kv = child.key_values.filter(key__iregex=r'^document[ _]type$').first()
             is_source_doc = False
 
             if child_doc_type_kv and child_doc_type_kv.value:
@@ -635,7 +635,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         return None
 
     def get_document_type(self, obj):
-        document_type = obj.key_values.filter(key__iregex=r'^document[_\s]type$').first()
+        document_type = obj.key_values.filter(key__iregex=r'^document[ _]type$').first()
         return document_type.value if document_type else None
 
     def get_key_entities(self, obj):

@@ -1,65 +1,161 @@
 {% extends 'admin/base_site.html' %}
+{% load i18n static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; <a href="/admin/chatbot/">Chatbot</a>
+    &rsaquo; <a href="/admin/chatbot/media/">Media</a>
+    &rsaquo; Add Drive
+</div>
+{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
-    <h2>Google Drive Integration</h2>
+<style>
+    /* Wizard Framework & Layout Styles */
+    .gd-container { width: 100%; margin: 0; padding: 10px 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .gd-header-tools { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .gd-title { margin: 0; font-size: 26px; color: #333; font-weight: 500; }
+    .gd-btn-back { background: #f8f9fa; border: 1px solid #ddd; color: #444; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; transition: all 0.2s; }
+    .gd-btn-back:hover { background: #e9ecef; color: #222; text-decoration: none; }
 
-    <div class="card">
-        <div class="card-body">
+    /* Stepper UI (Reduced to 2 Steps) */
+    .stepper-wrapper { display: flex; justify-content: center; align-items: center; margin-bottom: 40px; position: relative; }
+    .stepper-item { display: flex; flex-direction: row; align-items: center; z-index: 2; position: relative; padding: 0 15px; background: transparent; }
+    .step-counter { width: 30px; height: 30px; border-radius: 50%; background: #e9ecef; color: #6c757d; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 10px; font-size: 14px; transition: 0.3s; z-index: 2;}
+    .step-name { font-size: 14px; color: #6c757d; font-weight: 500; transition: 0.3s; }
+    .stepper-item.active .step-counter { background: #417690; color: white; }
+    .stepper-item.active .step-name { color: #333; font-weight: bold; }
+    .stepper-item.completed .step-counter { background: #28a745; color: white; }
+    .stepper-item.completed .step-name { color: #28a745; }
+    .stepper-divider { height: 2px; background: #e9ecef; flex: 1; max-width: 150px; margin: 0 10px; transition: 0.3s; }
+    .stepper-divider.active { background: #417690; }
 
-            <button id="connect-google-drive" class="btn btn-primary">
-                Connect Google Drive
-            </button>
+    /* Forms */
+    .form-group { background: #f8f9fa; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
+    .form-label { display: block; font-weight: 600; color: #333; font-size: 16px; margin-bottom: 10px; }
+    .gd-input, .gd-select { width: 100%; max-width: 400px; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; background: #fff; outline: none; transition: border-color 0.2s; }
+    .gd-input:focus, .gd-select:focus { border-color: #417690; }
+    
+    .info-banner { background: #e8f4f8; border: 1px solid #bce2ef; padding: 20px; border-radius: 8px; color: #31708f; font-size: 14px; margin-bottom: 30px; display: flex; gap: 12px; align-items: flex-start; }
 
-            <div class="mt-4">
-                <label for="folder-url">
-                    Google Drive Folder URL
-                </label>
+    .gd-btn-primary { background: #417690; color: #fff; border: none; padding: 10px 25px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px;}
+    .gd-btn-primary:hover { background: #2f586d; }
+    .gd-btn-primary:disabled { background: #a0b8c4; cursor: not-allowed; }
+    .gd-btn-outline { background: transparent; border: 1px solid #ccc; color: #333; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; cursor: pointer; }
+    
+    .step-section { display: none; animation: fadeIn 0.3s; }
+    .step-section.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-                <input
-                    type="text"
-                    id="folder-url"
-                    class="form-control"
-                    placeholder="https://drive.google.com/drive/folders/xxxxxxxxxxxxxxxx"
-                />
+    /* BULLETPROOF MODALS */
+    .gd-modal-overlay { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; background: rgba(0,0,0,0.6) !important; z-index: 10000 !important; justify-content: center !important; align-items: center !important; }
+</style>
 
-                <button
-                    id="load-folder-files"
-                    class="btn btn-secondary mt-2"
-                    disabled>
-                    Load Files
-                </button>
+<div class="gd-container">
+    <div class="gd-header-tools">
+        <h1 class="gd-title">Batch Upload</h1>
+    </div>
+
+    <div class="stepper-wrapper">
+        <div class="stepper-item active" id="step-nav-1"><div class="step-counter">1</div><div class="step-name">Configure & Fetch</div></div>
+        <div class="stepper-divider" id="div-1"></div>
+        <div class="stepper-item" id="step-nav-2"><div class="step-counter">2</div><div class="step-name">Processing & Saving</div></div>
+    </div>
+
+    <div style="background: #fff; padding: 30px; border-radius: 8px; border: 1px solid #e3e6f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        
+        <div id="step-1" class="step-section active">
+            <h2 style="margin-top: 0; font-size: 24px; font-weight: 500; margin-bottom: 25px;">Upload Files</h2>
+            
+            <div class="form-group">
+                <label class="form-label" for="organizationSelect">Select Organization *</label>
+                <select id="organizationSelect" class="gd-select" style="width: 300px;" required>
+                    <option value="">-- Select Organization --</option>
+                    {% for company in companies %}
+                        <option value="{{ company.slug }}" data-name="{{ company.name }}" {% if user_company and company.id == user_company.id %}selected{% endif %}>{{ company.name }}</option>
+                    {% endfor %}
+                </select>
+                <div style="margin-top: 8px; font-size: 12px; color: #666;">This organization will be used as metadata for all fetched files.</div>
             </div>
 
-            <div id="file-list" class="mt-4" style="display:none;">
-                <h4>Files in Selected Folder</h4>
+            <div style="display:none;">
+                <select id="companyBotSelect">
+                    <option value="">-- Select Company Bot --</option>
+                    {% for bot in company_bots %}
+                        <option value="{{ bot.id }}" {% if bot.id == default_bot_id %}selected{% endif %}>{{ bot.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
 
-                <div class="mb-2">
-                    <button
-                        id="select-all"
-                        class="btn btn-sm btn-outline-primary">
-                        Select All
-                    </button>
-
-                    <button
-                        id="unselect-all"
-                        class="btn btn-sm btn-outline-secondary">
-                        Unselect All
-                    </button>
+            
+            <div style="text-align: center; border: 2px dashed #417690; background: #fff; border-radius: 8px; padding: 40px 20px; margin-bottom: 25px;">
+                <div id="auth-container">
+                    <button id="connect-google-drive" class="gd-btn-primary" type="button">Connect Google Drive</button>
                 </div>
 
-                <ul class="list-group" id="files"></ul>
-
-                <button
-                    id="upload-files"
-                    class="btn btn-success mt-3"
-                    disabled>
-                    Import Selected Files
-                </button>
+                <div id="fetch-container" style="display: none; max-width: 600px; margin: 0 auto; text-align: left;">
+                    <label style="display:block; font-weight:600; margin-bottom:10px; color:#333;">Google Drive Folder URL *</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="folder-url" class="gd-input" placeholder="https://drive.google.com/drive/folders/..." style="flex:1; max-width:100%;" />
+                        <button id="load-and-upload-files" class="gd-btn-primary" type="button">Fetch & Upload All Files</button>
+                    </div>
+                </div>
             </div>
+            
+            <a href="/admin/chatbot/media/" class="gd-btn-back" style="margin-top: 20px;">Back to Media List</a>
+        </div>
 
-            <p id="status-message" class="mt-3"></p>
+       <div id="step-2" class="step-section">
+            <h2 style="margin-top:0; font-size: 24px; font-weight: 500; margin-bottom: 25px;">Processing & Saving</h2>
+            
+            <div style="text-align: center; padding: 60px 20px;">
+                <div id="loading-spinner" style="display: block;">
+                    <svg id="loader-spinner" style="width: 50px; height: 50px; animation: spin 1s linear infinite; color: #417690; margin-bottom: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
+                    <div id="loader-icon-done" style="display:none; color:#28a745; margin-bottom:20px;">
+                        <svg style="width: 50px; height: 50px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    </div>
+                    
+                    <h3 id="loader-title" style="margin-top: 20px; color: #333;">Connecting to Google Drive...</h3>
+                    <p id="loader-desc" style="color: #666;">Verifying folder permissions and fetching documents.</p>
 
+                    <div id="loader-bar-wrap" style="width: 100%; max-width: 500px; margin: 25px auto 0 auto; background: #e9ecef; border-radius: 4px; height: 8px; overflow: hidden; display: none;">
+                        <div id="loader-progress-bar" style="background: #417690; height: 100%; width: 5%; transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+
+                <div id="results-container" style="display: none; margin-top: 30px;">
+                    <button onclick="window.location.reload();" class="gd-btn-primary" type="button">Upload Another Folder</button>
+                    <a href="/admin/chatbot/media/" class="gd-btn-outline" style="margin-left: 10px; padding: 10px 20px; text-decoration: none; display: inline-block;">View Database</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>@keyframes spin { 100% { transform: rotate(360deg); } }</style>
+
+<div id="orgConfirmModal" class="gd-modal-overlay" style="display: none;">
+    <div style="background-color: white; padding: 30px; border-radius: 8px; width: 450px; text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+        <h3 style="margin-top: 0; margin-bottom: 20px; color: #ff9800;">Organization Selection</h3>
+        <p style="margin-bottom: 25px; line-height: 1.5; font-size: 15px;">You've selected a different organization than your profile organization. Are you sure you want to proceed with "<span id="selectedOrgName" style="font-weight: bold;"></span>"?</p>
+        <div style="display: flex; gap: 15px; justify-content: center;">
+            <button onclick="confirmOrgSelection(true)" class="gd-btn-primary" type="button">Yes, Use Selected</button>
+            <button onclick="confirmOrgSelection(false)" class="gd-btn-outline" type="button">No, Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div id="error-modal" class="gd-modal-overlay" style="display: none;">
+    <div style="background-color: white; border-radius: 8px; width: 500px; overflow: hidden; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+        <div style="background: #f8d7da; border-bottom: 1px solid #f5c6cb; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 id="error-modal-title" style="color: #721c24; margin:0; font-size: 18px; display:flex; align-items:center; gap:8px;">Error</h3>
+            <button onclick="document.getElementById('error-modal').style.display='none'" style="border:none; background:none; font-size:24px; cursor:pointer; color:#721c24;">&times;</button>
+        </div>
+        <div style="padding: 30px; text-align: center;">
+            <p id="error-modal-desc1" style="font-size: 16px; color: #333; font-weight: bold; margin-bottom: 15px;"></p>
+            <p id="error-modal-desc2" style="font-size: 14px; color: #666; margin-bottom: 25px; line-height: 1.5;"></p>
+            <button class="gd-btn-primary" style="background: #e74a3b; width: 100%;" onclick="document.getElementById('error-modal').style.display='none'" type="button">I Understand</button>
         </div>
     </div>
 </div>
@@ -67,292 +163,275 @@
 <script>
 document.addEventListener('DOMContentLoaded', function () {
 
-    const connectButton = document.getElementById('connect-google-drive');
-    const loadFolderButton = document.getElementById('load-folder-files');
-    const folderUrlInput = document.getElementById('folder-url');
+    window.goToStep = function(step) {
+        document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
+        document.getElementById(`step-${step}`).classList.add('active');
 
-    const importButton = document.getElementById('upload-files');
-
-    const fileList = document.getElementById('files');
-    const fileListWrapper = document.getElementById('file-list');
-
-    const selectAllButton = document.getElementById('select-all');
-    const unselectAllButton = document.getElementById('unselect-all');
-
-    const statusMessage = document.getElementById('status-message');
-
-    function setStatus(message, isError=false) {
-        statusMessage.textContent = message || '';
-        statusMessage.style.color = isError ? '#ba2121' : '#417690';
+        if(step >= 1) { document.getElementById('step-nav-1').classList.add('active'); }
+        if(step >= 2) { 
+            document.getElementById('step-nav-1').classList.add('completed'); 
+            document.getElementById('div-1').classList.add('active');
+            document.getElementById('step-nav-2').classList.add('active'); 
+        } else {
+            document.getElementById('step-nav-1').classList.remove('completed'); 
+            document.getElementById('div-1').classList.remove('active');
+            document.getElementById('step-nav-2').classList.remove('active'); 
+        }
     }
 
-    connectButton.addEventListener('click', function () {
-        window.location.href = 'auth/';
+    const orgSelect = document.getElementById('organizationSelect');
+    orgSelect.addEventListener('change', function() {
+        const selectedOption = orgSelect.options[orgSelect.selectedIndex];
+        if(!selectedOption.value) return;
+        {% if user_company %}
+        if(selectedOption.value !== "{{ user_company.slug }}") {
+            document.getElementById('selectedOrgName').textContent = selectedOption.dataset.name;
+            document.getElementById('orgConfirmModal').style.setProperty('display', 'flex', 'important');
+        }
+        {% endif %}
     });
+
+    window.confirmOrgSelection = function(proceed) {
+        document.getElementById('orgConfirmModal').style.setProperty('display', 'none', 'important');
+        if(!proceed) {
+            {% if user_company %} orgSelect.value = "{{ user_company.slug }}"; {% else %} orgSelect.value = ""; {% endif %}
+        }
+    };
 
     if (window.location.search.includes('connected=1')) {
-        loadFolderButton.disabled = false;
-        setStatus(
-            'Google Drive connected. Paste a folder URL and click Load Files.'
-        );
+        document.getElementById('auth-container').style.display = 'none';
+        document.getElementById('fetch-container').style.display = 'block';
+    }
+    document.getElementById('connect-google-drive').addEventListener('click', () => window.location.href = 'auth/');
+
+    function showErrorModal(title, desc1, desc2) {
+        document.getElementById('error-modal-title').innerHTML = `<svg style="width:20px;height:20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> ${title}`;
+        document.getElementById('error-modal-desc1').innerText = desc1;
+        document.getElementById('error-modal-desc2').textContent = desc2;
+        document.getElementById('error-modal').style.setProperty('display', 'flex', 'important');
+    }
+// CSRF token generation securely
+    function getCSRFToken() {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.startsWith('csrftoken=')) return cookie.substring('csrftoken='.length, cookie.length);
+        }
+        return document.querySelector('[name=csrfmiddlewaretoken]') ? document.querySelector('[name=csrfmiddlewaretoken]').value : '';
     }
 
-    loadFolderButton.addEventListener('click', function () {
-
-        const folderUrl = folderUrlInput.value.trim();
-
-        if (!folderUrl) {
-            setStatus(
-                'Please enter a Google Drive folder URL.',
-                true
-            );
-            return;
+    function updateLoader(title, desc, percent) {
+        document.getElementById('loader-title').innerText = title;
+        document.getElementById('loader-desc').textContent = desc;
+        if(document.getElementById('loader-progress-bar')) {
+            document.getElementById('loader-progress-bar').style.width = percent + '%';
         }
+    }async function pollAITasks(items, sessionId, botId) {
+        const csrfToken = getCSRFToken();
+        
+        // Polling loop to wait for native get_auto_extracted_data tasks
+        while (true) {
+            // ONLY track items that successfully got a task ID. Ignore corrupted/failed initial files.
+            const pendingTasks = items.filter(i => i.auto_tag_task_id && !i.auto_tags_ready);
+            
+            // If there are no pending tasks left, break the loop immediately!
+            if (pendingTasks.length === 0) {
+                break;
+            }
 
-        fetchFiles(folderUrl);
+            await new Promise(r => setTimeout(r, 4000)); 
+            const taskIds = pendingTasks.map(i => i.auto_tag_task_id);
+            
+            try {
+                const res = await fetch('/admin/chatbot/media/api/batch-task-status/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ task_ids: taskIds })
+                });
+                const taskData = await res.json();
+                
+                // Bulletproof parser: handles both Arrays and Dictionaries from the backend
+                let tasksMap = {};
+                const rawData = taskData.tasks || taskData.data || taskData.results || taskData;
+                
+                if (Array.isArray(rawData)) {
+                    rawData.forEach(t => { tasksMap[t.task_id || t.id] = t; });
+                } else {
+                    tasksMap = rawData;
+                }
+                
+                for (let item of pendingTasks) {
+                    const info = tasksMap[item.auto_tag_task_id];
+                    if (info && (info.status === 'SUCCESS' || info.status === 'FAILURE')) {
+                        item.auto_tags_ready = true;
+                        
+                        if (info.status === 'SUCCESS' && info.result) {
+                            const aiResult = info.result;
+                            const enhanced = aiResult.enhanced_data || {};
+
+                            item.auto_tags = (aiResult.auto_tags || []).map(tag => {
+                                return typeof tag === 'object' ? tag.text : tag;
+                            });
+
+                            if (enhanced.title) item.title = enhanced.title;
+                            if (enhanced.summary) item.summary = enhanced.summary;
+                            if (enhanced.description) item.description = enhanced.description;
+                            if (Object.prototype.hasOwnProperty.call(enhanced, 'extracted_text')) {
+                                item.extracted_text = enhanced.extracted_text;
+                            }
+                            if (enhanced.media_type) item.media_type = enhanced.media_type;
+                            if (Array.isArray(enhanced.enhanced_key_values)) {
+                                item.key_values = enhanced.enhanced_key_values;
+                            }
+                            if (Array.isArray(enhanced.subdocument)) item.subdocument = enhanced.subdocument;
+                            if (Array.isArray(enhanced.failed_links)) item.failed_links = enhanced.failed_links;
+                            if (Array.isArray(enhanced.images)) item.images = enhanced.images;
+                            if (Array.isArray(enhanced.url)) item.url = enhanced.url;
+                            if (Array.isArray(enhanced.source_documents)) {
+                                item.source_documents = enhanced.source_documents;
+                            }
+                        }
+                    }
+                }
+                
+                // Update loading bar visually
+                const remaining = items.filter(i => i.auto_tag_task_id && !i.auto_tags_ready).length;
+                const completed = items.filter(i => i.auto_tag_task_id).length - remaining;
+                const total = items.filter(i => i.auto_tag_task_id).length;
+                
+                if (total > 0) {
+                    let prog = 40 + Math.floor((completed / total) * 40);
+                    updateLoader(`AI Extraction: ${completed} / ${total} Finished`, 'Analyzing language structures...', prog);
+                }
+                
+            } catch (e) {
+                console.error("Polling error", e);
+            }
+        }
+        
+        // Final Push to DB
+        updateLoader(`Pushing to Database...`, `Synchronizing chunks with the Vector DB...`, 85);
+        
+        try {
+            function nonEmpty(value) {
+                return typeof value === 'string' && value.trim() ? value.trim() : '';
+            }
+
+            // Structure the items to include ALL the LLM extracted data
+            const formattedItems = items.map(item => {
+                const fallbackDescription = item.filename ? `Extracted from ${item.filename}` : '';
+                const description = nonEmpty(item.summary) || nonEmpty(item.description) || fallbackDescription;
+
+                return {
+                    filename: item.filename,
+                    file_index: item.file_index,
+                    file_key: item.file_key,
+                    name: item.title || item.name,                  // Fallback to title
+                    title: item.title,                              // Send explicit title
+                    summary: description,                           // Save view prefers summary
+                    description: description,
+                    media_type: item.media_type,
+                    priority: item.priority || 'P1',
+                    organization_slug: document.getElementById('organizationSelect').value,
+                    extracted_text: item.extracted_text || item.exact_content || '',
+                    key_values: item.key_values || [],
+                    auto_tags: item.auto_tags || [],                // MAP AI TAGS!
+                    manual_tags: item.manual_tags || [],
+                    subdocument: item.subdocument || [],            // MAP NESTED DOCS
+                    source_documents: item.source_documents || [],
+                    images: item.images || []
+                };
+            });
+
+            const saveRes = await fetch('/admin/chatbot/media/api/batch-save/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ 
+                    session_id: sessionId, 
+                    company_bot_id: botId, 
+                    items: formattedItems 
+                })
+            });
+            const saveData = await saveRes.json();
+            
+            document.getElementById('loader-spinner').style.display = 'none';
+            document.getElementById('loader-icon-done').style.display = 'block';
+            document.getElementById('loader-bar-wrap').style.display = 'none';
+
+            if (saveData.success) {
+                updateLoader('Pipeline Completed Successfully!', saveData.summary_message, 100);
+                document.getElementById('loader-title').style.color = '#28a745';
+                document.getElementById('results-container').style.display = 'block';
+            } else {
+                updateLoader('Pipeline Completed with Anomalies', saveData.error || 'Check system logs for details.', 100);
+                document.getElementById('loader-title').style.color = '#d9534f';
+                document.getElementById('results-container').style.display = 'block';
+            }
+        } catch (e) {
+            updateLoader('Fatal Save Error', 'Failed to communicate with the database endpoint.', 100);
+            document.getElementById('loader-spinner').style.display = 'none';
+            document.getElementById('loader-title').style.color = '#d9534f';
+            document.getElementById('results-container').style.display = 'block';
+        }
+    }
+
+    const loadAndUploadBtn = document.getElementById('load-and-upload-files');
+    const folderUrlInput = document.getElementById('folder-url');
+    
+    loadAndUploadBtn.addEventListener('click', function () {
+        const folderUrl = folderUrlInput.value.trim();
+        const companySlug = orgSelect.value;
+        if (!companySlug) return alert('Please select an Organization first.');
+        if (!folderUrl) return alert('Please paste a Google Drive folder URL.');
+
+        goToStep(2);
+        document.getElementById('loading-spinner').style.display = 'block';
+        document.getElementById('results-container').style.display = 'none';
+        document.getElementById('loader-icon-done').style.display = 'none';
+        document.getElementById('loader-spinner').style.display = 'inline-block';
+        document.getElementById('loader-bar-wrap').style.display = 'block';
+        
+        updateLoader('1. Crawling Google Drive...', 'Finding all nested folders and downloading raw files.', 20);
+
+        fetch('files/import/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+            body: JSON.stringify({ 
+                folder_url: folderUrl, 
+                company_id: orgSelect.value, 
+                company_bot_id: document.getElementById('companyBotSelect').value 
+            })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Initialization failed.');
+            return data;
+        })
+        .then(data => {
+            updateLoader(`2. Launching LLM Nodes...`, `Dispatching ${data.data.length} files to AI extraction arrays.`, 40);
+            pollAITasks(data.data, data.session_id, data.company_bot_id);
+        })
+        .catch(err => {
+            let msg = err.message === 'not_public' 
+                ? 'The folder is private. Please update Google Drive sharing settings to "Anyone with the link".' 
+                : err.message;
+            
+            if(err.message === 'not_public' || err.message === 'empty_folder') {
+                goToStep(1);
+                showErrorModal('Error', msg, '');
+            } else {
+                updateLoader('Initialization Failed', msg, 100);
+                document.getElementById('loader-spinner').style.display = 'none';
+                document.getElementById('loader-title').style.color = '#d9534f';
+                document.getElementById('loader-bar-wrap').style.display = 'none';
+                document.getElementById('results-container').style.display = 'block';
+            }
+        });
     });
 
-    function fetchFiles(folderUrl) {
-
-        setStatus('Loading files from Google Drive folder...');
-
-        fileList.innerHTML = '';
-
-                fetch(
-            'files/?folder_url=' +
-            encodeURIComponent(folderUrl)
-        )
-        .then(async function(response) {
-
-            const text = await response.text();
-
-            console.log(text);
-
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                throw new Error(
-                    'Server returned HTML instead of JSON. Check Django logs.'
-                );
-            }
-        })
-        .then(function(response) {
-
-            fileListWrapper.style.display = 'block';
-
-            if (!response.files.length) {
-
-                importButton.disabled = true;
-
-                setStatus(
-                    'No files found in selected folder.'
-                );
-
-                return;
-            }
-
-            response.files.forEach(function(file) {
-
-                const item = document.createElement('li');
-                item.className = 'list-group-item';
-
-                const checkbox = document.createElement('input');
-
-                checkbox.type = 'checkbox';
-                checkbox.className = 'form-check-input me-2';
-                checkbox.value = file.id;
-
-                checkbox.addEventListener(
-                    'change',
-                    updateImportButtonState
-                );
-
-                const label = document.createElement('span');
-
-                let fileSize = '';
-
-                if (file.size) {
-                    fileSize =
-                        ' (' +
-                        Math.round(file.size / 1024) +
-                        ' KB)';
-                }
-
-                label.textContent =
-                    file.name +
-                    fileSize;
-
-                item.appendChild(checkbox);
-                item.appendChild(label);
-
-                fileList.appendChild(item);
-            });
-
-            updateImportButtonState();
-
-            setStatus(
-                response.files.length +
-                ' file(s) found.'
-            );
-        })
-        .catch(function(error) {
-
-            setStatus(
-                error.message,
-                true
-            );
-        });
-    }
-
-    function updateImportButtonState() {
-
-        const checkedFiles =
-            document.querySelectorAll(
-                '#files input[type="checkbox"]:checked'
-            );
-
-        importButton.disabled =
-            checkedFiles.length === 0;
-    }
-
-    selectAllButton.addEventListener(
-        'click',
-        function() {
-
-            document
-                .querySelectorAll(
-                    '#files input[type="checkbox"]'
-                )
-                .forEach(function(cb) {
-                    cb.checked = true;
-                });
-
-            updateImportButtonState();
-        }
-    );
-
-    unselectAllButton.addEventListener(
-        'click',
-        function() {
-
-            document
-                .querySelectorAll(
-                    '#files input[type="checkbox"]'
-                )
-                .forEach(function(cb) {
-                    cb.checked = false;
-                });
-
-            updateImportButtonState();
-        }
-    );
-
-    importButton.addEventListener(
-        'click',
-        function() {
-
-            const selectedFiles =
-                Array.from(
-                    document.querySelectorAll(
-                        '#files input[type="checkbox"]:checked'
-                    )
-                )
-                .map(function(input) {
-                    return input.value;
-                });
-
-            if (!selectedFiles.length) {
-
-                setStatus(
-                    'Please select at least one file.',
-                    true
-                );
-
-                return;
-            }
-
-            importButton.disabled = true;
-
-            setStatus(
-                'Importing selected files...'
-            );
-
-            fetch(
-                'files/import/',
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type':
-                            'application/json',
-                        'X-CSRFToken':
-                            '{{ csrf_token }}'
-                    },
-                    body: JSON.stringify({
-                        file_ids: selectedFiles
-                    })
-                }
-            )
-            .then(function(response) {
-
-                return response.json().then(
-                    function(data) {
-
-                        if (!response.ok) {
-                            throw new Error(
-                                data.error ||
-                                'Import failed'
-                            );
-                        }
-
-                        return data;
-                    }
-                );
-            })
-            .then(function(response) {
-
-                const successCount =
-                    response.results.filter(
-                        function(result) {
-                            return result.success;
-                        }
-                    ).length;
-
-                const failedCount =
-                    response.results.length -
-                    successCount;
-
-                if (failedCount > 0) {
-
-                    setStatus(
-                        successCount +
-                        ' imported, ' +
-                        failedCount +
-                        ' failed.',
-                        true
-                    );
-
-                } else {
-
-                    setStatus(
-                        successCount +
-                        ' file(s) imported successfully.'
-                    );
-                }
-            })
-            .catch(function(error) {
-
-                setStatus(
-                    error.message,
-                    true
-                );
-            })
-            .finally(function() {
-
-                updateImportButtonState();
-            });
-        }
-    );
+    document.getElementById('error-modal').addEventListener('click', function(e) {
+        if(e.target === this) { this.style.setProperty('display', 'none', 'important'); }
+    });
 });
 </script>
-
 {% endblock %}
