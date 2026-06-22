@@ -1,0 +1,78 @@
+[
+  {
+    "name": "SG Commons Search Bot",
+    "context": "This is search bot",
+    "max_token": 4096,
+    "bot_temperature": 0.0,
+    "top_k": 2,
+    "provider": "bedrock/converse",
+    "provider_keys": "",
+    "llm_model": "us.meta.llama3-3-70b-instruct-v1:0",
+    "filter_score": 0.35,
+    "end_context": "",
+    "introductory_message": null,
+    "tag_context": "",
+    "route": "/sg_search_bot",
+    "bot_type": "SIMPLE",
+    "strategy": null,
+    "llm_key": null,
+    "dynamic_context": "",
+    "dynamic_context_type": null,
+    "pre_context": "",
+    "tool_context": "",
+    "other_params": null,
+    "connect_timeout": 5.0,
+    "read_timeout": 10.0,
+    "chat_history_limit": 1000,
+    "stream": true,
+    "company_slug": "shikshalokamstaging",
+    "voices": [
+      {
+        "type": "TextToText",
+        "provider": "GOOGLE",
+        "name": null,
+        "sample_link": null,
+        "language": "hi",
+        "provider_code": null,
+        "gender": "Male",
+        "voice_speed": 1.0,
+        "other_params": null
+      },
+      {
+        "type": "TextToText",
+        "provider": "GOOGLE",
+        "name": null,
+        "sample_link": null,
+        "language": "kn",
+        "provider_code": null,
+        "gender": "Male",
+        "voice_speed": 1.0,
+        "other_params": null
+      },
+      {
+        "type": "TextToText",
+        "provider": "GOOGLE",
+        "name": null,
+        "sample_link": null,
+        "language": "en",
+        "provider_code": null,
+        "gender": "Male",
+        "voice_speed": 1.0,
+        "other_params": null
+      },
+      {
+        "type": "SpeechToText",
+        "provider": "GOOGLE",
+        "name": null,
+        "sample_link": null,
+        "language": "en",
+        "provider_code": null,
+        "gender": "Male",
+        "voice_speed": 1.0,
+        "other_params": null
+      }
+    ],
+    "state_machines": [],
+    "bot_vernaculars": []
+  }
+]

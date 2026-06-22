@@ -6,7 +6,7 @@ set -e
 # Works for fresh installation AND restarts (fully idempotent)
 # ──────────────────────────────────────────────────────────────────────────────
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 GREEN='\033[0;32m'
@@ -156,11 +156,16 @@ with transaction.atomic():
     # Pass 1: create/update all bots
     payloads = []
     for filename in BOT_JSON_FILES:
-        if not os.path.exists(filename):
-            print(f'WARNING: {filename} not found — skipping')
+        filepath = None
+        for possible_path in [os.path.join('setup', filename), os.path.join('docs', 'setup', filename), filename]:
+            if os.path.exists(possible_path):
+                filepath = possible_path
+                break
+        if not filepath:
+            print(f'WARNING: {filename} not found in setup/ or docs/setup/ — skipping')
             continue
 
-        with open(filename) as f:
+        with open(filepath) as f:
             bots_data = json.load(f)
 
         for bot_data in bots_data:
@@ -250,7 +255,7 @@ info "Static files collected"
 # ── 17. Launch Celery worker in a new Terminal window ─────────────────────────
 info "Opening Celery worker in a new Terminal window..."
 osascript -e "tell application \"Terminal\"
-    do script \"cd '$PROJECT_DIR' && ./start_celery.sh\"
+    do script \"cd '$PROJECT_DIR' && ./setup/start_celery.sh\"
     activate
 end tell"
 
