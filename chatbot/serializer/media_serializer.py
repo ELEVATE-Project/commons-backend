@@ -207,7 +207,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
         final_description = description if description is not None else instance.get('summary', '')
         final_priority = db_priority if db_priority is not None else priority
 
-        return {
+        result = {
             'id': media_id,
             'name': title,
             'description': final_description,
@@ -236,6 +236,15 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
             'view_count': view_count,
             'download_count': download_count,
         }
+
+        # Pure pass-through: the vector service decides (via its own INCLUDE_SCORING_DEBUG)
+        # whether to populate the hybrid fusion breakdown. Surface each field only when
+        # the vector service actually returned a value for it; otherwise omit it.
+        for debug_key in ('keyword_score', 'rrf_score', 'dense_rank', 'sparse_rank'):
+            if instance.get(debug_key) is not None:
+                result[debug_key] = instance.get(debug_key)
+
+        return result
 
     def _get_media_type_display(self, file_type):
         if not file_type:
