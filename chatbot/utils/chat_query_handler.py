@@ -156,7 +156,7 @@ def query_database_with_metadata(
         data["resource_type"] = resource_type
     if file_type:
         data["file_type"] = file_type
-    
+
     print(f"[query_database_with_metadata] Request Data: {data}")
     
     try:

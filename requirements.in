@@ -53,6 +53,8 @@ google-cloud-texttospeech
 google-cloud-speech
 google-cloud-translate
 google-cloud-aiplatform
+google-auth-oauthlib
+google-api-python-client
 psycopg2-binary
 
 ############################
