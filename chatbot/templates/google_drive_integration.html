@@ -399,17 +399,15 @@ document.addEventListener('DOMContentLoaded', function () {
             body: JSON.stringify({ 
                 folder_url: folderUrl, 
                 company_id: orgSelect.value, 
-                company_bot_id: document.getElementById('companyBotSelect').value 
+                company_bot_id: "" 
             })
         })
         .then(async res => {
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Initialization failed.');
-            return data;
-        })
-        .then(data => {
-            updateLoader(`2. Launching LLM Nodes...`, `Dispatching ${data.data.length} files to AI extraction arrays.`, 40);
-            pollAITasks(data.data, data.session_id, data.company_bot_id);
+            const responseData = await res.json();
+            if (!res.ok) throw new Error(responseData.error || 'Initialization failed.');
+            
+            updateLoader(`2. Launching LLM Nodes...`, `Dispatching ${responseData.data.length} files to AI extraction arrays.`, 40);
+            pollAITasks(responseData.data, responseData.session_id, responseData.company_bot_id);
         })
         .catch(err => {
             let msg = err.message === 'not_public' 

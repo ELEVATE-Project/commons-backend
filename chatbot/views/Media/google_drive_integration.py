@@ -1,5 +1,7 @@
 import os
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+insecure_transport = os.getenv('OAUTHLIB_INSECURE_TRANSPORT')
+if insecure_transport:
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = insecure_transport
 import io
 import json
 import re
@@ -18,14 +20,15 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.errors import HttpError
-
+from chatbot.views.Media.extract_views import BatchMediaExtractView
 from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media
 from shikshalokam.models.enums import PriorityChoices
-
+import mimetypes
 # Import the native LLM extraction tools
 from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_data
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 
 GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 GOOGLE_EXPORT_MIME_TYPES = {
@@ -77,7 +80,7 @@ class GoogleDriveIntegrationView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # Pull native collections to match your Batch Upload step1 layout requirements
-        context['companies'] = Company.objects.all().order_by('name')
+        context['companies'] = get_company_queryset_for_user(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
         
         # Match the normal media upload flow's extraction bot.
@@ -85,11 +88,7 @@ class GoogleDriveIntegrationView(TemplateView):
         context['default_bot_id'] = default_bot.id if default_bot else None
         
         # Check if requesting user has profile matching organization parameters
-        if hasattr(self.request.user, 'email'):
-            from chatbot.models import Profile
-            profile = Profile.objects.filter(email=self.request.user.email).first()
-            if profile and profile.company:
-                context['user_company'] = profile.company
+        context['user_company'] = get_user_company(self.request.user)
 
         return context
 
@@ -192,7 +191,7 @@ def get_all_files_in_folder(service, initial_folder_id):
             try:
                 results = service.files().list(
                     q=f"'{current_folder_id}' in parents and trashed=false",
-                    pageSize=100,
+                    pageSize=1000,
                     fields="nextPageToken, files(id, name, mimeType, size)",
                     pageToken=page_token
                 ).execute()
@@ -329,56 +328,32 @@ class GoogleDriveFileImportView(View):
             
             try:
                 metadata, content = download_drive_file(service, file_id)
-                extension = original_name.rsplit('.', 1)[-1].lower() if '.' in original_name else 'pdf'
                 
-                if extension not in ['pdf', 'csv', 'txt', 'docx', 'xlsx', 'doc', 'xls']:
-                    extension = 'pdf'
-                    
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{extension}") as tmp:
-                    tmp.write(content)
-                    tmp_path = tmp.name
-                
+                # The DummyFile wrapper mimics a Django UploadedFile interface
                 dummy_file = DummyFile(original_name, len(content), content)
                 file_index = int(time.time() * 1000000) + i
+                
+                # Cache the file
                 file_key = CacheManager.cache_file(dummy_file, session_id, file_index)
                 if not file_key:
                     raise RuntimeError("cache_file_failed")
-                master_tags = TagProcessor.get_master_tags(company=company, other_params=company_bot.other_params if company_bot else None)
-                other_data = {"master_tag": master_tags, "original_filename": original_name}
                 
-                # TRIGGER CELERY LLM EXTRACTION TASK
-                task = get_auto_extracted_data.delay(
-                    file_path=tmp_path,
-                    company_bot_id=company_bot.id,
-                    file_extension=extension,
-                    other_data=other_data
+                # REUSE the exact logic from the native upload flow
+                extract_view = BatchMediaExtractView()
+                data = extract_view.extract_file_data(
+                    file=dummy_file,
+                    company_bot=company_bot,
+                    file_index=file_index,
+                    request=request
                 )
                 
-                base_name = original_name.rsplit('.', 1)[0] if '.' in original_name else original_name
-                actual_media_type = FileTypeChoices.get_mime_from_extension(extension) or FileTypeChoices.TXT.value
+                # Append the session metadata needed for the frontend
+                data['status'] = 'success'
+                data['session_id'] = session_id
+                data['file_key'] = file_key
                 
-                extracted_data.append({
-                    'filename': original_name,
-                    'file_index': file_index,
-                    'name': base_name,
-                    'media_type': actual_media_type,
-                    'description': f'Extracted from {original_name}',
-                    'priority': 'P1',
-                    'tags': [],
-                    'manual_tags': [],
-                    'auto_tags': [],
-                    'auto_tag_task_id': task.id,
-                    'auto_tags_ready': False,
-                    'key_values': [],
-                    'subdocument': [],
-                    'images': [],
-                    'failed_links': [],
-                    'organization': company.name if company else '',
-                    'organization_slug': company.slug if company else '',
-                    'file_key': file_key,
-                    'status': 'success',
-                    'session_id': session_id
-                })
+                extracted_data.append(data)
+                
             except Exception as e:
                 print(f"Skipped file {original_name}: {e}")
                 pass
@@ -403,8 +378,23 @@ class GoogleDriveFileDownloadView(View):
             }, status=401)
 
         metadata, content = download_drive_file(service, file_id)
+        
+        # Determine original name and mime type
+        original_name = metadata.get('name', str(file_id))
+        original_mime = metadata.get('mimeType', '')
+        
+        # Check if we exported it as a different format (e.g., GSheet to CSV)
+        actual_mime = GOOGLE_EXPORT_MIME_TYPES.get(original_mime, original_mime)
+        
+        # If the file lacks an extension (common for Google Docs), generate the correct one
+        if '.' not in original_name:
+            ext = mimetypes.guess_extension(actual_mime) or '.bin'
+            file_name = f"{original_name}{ext}"
+        else:
+            file_name = original_name
+
         return FileResponse(
             io.BytesIO(content),
             as_attachment=True,
-            filename=metadata.get('name') or f'{file_id}.pdf'
+            filename=file_name
         )

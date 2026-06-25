@@ -275,13 +275,6 @@ class BatchMediaSaveView(View):
 
             # Step 3: Create and save media
             try:
-                fallback_description = f"Extracted from {filename}" if filename else ''
-                description = (
-                    item_data.get('summary')
-                    or item_data.get('description')
-                    or fallback_description
-                )
-
                 organization_instance = None
                 if item_data.get('organization_slug'):
                     try:
@@ -293,7 +286,7 @@ class BatchMediaSaveView(View):
                     name=item_data.get('title') or item_data.get('name') or filename,
                     media_type=item_data.get('media_type', FileTypeChoices.TXT.value),
                     priority=item_data.get('priority', 'P1'),
-                    description=description,
+                    description=item_data.get('summary') or item_data.get('description') or '',
                     company_bot_id=company_bot_id,
                     organization=organization_instance,
                 )
