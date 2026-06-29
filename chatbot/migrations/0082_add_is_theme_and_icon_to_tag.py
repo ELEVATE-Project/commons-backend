@@ -18,6 +18,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='tag',
             name='icon',
-            field=models.CharField(blank=True, max_length=1000, null=True),
+            field=models.TextField(blank=True, null=True),
         ),
     ]

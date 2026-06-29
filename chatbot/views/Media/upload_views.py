@@ -1,9 +1,10 @@
 from django.views.generic import TemplateView
 from django.contrib.admin.views.decorators import staff_member_required
 from django.utils.decorators import method_decorator
-from chatbot.models import Tag, Profile, FileTypeChoices, TagSourceChoices, TagChoices, Company, EntityStatus
+from chatbot.models import Tag, FileTypeChoices, TagSourceChoices, TagChoices
 from chatbot.models.media_models import PriorityChoices
 import json
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -32,18 +33,9 @@ class BatchMediaUploadView(TemplateView):
             default_bot = default_bot.first()
             context['default_bot_id'] = default_bot.id
 
-        # Add companies for organization selection
-        context['companies'] = Company.objects.filter(status=EntityStatus.ACTIVE).order_by('name')
-
-        # Add user's company info
-        user_company = None
-        if self.request.user.is_authenticated:
-            try:
-                user_profile = Profile.objects.get(email=self.request.user.email)
-                user_company = user_profile.company
-                context['user_company'] = user_company
-            except Profile.DoesNotExist:
-                pass
+        # Restrict the organization dropdown based on the logged-in user's role.
+        context['companies'] = get_company_queryset_for_user(self.request.user)
+        context['user_company'] = get_user_company(self.request.user)
 
         try:
             existing_tags_query = Tag.objects.filter(

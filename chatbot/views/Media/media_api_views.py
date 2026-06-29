@@ -112,7 +112,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
 
         source_child_qs = Media.objects.filter(
             parent=OuterRef('pk'),
-            key_values__key__iregex=r'^document[ _]type$',
+            key_values__key__iregex=r'^document[_ ]type$',
             key_values__value__icontains='source document'
         ).order_by('id')
 
@@ -185,7 +185,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
         source_document_media = KeyValue.objects.annotate(
             norm_key=Lower('key', output_field=TextField())
         ).filter(
-            norm_key__iregex=r'^document[ _]type$',
+            norm_key__iregex=r'^document[_ ]type$',
             value__icontains='source document'
         ).values_list('media_id', flat=True)
 
@@ -221,7 +221,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
 
         doc_type_subquery = KeyValue.objects.filter(
             media=OuterRef('pk'),
-            key__iregex=r'^document[ _]type$'
+            key__iregex=r'^document[_ ]type$'
         ).values('value')[:1]
 
         queryset = queryset.annotate(
@@ -531,7 +531,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
                         id__in=Subquery(
                             KeyValue.objects.filter(
                                 media=OuterRef('pk'),
-                                key__iregex=r'^document[ _]type$',
+                                key__iregex=r'^document[_ ]type$',
                                 value__icontains=rt
                             ).values('media__id')
                         )
@@ -699,7 +699,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
         document_type_data = (
             KeyValue.objects
             .filter(
-                key__iregex=r'^document[ _]type$',
+                key__iregex=r'^document[_ ]type$',
                 media__in=queryset
             )
             .values('value')
@@ -1010,7 +1010,7 @@ class MediaSearchV2View(APIView):
                 ).only('id', 'media_type').get(id=source_id_int)
 
                 source_child = media_obj.subdocuments.filter(
-                    key_values__key__iregex=r'^document[ _]type$',
+                    key_values__key__iregex=r'^document[_ ]type$',
                     key_values__value__icontains='source document'
                 ).first()
 
@@ -1052,7 +1052,7 @@ class MediaSearchV2View(APIView):
             KeyValue.objects.annotate(
                 norm_key=Lower('key', output_field=TextField())
             ).filter(
-                norm_key__iregex=r'^document[ _]type$',
+                norm_key__iregex=r'^document[_ ]type$',
                 value__icontains='source document'
             ).values_list('media_id', flat=True)
         )

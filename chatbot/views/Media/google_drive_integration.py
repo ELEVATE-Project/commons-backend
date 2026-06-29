@@ -1,5 +1,7 @@
 import os
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+insecure_transport = os.getenv('OAUTHLIB_INSECURE_TRANSPORT')
+if insecure_transport:
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = insecure_transport
 import io
 import json
 import re
@@ -20,9 +22,18 @@ from googleapiclient.errors import HttpError
 
 from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media, Profile
 from chatbot.models.repository_models import Repository
+from chatbot.views.Media.extract_views import BatchMediaExtractView
 from shikshalokam.models.enums import PriorityChoices
+import mimetypes
+# Import the native LLM extraction tools
+from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_data
+from chatbot.utils.knowledge_service.cache_manager import CacheManager
+from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 
-GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
+GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
+
 GOOGLE_EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "application/pdf",
     "application/vnd.google-apps.spreadsheet": "text/csv",
@@ -72,7 +83,7 @@ class GoogleDriveIntegrationView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # Pull native collections to match your Batch Upload step1 layout requirements
-        context['companies'] = Company.objects.all().order_by('name')
+        context['companies'] = get_company_queryset_for_user(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
 
         # Match the normal media upload flow's extraction bot.
@@ -292,7 +303,7 @@ def get_all_files_in_folder(service, initial_folder_id):
             try:
                 results = service.files().list(
                     q=f"'{current_folder_id}' in parents and trashed=false",
-                    pageSize=100,
+                    pageSize=1000,
                     fields="nextPageToken, files(id, name, mimeType, size)",
                     pageToken=page_token
                 ).execute()
@@ -442,8 +453,23 @@ class GoogleDriveFileDownloadView(View):
             }, status=401)
 
         metadata, content = download_drive_file(service, file_id)
+        
+        # Determine original name and mime type
+        original_name = metadata.get('name', str(file_id))
+        original_mime = metadata.get('mimeType', '')
+        
+        # Check if we exported it as a different format (e.g., GSheet to CSV)
+        actual_mime = GOOGLE_EXPORT_MIME_TYPES.get(original_mime, original_mime)
+        
+        # If the file lacks an extension (common for Google Docs), generate the correct one
+        if '.' not in original_name:
+            ext = mimetypes.guess_extension(actual_mime) or '.bin'
+            file_name = f"{original_name}{ext}"
+        else:
+            file_name = original_name
+
         return FileResponse(
             io.BytesIO(content),
             as_attachment=True,
-            filename=metadata.get('name') or f'{file_id}.pdf'
+            filename=file_name
         )

@@ -22,6 +22,32 @@ from chatbot.views.Media.google_drive_integration import (
     GoogleDriveCallbackView,
     GoogleDriveFileImportView
 )
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company, get_user_profile
+
+
+class MediaOrganizationFilter(admin.SimpleListFilter):
+    title = 'Organization'
+    parameter_name = 'organization'
+
+    def lookups(self, request, model_admin):
+        if request.user.is_superuser:
+            companies = model_admin.get_queryset(request).exclude(
+                organization__isnull=True
+            ).values_list(
+                'organization__id', 'organization__name'
+            ).distinct().order_by('organization__name')
+            return [(company_id, name) for company_id, name in companies if company_id and name]
+
+        user_company = get_user_company(request.user)
+        if user_company:
+            return [(user_company.id, user_company.name)]
+
+        return []
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(organization__id=self.value())
+        return queryset
 
 
 class KeyValueInline(admin.TabularInline):
@@ -41,12 +67,13 @@ class MediaImagesInline(admin.TabularInline):
 class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     form = MediaAdminForm
     list_display = (
-        'file_name', 'get_title', 'media_type', 'display_mode', 'parent__name',
+        'file_name', 'get_title', 'get_organization', 'media_type', 'display_mode', 'parent__name',
         'view_count', 'download_count', 'updated_at', 'created_at'
     )
     list_filter = (
         CustomAdvanceDateFilter,
         'display_mode',
+        MediaOrganizationFilter,
         'name',
         'media_type',
         'company_bot'
@@ -82,10 +109,31 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     get_title.short_description = 'Title'
     get_title.admin_order_field = 'key_values__value'
 
+    def get_organization(self, obj):
+        return obj.organization.name if obj.organization else "-"
+
+    get_organization.short_description = 'Organization'
+    get_organization.admin_order_field = 'organization__name'
+
     def get_queryset(self, request):
         """Optimize queries by prefetching related objects"""
-        qs = super().get_queryset(request)
-        return qs.prefetch_related('key_values', 'tags', 'parent')
+        qs = super().get_queryset(request).select_related(
+            'organization', 'parent'
+        ).prefetch_related('key_values', 'tags')
+
+        if request.user.is_superuser:
+            return qs
+
+        user_company = get_user_company(request.user)
+        if user_company:
+            return qs.filter(organization=user_company)
+
+        return qs.none()
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'organization':
+            kwargs['queryset'] = get_company_queryset_for_user(request.user)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
@@ -101,12 +149,10 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     def get_fieldsets(self, request, obj=None):
         # Check if user is a MODERATOR
         is_moderator = False
-        try:
-            profile = Profile.objects.get(email=request.user.email)
+        profile = get_user_profile(request.user)
+        if profile:
             is_moderator = profile.profile_type == ProfileType.MODERATOR
             print("Is User Moderator: ", is_moderator)
-        except Profile.DoesNotExist:
-            is_moderator = False
 
         if is_moderator:
             base_fields = ('name', 'organization', 'file', 'markdown_file', 'thumbnail', 'url', 'display_mode', 'description', 'extracted_text',

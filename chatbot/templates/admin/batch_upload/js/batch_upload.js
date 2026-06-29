@@ -64,19 +64,12 @@ const mediaTypes = {{ media_types|safe }};
 const priorities = {{ priorities|safe }};
 const BOT_PROFILE_ID = 1;
 
-{% if user.is_authenticated %}
-    {% with user_profile=user.profile %}
-        {% if user_profile and user_profile.company %}
-            userCompanyName = "{{ user_profile.company.name|escapejs }}";
-        {% endif %}
-    {% endwith %}
-{% endif %}
-
 {% if user_company %}
 userDefaultCompany = {
     slug: "{{ user_company.slug|escapejs }}",
     name: "{{ user_company.name|escapejs }}"
 };
+userCompanyName = "{{ user_company.name|escapejs }}";
 {% endif %}
 
 // File status constants
