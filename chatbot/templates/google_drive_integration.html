@@ -18,7 +18,7 @@
         <h2>Repositories</h2>
 
         <div class="header-actions">
-            <a class="btn btn-success" id="connect-google-drive">{% trans 'Add Repository' %}</a>
+            <a class="btn btn-success" id="connect-google-drive" href="{{ drive_upload_url }}">{% trans 'Add Repository' %}</a>
         </div>
     </div>
 
@@ -193,32 +193,49 @@ document.addEventListener('DOMContentLoaded', function () {
             repositories.forEach((repo, index) => {
                 const createdAt = new Date(repo.created_at).toLocaleString();
 
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${index + 1}</td>
-                        <td>
-                            <a
-                                href="${repo.root_link}"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title="${repo.root_link}"
-                            >
-                                ${repo.repository_name}
-                            </a>
-                        </td>
-                        <td>${repo.status}</td>
-                        <td>${createdAt}</td>
-                        <td style="text-align:center;">
-                            <button
-                                class="delete-btn"
-                                type="button"
-                                onclick="return false;"
-                            >
-                                Delete
-                            </button>
-                        </td>
-                    </tr>
-                `;
+                const row = document.createElement('tr');
+                const addCell = (text) => {
+                    const td = document.createElement('td');
+                    td.textContent = text;
+                    row.appendChild(td);
+                   return td;
+                };
+
+                addCell(String(index + 1));
+
+                const linkCell = document.createElement('td');
+                const link = document.createElement('a');
+                const rootLink = repo.root_link || '';
+                if (/^https?:\/\//i.test(rootLink)) {
+                   link.href = rootLink;
+                }
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.title = rootLink;
+                link.textContent = repo.repository_name || rootLink || 'Repository';
+                linkCell.appendChild(link);
+                row.appendChild(linkCell);
+
+                addCell(repo.status || '');
+                addCell(createdAt);
+
+                const actionCell = document.createElement('td');
+                actionCell.style.textAlign = 'center';
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = 'Delete';
+
+                // Dummy button for now (no functionality)
+                deleteBtn.addEventListener('click', function () {
+                    console.log('Delete clicked for:', repo);
+                });
+
+                actionCell.appendChild(deleteBtn);
+                row.appendChild(actionCell);
+
+                tbody.appendChild(row);
             });
 
             if (repositories.length === 0) {
@@ -241,13 +258,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     }
     loadRepositories();
-
-    const driveUploadButton = document.getElementById('connect-google-drive');
-    if (driveUploadButton) {
-        driveUploadButton.addEventListener('click', function () {
-            window.location.href = "{{ drive_upload_url|escapejs }}";
-        });
-    }
 
 });
 </script>

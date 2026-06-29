@@ -206,11 +206,19 @@ def extract_folder_id(folder_url):
     return match.group(1) if match else None
 
 
-def get_request_profile(request):
+def get_request_profile(request, company=None):
     user_email = getattr(request.user, 'email', None)
     if not user_email:
         return None
-    return Profile.objects.filter(email=user_email).first()
+
+    resolved_company = company or get_user_company(request.user)
+    if not resolved_company:
+        return None
+
+    return Profile.objects.select_related('company').filter(
+        email__iexact=user_email,
+        company=resolved_company,
+    ).first()
 
 
 def upsert_repository_from_drive_import(
@@ -240,36 +248,46 @@ def upsert_repository_from_drive_import(
     )
     now = timezone.now()
 
-    defaults = {
+    update_fields = {
         'repository_name': repository_name,
         'provider_type': 'GOOGLE_DRIVE',
         'status': status,
         'sync_enabled': True,
         'last_sync_cursor': (folder_meta or {}).get('id'),
         'last_sync_time': now,
-        'last_successful_sync': now if status == 'COMPLETED' else None,
-        'last_failed_sync': now if status != 'COMPLETED' and error_message else None,
         'last_error_message': error_message,
         'total_resources': total_resources,
         'org_name': org_name,
-        'created_by': created_by,
         'updated_by': updated_by or created_by,
     }
+
+    if status == 'COMPLETED':
+        update_fields['last_successful_sync'] = now
+        update_fields['last_failed_sync'] = None
+    elif error_message:
+        update_fields['last_failed_sync'] = now
 
     if repository_id:
         repository = Repository.objects.filter(id=repository_id, org_id=org_id).first()
         if repository:
-            for key, value in defaults.items():
+            for key, value in update_fields.items():
                 setattr(repository, key, value)
             repository.root_link = folder_url
             repository.save()
             return repository
 
-    repository, _ = Repository.objects.update_or_create(
+    create_defaults = dict(update_fields)
+    create_defaults['created_by'] = created_by
+
+    repository, created = Repository.objects.get_or_create(
         org_id=org_id,
         root_link=folder_url,
-        defaults=defaults,
+        defaults=create_defaults,
     )
+    if not created:
+        for key, value in update_fields.items():
+            setattr(repository, key, value)
+        repository.save()
     return repository
 
 
@@ -394,7 +412,7 @@ class GoogleDriveFileImportView(View):
         if not company_bot:
             return JsonResponse({'success': False, 'error': 'No company bot available'}, status=400)
 
-        request_profile = get_request_profile(request)
+        request_profile = get_request_profile(request, company=company)
 
         try:
             folder_meta = service.files().get(

@@ -308,7 +308,8 @@ class BatchMediaSaveView(View):
                         organization_instance = Company.objects.get(slug=item_data['organization_slug'])
                     except Company.DoesNotExist:
                         print(f"Warning: Company with slug {item_data['organization_slug']} not found")
-
+                if not organization_instance and selected_company:
+                    organization_instance = selected_company
                 media = Media(
                     name=item_data.get('title') or item_data.get('name') or filename,
                     media_type=item_data.get('media_type', FileTypeChoices.TXT.value),
