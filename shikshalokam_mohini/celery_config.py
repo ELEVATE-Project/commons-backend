@@ -22,6 +22,7 @@ app.autodiscover_tasks([
     'chatbot.celery_tasks.ptm_report_tasks',
     'chatbot.celery_tasks.knowledge_service.tag_tasks',
     'chatbot.celery_tasks.knowledge_service.media_tasks',
+    'chatbot.celery_tasks.knowledge_service.google_drive_tasks',
     'chatbot.celery_tasks.flow_tasks',
     'chatbot.celery_tasks.free_flow_tasks',
     'chatbot.celery_tasks.post_processing_tasks'

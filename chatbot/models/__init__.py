@@ -4,6 +4,8 @@ from .story_models import *
 from .chat_models import *
 from .bot_vernacular_model import *
 from .media_models import *
+from .media_org_mapping_model import *
+from .repository_models import *
 from .theme_models import *
 from .profile_models import *
 from .company_models import *

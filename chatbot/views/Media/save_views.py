@@ -6,7 +6,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.utils.decorators import method_decorator
 from django.http import JsonResponse
 from django.views import View
-from chatbot.models import Media, KeyValue, Profile, FileTypeChoices, CompanyBot, Company, FileDisplayMode
+from chatbot.models import Media, KeyValue, Profile, FileTypeChoices, CompanyBot, Company, FileDisplayMode, MediaOrgMapping
 from chatbot.models.media_models import MediaImage, MediaTypeChoices
 import json
 import os
@@ -98,6 +98,7 @@ class BatchMediaSaveView(View):
                 company_bot_id=company_bot_id,
                 parent=parent_media,
                 organization=parent_media.organization,
+                url=source_doc_url,
                 display_mode=FileDisplayMode.PRIVATE
             )
 
@@ -151,6 +152,23 @@ class BatchMediaSaveView(View):
             print(f"Error creating source document media for {source_doc_url}: {e}")
             traceback.print_exc()
             return None
+
+    def create_media_org_mapping(self, media, org_id):
+        """Keep the media-to-organization mapping in sync for Google Drive imports."""
+        if not media or not org_id:
+            return
+
+        MediaOrgMapping.objects.update_or_create(
+            media_id_id=media.id,
+            defaults={'org_id': org_id},
+        )
+
+    def is_google_drive_import(self, item_data):
+        return bool(
+            item_data.get('source_provider') == 'GOOGLE_DRIVE'
+            or item_data.get('source_file_id')
+            or item_data.get('source_folder_url')
+        )
 
     def wait_for_vector_db_save_safe(self, task_id, timeout=30):
         """Enhanced waiting with better error handling"""
@@ -226,6 +244,15 @@ class BatchMediaSaveView(View):
                         company_slug = selected_company.slug
                 except Company.DoesNotExist:
                     pass
+            if not selected_company and item_data.get('organization_id'):
+                try:
+                    selected_company = Company.objects.get(id=item_data['organization_id'])
+                    company_slug = selected_company.slug
+                except (Company.DoesNotExist, TypeError, ValueError):
+                    pass
+            if not selected_company and company_bot and getattr(company_bot, 'company_id', None):
+                selected_company = company_bot.company
+                company_slug = selected_company.slug if selected_company else None
 
             extracted_text = item_data.get('extracted_text', '')
 
@@ -296,6 +323,7 @@ class BatchMediaSaveView(View):
                     description=description,
                     company_bot_id=company_bot_id,
                     organization=organization_instance,
+                    url=item_data.get('source_url') if self.is_google_drive_import(item_data) else None,
                 )
 
                 if file_content and file_name:
@@ -316,6 +344,15 @@ class BatchMediaSaveView(View):
 
                 # Save and get the vector DB task ID
                 vector_task_id = media.save()
+
+                if self.is_google_drive_import(item_data):
+                    org_id = (
+                        getattr(organization_instance, 'id', None)
+                        or getattr(selected_company, 'id', None)
+                        or getattr(company_bot, 'company_id', None)
+                        or getattr(getattr(user_profile, 'company', None), 'id', None)
+                    )
+                    self.create_media_org_mapping(media, org_id)
 
             except Exception as media_save_error:
                 return {
@@ -416,6 +453,14 @@ class BatchMediaSaveView(View):
                             markdown_content
                         )
                         if source_media:
+                            if self.is_google_drive_import(item_data):
+                                org_id = (
+                                    getattr(source_media.organization, 'id', None)
+                                    or getattr(media.organization, 'id', None)
+                                    or getattr(company_bot, 'company_id', None)
+                                    or getattr(getattr(user_profile, 'company', None), 'id', None)
+                                )
+                                self.create_media_org_mapping(source_media, org_id)
                             source_document_results.append({
                                 'success': True,
                                 'source_media_id': source_media.id,
@@ -578,6 +623,7 @@ class BatchMediaSaveView(View):
     def save_subdocument(self, subdoc_data, parent_media, company_bot_id, user_profile, company_slug, source_doc):
         """Save a subdocument as a separate Media object linked to parent"""
         try:
+            company_bot = CompanyBot.objects.get(id=company_bot_id)
             source_doc_url = subdoc_data.get('source_document')
             actual_parent = parent_media
 
@@ -607,6 +653,13 @@ class BatchMediaSaveView(View):
                 if source_media:
                     # Use the source document as the parent instead
                     actual_parent = source_media
+                    if self.is_google_drive_import(source_doc):
+                        org_id = (
+                            getattr(source_media.organization, 'id', None)
+                            or getattr(parent_media.organization, 'id', None)
+                            or getattr(getattr(user_profile, 'company', None), 'id', None)
+                        )
+                        self.create_media_org_mapping(source_media, org_id)
                     print(f"Using source document {source_media.id} as parent for subdocument")
 
             file_url = subdoc_data.get('file_url')
@@ -772,6 +825,7 @@ class BatchMediaSaveView(View):
                 company_bot_id=company_bot_id,
                 parent=actual_parent,
                 organization=organization_instance,
+                url=source_doc_url,
                 display_mode=subdoc_data.get('display_mode', FileDisplayMode.VISIBLE),
             )
 
@@ -797,6 +851,15 @@ class BatchMediaSaveView(View):
 
             # Save the media object
             subdoc_media.save()
+
+            if self.is_google_drive_import(source_doc):
+                org_id = (
+                    getattr(organization_instance, 'id', None)
+                    or getattr(actual_parent.organization, 'id', None)
+                    or getattr(company_bot, 'company_id', None)
+                    or getattr(getattr(user_profile, 'company', None), 'id', None)
+                )
+                self.create_media_org_mapping(subdoc_media, org_id)
 
             selected_company = None
             if subdoc_data.get('organization_slug'):
