@@ -30,7 +30,8 @@ from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 
-GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
+GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
 GOOGLE_EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "application/pdf",
     "application/vnd.google-apps.spreadsheet": "text/csv",
