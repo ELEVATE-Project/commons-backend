@@ -20,3 +20,4 @@ config/qa-dev-prod-mitra-bucket.json
 .vscode/
 .claude/
 .venv/
+client_secret.json

@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import models
 
-from chatbot.models import Tag, FileTypeChoices, FileDisplayMode
+from chatbot.models import Tag, FileTypeChoices, FileDisplayMode, TagChoices, TagSourceChoices
 from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
     MediaListSerializer, MediaDetailSerializer, MediaSearchResultSerializer
@@ -19,6 +19,40 @@ from django.db.models import (
     CharField, IntegerField, Case, When, F
 )
 from django.db.models.functions import Greatest, Coalesce, Lower
+
+
+class FetchThemeView(APIView):
+    def get(self, request):
+        filters = {
+            'source_type__in': [TagSourceChoices.MANUAL, TagSourceChoices.AI_EXTRACTED],
+            'status': TagChoices.APPROVED,
+        }
+        is_theme_param = request.query_params.get('is_theme')
+        if is_theme_param is not None:
+            filters['is_theme'] = is_theme_param.lower() in ['1', 'true', 'yes']
+
+        tags = (
+            Tag.objects
+            .filter(**filters)
+            .annotate(resource_count=Count('medias', distinct=True))
+            .order_by('name')
+        )
+
+        themes = [
+            {
+                'title': tag.name,
+                'icon': tag.icon or '',
+                'description': tag.description or '',
+                'resource_count': tag.resource_count
+            }
+            for tag in tags
+        ]
+
+        return Response({
+            'success': True,
+            'count': len(themes),
+            'themes': themes
+        })
 
 
 class MediaViewSet(viewsets.ReadOnlyModelViewSet):

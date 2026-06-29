@@ -1,9 +1,16 @@
 import os
+insecure_transport = os.getenv('OAUTHLIB_INSECURE_TRANSPORT')
+if insecure_transport:
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = insecure_transport
 import io
 import json
+import re
+import tempfile
+import uuid
+import time
 
 from django.core.files.base import ContentFile
-from django.http import FileResponse, JsonResponse
+from django.http import JsonResponse, FileResponse
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
 from django.views import View
@@ -12,16 +19,22 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-
+from googleapiclient.errors import HttpError
+from chatbot.views.Media.extract_views import BatchMediaExtractView
 from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media
 from shikshalokam.models.enums import PriorityChoices
+import mimetypes
+# Import the native LLM extraction tools
+from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_data
+from chatbot.utils.knowledge_service.cache_manager import CacheManager
+from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 
-import re
-
-GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
+GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
 GOOGLE_EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "application/pdf",
-    "application/vnd.google-apps.spreadsheet": "application/pdf",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
     "application/vnd.google-apps.presentation": "application/pdf",
 }
 
@@ -57,37 +70,28 @@ def get_drive_service(request):
     return build('drive', 'v3', credentials=credentials)
 
 
-def download_drive_file(service, file_id):
-    metadata = service.files().get(
-        fileId=file_id,
-        fields="id, name, mimeType"
-    ).execute()
+def get_default_extraction_bot():
+    return CompanyBot.objects.filter(route='/tag_extractor').first() or CompanyBot.objects.first()
 
-    #request = service.files().get_media(fileId=file_id)
-    mime_type = metadata["mimeType"]
-
-    if mime_type in GOOGLE_EXPORT_MIME_TYPES:
-        request = service.files().export_media(
-            fileId=file_id,
-            mimeType=GOOGLE_EXPORT_MIME_TYPES[mime_type]
-        )
-    else:
-        request = service.files().get_media(
-            fileId=file_id
-        )
-
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while done is False:
-        _, done = downloader.next_chunk()
-    fh.seek(0)
-
-    return metadata, fh.read()
 
 
 class GoogleDriveIntegrationView(TemplateView):
     template_name = 'google_drive_integration.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Pull native collections to match your Batch Upload step1 layout requirements
+        context['companies'] = get_company_queryset_for_user(self.request.user)
+        context['company_bots'] = CompanyBot.objects.all()
+        
+        # Match the normal media upload flow's extraction bot.
+        default_bot = get_default_extraction_bot()
+        context['default_bot_id'] = default_bot.id if default_bot else None
+        
+        # Check if requesting user has profile matching organization parameters
+        context['user_company'] = get_user_company(self.request.user)
+
+        return context
 
 
 class GoogleDriveAuthView(View):
@@ -163,23 +167,6 @@ class GoogleDriveCallbackView(View):
         return redirect('/google-drive/?connected=1')
 
 
-class GoogleDriveFilesViewOld(View):
-    def get(self, request):
-        service = get_drive_service(request)
-        if not service:
-            return JsonResponse({
-                'success': False,
-                'error': 'Google Drive is not connected'
-            }, status=401)
-
-        results = service.files().list(
-            q="mimeType='application/pdf' and trashed=false",
-            pageSize=50,
-            fields="nextPageToken, files(id, name, mimeType, size)"
-        ).execute()
-        files = results.get('files', [])
-        return JsonResponse({'success': True, 'files': files})
-
 
 def extract_folder_id(folder_url):
     match = re.search(
@@ -188,41 +175,199 @@ def extract_folder_id(folder_url):
     )
     return match.group(1) if match else None
 
-class GoogleDriveFilesView(View):
-    def get(self, request):
+
+def get_all_files_in_folder(service, initial_folder_id):
+    """
+    Recursively fetches all files inside a folder and its subfolders.
+    """
+    files_found = []
+    folders_to_search = [initial_folder_id]
+    
+    while folders_to_search:
+        # Get the next folder in the queue
+        current_folder_id = folders_to_search.pop(0)
+        page_token = None
+        
+        while True:
+            try:
+                results = service.files().list(
+                    q=f"'{current_folder_id}' in parents and trashed=false",
+                    pageSize=1000,
+                    fields="nextPageToken, files(id, name, mimeType, size)",
+                    pageToken=page_token
+                ).execute()
+                
+                # Separate actual files from sub-folders
+                for item in results.get('files', []):
+                    if item['mimeType'] == 'application/vnd.google-apps.folder':
+                        # Found a nested folder! Add it to the queue to search later
+                        folders_to_search.append(item['id'])
+                    else:
+                        # Found a file! Add it to our final list
+                        files_found.append(item)
+                        
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+                    
+            except HttpError as error:
+                # If a nested folder has restricted permissions, skip it and continue
+                print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
+                break
+                
+    return files_found
+
+
+
+def download_drive_file(service, file_id):
+    # 1. Ask Google for the permissions metadata alongside the file info
+    metadata = service.files().get(
+        fileId=file_id,
+        fields="id, name, mimeType, permissions"
+    ).execute()
+
+    # 2. STRICT CHECK: Ensure the file itself is set to "Anyone with the link"
+    is_public = any(p.get('type') == 'anyone' for p in metadata.get('permissions', []))
+    if not is_public:
+        raise ValueError("not_public")
+
+    mime_type = metadata["mimeType"]
+
+    if mime_type in GOOGLE_EXPORT_MIME_TYPES:
+        request = service.files().export_media(
+            fileId=file_id,
+            mimeType=GOOGLE_EXPORT_MIME_TYPES[mime_type]
+        )
+    else:
+        request = service.files().get_media(
+            fileId=file_id
+        )
+
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while done is False:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+
+    return metadata, fh.read()
+
+
+class GoogleDriveFileImportView(View):
+    def post(self, request):
         service = get_drive_service(request)
-
         if not service:
-            return JsonResponse({
-                'success': False,
-                'error': 'Google Drive is not connected'
-            }, status=401)
+            return JsonResponse({'success': False, 'error': 'Google Drive is not connected'}, status=401)
 
-        folder_url = request.GET.get('folder_url')
+        try:
+            data = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON body'}, status=400)
+
+        folder_url = data.get('folder_url')
+        company_id = data.get('company_id') or data.get('organization_slug')
+        bot_id = data.get('company_bot_id')
 
         if not folder_url:
-            return JsonResponse({
-                'success': False,
-                'error': 'folder_url is required'
-            }, status=400)
+            return JsonResponse({'success': False, 'error': 'folder_url is required'}, status=400)
 
         folder_id = extract_folder_id(folder_url)
-
         if not folder_id:
-            return JsonResponse({
-                'success': False,
-                'error': 'Invalid Google Drive folder URL'
-            }, status=400)
+            return JsonResponse({'success': False, 'error': 'Invalid folder URL'}, status=400)
 
-        results = service.files().list(
-            q=f"'{folder_id}' in parents and trashed=false",
-            pageSize=100,
-            fields="files(id,name,mimeType,size)"
-        ).execute()
+        # 1. Resolve organization
+        company = Company.objects.filter(slug=company_id).first() if company_id else None
+        company_bot = CompanyBot.objects.filter(id=bot_id).first() if bot_id else None
+        if company and company_bot and company_bot.company_id != company.id:
+            return JsonResponse(
+                {'success': False, 'error': 'company_bot_mismatch'},
+                status=400
+            )
+        if company_bot and not company:
+            company = company_bot.company
+        if not company_bot and company:
+            company_bot = CompanyBot.objects.filter(company=company, route='/tag_extractor').first()
+        company_bot = company_bot or get_default_extraction_bot()
 
+        if not company_bot:
+            return JsonResponse({'success': False, 'error': 'No company bot available'}, status=400)
+
+        # 2. Check strict permissions on root folder
+        try:
+            folder_meta = service.files().get(fileId=folder_id, fields="permissions").execute()
+            is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
+            if not is_public:
+                return JsonResponse({'success': False, 'error': 'not_public'}, status=403)
+        except HttpError:
+            return JsonResponse({'success': False, 'error': 'not_public'}, status=403)
+
+        # 3. Recursively Fetch ALL Files
+        all_files = get_all_files_in_folder(service, folder_id)
+        if not all_files:
+            return JsonResponse({'success': False, 'error': 'empty_folder'}, status=400)
+
+        session_id = str(uuid.uuid4())
+        extracted_data = []
+
+        # Dummy file wrapper for CacheManager compatibility
+        class DummyFile:
+            def __init__(self, name, size, content):
+                self.name = name
+                self.size = size
+                self._content = content
+            def chunks(self):
+                chunk_size = 8192
+                for i in range(0, len(self._content), chunk_size):
+                    yield self._content[i:i + chunk_size]
+            def read(self):
+                return self._content
+
+        # 4. Download, Cache, and Trigger LLM Extraction sequentially
+        for i, file_info in enumerate(all_files):
+            file_id = file_info['id']
+            original_name = file_info['name']
+            
+            try:
+                metadata, content = download_drive_file(service, file_id)
+                
+                # The DummyFile wrapper mimics a Django UploadedFile interface
+                dummy_file = DummyFile(original_name, len(content), content)
+                file_index = int(time.time() * 1000000) + i
+                
+                # Cache the file
+                file_key = CacheManager.cache_file(dummy_file, session_id, file_index)
+                if not file_key:
+                    raise RuntimeError("cache_file_failed")
+                
+                # REUSE the exact logic from the native upload flow
+                extract_view = BatchMediaExtractView()
+                data = extract_view.extract_file_data(
+                    file=dummy_file,
+                    company_bot=company_bot,
+                    file_index=file_index,
+                    request=request
+                )
+                
+                # Append the session metadata needed for the frontend
+                data['status'] = 'success'
+                data['session_id'] = session_id
+                data['file_key'] = file_key
+                
+                extracted_data.append(data)
+                
+            except Exception as e:
+                print(f"Skipped file {original_name}: {e}")
+                pass
+        
+        if not extracted_data:
+            return JsonResponse({'success': False, 'error': 'All files were private or corrupted.'}, status=400)
+
+        # 5. Return extraction tasks to frontend
         return JsonResponse({
-            'success': True,
-            'files': results.get('files', [])
+            'success': True, 
+            'data': extracted_data, 
+            'session_id': session_id, 
+            'company_bot_id': company_bot.id
         })
 class GoogleDriveFileDownloadView(View):
     def get(self, request, file_id):
@@ -234,99 +379,23 @@ class GoogleDriveFileDownloadView(View):
             }, status=401)
 
         metadata, content = download_drive_file(service, file_id)
+        
+        # Determine original name and mime type
+        original_name = metadata.get('name', str(file_id))
+        original_mime = metadata.get('mimeType', '')
+        
+        # Check if we exported it as a different format (e.g., GSheet to CSV)
+        actual_mime = GOOGLE_EXPORT_MIME_TYPES.get(original_mime, original_mime)
+        
+        # If the file lacks an extension (common for Google Docs), generate the correct one
+        if '.' not in original_name:
+            ext = mimetypes.guess_extension(actual_mime) or '.bin'
+            file_name = f"{original_name}{ext}"
+        else:
+            file_name = original_name
+
         return FileResponse(
             io.BytesIO(content),
             as_attachment=True,
-            filename=metadata.get('name') or f'{file_id}.pdf'
+            filename=file_name
         )
-
-
-class GoogleDriveFileImportView(View):
-    def post(self, request):
-        service = get_drive_service(request)
-        if not service:
-            return JsonResponse({
-                'success': False,
-                'error': 'Google Drive is not connected'
-            }, status=401)
-
-        try:
-            data = json.loads(request.body or '{}')
-        except json.JSONDecodeError:
-            return JsonResponse({
-                'success': False,
-                'error': 'Invalid JSON body'
-            }, status=400)
-
-        file_ids = data.get('file_ids', [])
-        if not file_ids:
-            return JsonResponse({
-                'success': False,
-                'error': 'No file_ids provided'
-            }, status=400)
-
-        company = None
-        company_id = data.get('company_id')
-        if company_id:
-            company = Company.objects.filter(slug=company_id).first()
-            if not company:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Company with slug "{company_id}" was not found'
-                }, status=404)
-
-        company_bot = None
-        if company:
-            company_bot = CompanyBot.objects.filter(company=company).first()
-        company_bot = company_bot or CompanyBot.objects.first()
-        if not company_bot:
-            return JsonResponse({
-                'success': False,
-                'error': 'No company bot available'
-            }, status=400)
-
-        results = []
-        for file_id in file_ids:
-            try:
-                metadata, content = download_drive_file(service, file_id)
-                filename = metadata.get('name') or f'{file_id}.pdf'
-                extension = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'pdf'
-                media_type = FileTypeChoices.get_mime_from_extension(extension) or FileTypeChoices.PDF
-
-                media = Media(
-                    name=filename.rsplit('.', 1)[0],
-                    media_type=media_type,
-                    priority=data.get('priority', PriorityChoices.P1),
-                    description=data.get('summary', ''),
-                    company_bot=company_bot,
-                    organization=company,
-                    display_mode=FileDisplayMode.VISIBLE
-                )
-                media.file.save(filename, ContentFile(content), save=False)
-
-                company_slug = company.slug if company else (
-                    company_bot.company.slug if company_bot.company else None
-                )
-                vector_task_id = media.save(company_slug=company_slug)
-
-                KeyValue.objects.create(media=media, key='SOURCE_ID', value=file_id)
-                KeyValue.objects.create(media=media, key='SOURCE', value='Google Drive')
-
-                results.append({
-                    'success': True,
-                    'file_id': file_id,
-                    'media_id': media.id,
-                    'name': media.name,
-                    'vector_task_id': vector_task_id
-                })
-            except Exception as exc:
-                results.append({
-                    'success': False,
-                    'file_id': file_id,
-                    'error': str(exc)
-                })
-
-        return JsonResponse({
-            'success': True,
-            'results': results
-        })

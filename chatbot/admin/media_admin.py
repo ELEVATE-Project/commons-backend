@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django import forms
 from django.shortcuts import render
 from django.http import HttpResponseRedirect
 from django.contrib.admin.decorators import action
@@ -15,12 +16,37 @@ from chatbot.views.Media.save_views import BatchMediaSaveView, BatchMediaRetrySa
 from chatbot.views.Media.status_views import BatchMediaTaskStatusView, VectorDBTaskStatusView
 from chatbot.views.Media.upload_views import BatchMediaUploadView
 from chatbot.views.Media.google_drive_integration import (
+    GoogleDriveIntegrationView,
     GoogleDriveAuthView,
     GoogleDriveCallbackView,
-    GoogleDriveFilesView,
-    GoogleDriveFileImportView,
-    GoogleDriveIntegrationView,
+    GoogleDriveFileImportView
 )
+from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company, get_user_profile
+
+
+class MediaOrganizationFilter(admin.SimpleListFilter):
+    title = 'Organization'
+    parameter_name = 'organization'
+
+    def lookups(self, request, model_admin):
+        if request.user.is_superuser:
+            companies = model_admin.get_queryset(request).exclude(
+                organization__isnull=True
+            ).values_list(
+                'organization__id', 'organization__name'
+            ).distinct().order_by('organization__name')
+            return [(company_id, name) for company_id, name in companies if company_id and name]
+
+        user_company = get_user_company(request.user)
+        if user_company:
+            return [(user_company.id, user_company.name)]
+
+        return []
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(organization__id=self.value())
+        return queryset
 
 
 class KeyValueInline(admin.TabularInline):
@@ -40,12 +66,13 @@ class MediaImagesInline(admin.TabularInline):
 class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     form = MediaAdminForm
     list_display = (
-        'file_name', 'get_title', 'media_type', 'display_mode', 'parent__name',
+        'file_name', 'get_title', 'get_organization', 'media_type', 'display_mode', 'parent__name',
         'view_count', 'download_count', 'updated_at', 'created_at'
     )
     list_filter = (
         CustomAdvanceDateFilter,
         'display_mode',
+        MediaOrganizationFilter,
         'name',
         'media_type',
         'company_bot'
@@ -81,10 +108,31 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     get_title.short_description = 'Title'
     get_title.admin_order_field = 'key_values__value'
 
+    def get_organization(self, obj):
+        return obj.organization.name if obj.organization else "-"
+
+    get_organization.short_description = 'Organization'
+    get_organization.admin_order_field = 'organization__name'
+
     def get_queryset(self, request):
         """Optimize queries by prefetching related objects"""
-        qs = super().get_queryset(request)
-        return qs.prefetch_related('key_values', 'tags', 'parent')
+        qs = super().get_queryset(request).select_related(
+            'organization', 'parent'
+        ).prefetch_related('key_values', 'tags')
+
+        if request.user.is_superuser:
+            return qs
+
+        user_company = get_user_company(request.user)
+        if user_company:
+            return qs.filter(organization=user_company)
+
+        return qs.none()
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'organization':
+            kwargs['queryset'] = get_company_queryset_for_user(request.user)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
@@ -100,12 +148,10 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     def get_fieldsets(self, request, obj=None):
         # Check if user is a MODERATOR
         is_moderator = False
-        try:
-            profile = Profile.objects.get(email=request.user.email)
+        profile = get_user_profile(request.user)
+        if profile:
             is_moderator = profile.profile_type == ProfileType.MODERATOR
             print("Is User Moderator: ", is_moderator)
-        except Profile.DoesNotExist:
-            is_moderator = False
 
         if is_moderator:
             base_fields = ('name', 'organization', 'file', 'markdown_file', 'thumbnail', 'url', 'display_mode', 'description', 'extracted_text',
@@ -126,7 +172,14 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         ]
 
         if obj and obj.pk:
-            if obj.tags.filter(created_by_id=1).exists():
+            has_auto_tags = obj.tags.filter(
+                source_type__in=[
+                    TagSourceChoices.AI_EXTRACTED,
+                    TagSourceChoices.AI_GENERATED,
+                ]
+            ).exists()
+
+            if has_auto_tags:
                 fieldsets.append(
                     ('Auto Tags', {
                         'fields': ('auto_tags',),
@@ -224,9 +277,6 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             path('google-drive/callback/',
                  self.admin_site.admin_view(GoogleDriveCallbackView.as_view()),
                  name='chatbot_media_google_drive_callback'),
-            path('google-drive/files/',
-                 self.admin_site.admin_view(GoogleDriveFilesView.as_view()),
-                 name='chatbot_media_google_drive_files'),
             path('google-drive/files/import/',
                  self.admin_site.admin_view(GoogleDriveFileImportView.as_view()),
                  name='chatbot_media_google_drive_file_import'),
@@ -271,14 +321,40 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             )
 
 
+class MasterTagAdminForm(forms.ModelForm):
+    is_theme = forms.TypedChoiceField(
+        choices=((False, 'False'), (True, 'True')),
+        coerce=lambda value: value in (True, 'True', 'true', '1', 1),
+        initial=False,
+        required=True,
+        label='Is theme'
+    )
+
+    class Meta:
+        model = Tag
+        fields = '__all__'
+
+
 @admin.register(Tag)
 class MasterTagAdmin(BatchUploadMixin, admin.ModelAdmin):
-    list_display = ('name', 'status', 'source_type', 'created_by', 'created_at')
+    form = MasterTagAdminForm
+    list_display = ('name', 'status', 'is_theme_value', 'source_type', 'created_by', 'created_at')
     list_filter = (
         CustomAdvanceDateFilter,
         'name',
+        'is_theme',
         'created_by',
         'source_type'
+    )
+    fields = (
+        'name',
+        'status',
+        'description',
+        'is_theme',
+        'icon',
+        'source_type',
+        'company',
+        'created_by'
     )
     raw_id_fields = ('created_by',)
     readonly_fields = ('source_type', 'company', 'created_by')
@@ -287,7 +363,13 @@ class MasterTagAdmin(BatchUploadMixin, admin.ModelAdmin):
     ordering = ('-created_at',)
 
     enable_batch_upload = True
-    batch_upload_fields = ['name', 'status', 'description', 'created_by']
+    batch_upload_fields = ['name', 'status', 'description', 'is_theme', 'icon', 'created_by']
+
+    def is_theme_value(self, obj):
+        return 'True' if obj.is_theme else 'False'
+
+    is_theme_value.short_description = 'Is theme'
+    is_theme_value.admin_order_field = 'is_theme'
 
     def save_model(self, request, obj, form, change):
         print("In save")

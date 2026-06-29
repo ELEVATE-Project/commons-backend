@@ -79,12 +79,8 @@
             name: "{{ user_company.name|escapejs }}"
         },
         {% endif %}
-        {% if user.is_authenticated %}
-            {% with user_profile=user.profile %}
-                {% if user_profile and user_profile.company %}
-        userCompanyName: "{{ user_profile.company.name|escapejs }}",
-                {% endif %}
-            {% endwith %}
+        {% if user_company %}
+        userCompanyName: "{{ user_company.name|escapejs }}",
         {% endif %}
     };
 </script>
