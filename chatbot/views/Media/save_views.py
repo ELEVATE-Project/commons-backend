@@ -828,7 +828,7 @@ class BatchMediaSaveView(View):
                 company_bot_id=company_bot_id,
                 parent=actual_parent,
                 organization=organization_instance,
-                url=source_doc_url,
+                url=file_url or source_doc_url,
                 display_mode=subdoc_data.get('display_mode', FileDisplayMode.VISIBLE),
             )
 
