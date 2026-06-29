@@ -135,9 +135,23 @@ def process_google_drive_import(
         'session_id': session_id,
     })
 
-    credentials = Credentials(**credentials_data)
-    service = build('drive', 'v3', credentials=credentials)
-
+    try:
+        credentials = Credentials(**credentials_data)
+        service = build('drive', 'v3', credentials=credentials)
+    except Exception as exc:
+        message = f'Failed to initialize Google Drive client: {exc}'
+        _set_import_status(session_id, {
+            'status': 'FAILED',
+            'message': message,
+            'session_id': session_id,
+        })
+        return {
+            'session_id': session_id,
+            'repository_id': repository_id,
+            'successful': 0,
+            'failed': 0,
+            'error': message,
+        }
     company = resolve_company_from_import(company_id)
     company_bot = CompanyBot.objects.filter(id=company_bot_id).first() if company_bot_id else None
     if not company_bot and company:
