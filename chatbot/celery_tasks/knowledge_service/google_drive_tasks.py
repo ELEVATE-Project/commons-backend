@@ -345,21 +345,24 @@ def process_google_drive_import(
                 'session_id': session_id,
             })
 
+    success_count = sum(1 for result in processed_results if result.get('success'))
+    failed_count = len(processed_results) - success_count
+    final_status = 'COMPLETED' if success_count else 'FAILED'
+
     repository = upsert_repository_from_drive_import(
         folder_url=folder_url,
         folder_meta=folder_meta,
         company=company,
         repository_id=repository_id,
-        status='COMPLETED',
+        status=final_status,
         total_resources=len(all_files),
+        error_message='All files failed to import.' if not success_count else None,
         created_by=user_profile,
         updated_by=user_profile,
     )
 
-    success_count = sum(1 for result in processed_results if result.get('success'))
-    failed_count = len(processed_results) - success_count
     _set_import_status(session_id, {
-        'status': 'COMPLETED',
+        'status': final_status,
         'message': f'Google Drive import finished. {success_count} succeeded, {failed_count} failed.',
         'session_id': session_id,
         'repository_id': str(repository.id) if repository else None,
