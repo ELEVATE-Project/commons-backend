@@ -347,6 +347,16 @@ class BatchMediaSaveView(View):
                     )
                     self.create_media_org_mapping(media, org_id)
 
+                # Keep title metadata consistent with the document upload flow and
+                # with admin/serializer code that reads TITLE from key-value rows.
+                title_value = item_data.get('title') or item_data.get('name')
+                if title_value:
+                    KeyValue.objects.update_or_create(
+                        media=media,
+                        key='TITLE',
+                        defaults={'value': title_value}
+                    )
+
             except Exception as media_save_error:
                 return {
                     'success': False,

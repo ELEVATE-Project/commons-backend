@@ -24,35 +24,48 @@ def _merge_extraction_result(item, ai_result):
     if not isinstance(ai_result, dict):
         return item
 
-    enhanced = ai_result.get('enhanced_data') or {}
+    enhanced = ai_result.get('enhanced_data')
+    if not isinstance(enhanced, dict):
+        enhanced = {}
+
+    # Support both response shapes:
+    # - current AI extractor output with top-level summary/title/description
+    # - older or nested output under enhanced_data
+    source = ai_result
 
     item['auto_tags'] = [
         tag.get('text') if isinstance(tag, dict) else tag
-        for tag in (ai_result.get('auto_tags') or [])
+        for tag in (source.get('auto_tags') or enhanced.get('auto_tags') or [])
     ]
 
-    if enhanced.get('title'):
-        item['title'] = enhanced['title']
-    if enhanced.get('summary'):
-        item['summary'] = enhanced['summary']
-    if enhanced.get('description'):
-        item['description'] = enhanced['description']
-    if 'extracted_text' in enhanced:
-        item['extracted_text'] = enhanced.get('extracted_text') or ''
-    if enhanced.get('media_type'):
-        item['media_type'] = enhanced['media_type']
-    if isinstance(enhanced.get('enhanced_key_values'), list):
-        item['key_values'] = enhanced['enhanced_key_values']
-    if isinstance(enhanced.get('subdocument'), list):
-        item['subdocument'] = enhanced['subdocument']
-    if isinstance(enhanced.get('failed_links'), list):
-        item['failed_links'] = enhanced['failed_links']
-    if isinstance(enhanced.get('images'), list):
-        item['images'] = enhanced['images']
-    if isinstance(enhanced.get('url'), list):
-        item['url'] = enhanced['url']
-    if isinstance(enhanced.get('source_documents'), list):
-        item['source_documents'] = enhanced['source_documents']
+    title = source.get('title') or enhanced.get('title')
+    summary = source.get('summary') or enhanced.get('summary')
+    description = source.get('description') or enhanced.get('description')
+
+    if title:
+        item['title'] = title
+    if summary:
+        item['summary'] = summary
+    if description:
+        item['description'] = description
+    if 'extracted_text' in source or 'extracted_text' in enhanced:
+        item['extracted_text'] = source.get('extracted_text') or enhanced.get('extracted_text') or ''
+    if source.get('media_type') or enhanced.get('media_type'):
+        item['media_type'] = source.get('media_type') or enhanced.get('media_type')
+
+    key_values = source.get('key_values') or enhanced.get('enhanced_key_values')
+    if isinstance(key_values, list):
+        item['key_values'] = key_values
+    if isinstance(source.get('subdocument'), list) or isinstance(enhanced.get('subdocument'), list):
+        item['subdocument'] = source.get('subdocument') if isinstance(source.get('subdocument'), list) else enhanced.get('subdocument')
+    if isinstance(source.get('failed_links'), list) or isinstance(enhanced.get('failed_links'), list):
+        item['failed_links'] = source.get('failed_links') if isinstance(source.get('failed_links'), list) else enhanced.get('failed_links')
+    if isinstance(source.get('images'), list) or isinstance(enhanced.get('images'), list):
+        item['images'] = source.get('images') if isinstance(source.get('images'), list) else enhanced.get('images')
+    if isinstance(source.get('url'), list) or isinstance(enhanced.get('url'), list):
+        item['url'] = source.get('url') if isinstance(source.get('url'), list) else enhanced.get('url')
+    if isinstance(source.get('source_documents'), list) or isinstance(enhanced.get('source_documents'), list):
+        item['source_documents'] = source.get('source_documents') if isinstance(source.get('source_documents'), list) else enhanced.get('source_documents')
 
     return item
 
