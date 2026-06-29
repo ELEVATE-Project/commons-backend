@@ -660,6 +660,7 @@ class BatchMediaSaveView(View):
                         org_id = (
                             getattr(source_media.organization, 'id', None)
                             or getattr(parent_media.organization, 'id', None)
+                            or getattr(company_bot, 'company_id', None)
                             or getattr(getattr(user_profile, 'company', None), 'id', None)
                         )
                         self.create_media_org_mapping(source_media, org_id)
