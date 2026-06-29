@@ -227,9 +227,17 @@ class RepositoryListView(generics.ListAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        max_limit = 100
+
         if page < 1 or limit < 1:
             return Response(
                 {'error': 'page and limit must be greater than 0'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if limit > max_limit:
+            return Response(
+                {'error': f'limit must be less than or equal to {max_limit}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
