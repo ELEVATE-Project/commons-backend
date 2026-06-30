@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('chatbot', '0082_tag_is_theme_tag_icon'),
+        ('chatbot', '0082_add_is_theme_and_icon_to_tag'),
     ]
 
     operations = [

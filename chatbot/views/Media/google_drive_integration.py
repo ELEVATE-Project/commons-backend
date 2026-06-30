@@ -30,6 +30,8 @@ from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
+import chatbot.constants.constants as CONSTANTS
+import chatbot.constants.endpoints as ENDPOINTS
 
 raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
 GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
@@ -54,8 +56,8 @@ def get_client_secret_path():
 
 def get_redirect_uri(request):
     if request.path.startswith('/admin/'):
-        return request.build_absolute_uri('/admin/chatbot/media/google-drive/callback/')
-    return request.build_absolute_uri('/google-drive/callback/')
+        return request.build_absolute_uri(ENDPOINTS.GOOGLE_DRIVE_CALLBACK_URL)
+    return request.build_absolute_uri(ENDPOINTS.NON_ADMIN_GOOGLE_DRIVE_CALLBACK_URL)
 
 
 def get_drive_credentials(request):
@@ -90,9 +92,7 @@ class GoogleDriveIntegrationView(TemplateView):
         default_bot = get_default_extraction_bot()
         context['default_bot_id'] = default_bot.id if default_bot else None
         if self.request.path.startswith('/admin/'):
-            context['drive_upload_url'] = '/admin/chatbot/media/drive-upload/'
-        else:
-            context['drive_upload_url'] = '/google-drive/drive-upload/'
+            context['drive_upload_url'] = ENDPOINTS.DRIVE_UPLOAD_URL
 
         selected_company = None
         company_identifier = (
@@ -193,8 +193,8 @@ class GoogleDriveCallbackView(View):
         request.session.pop('oauth_code_verifier', None)
 
         if request.path.startswith('/admin/'):
-            return redirect('/admin/chatbot/media/drive-upload/?connected=1')
-        return redirect('/google-drive/?connected=1')
+            return redirect(ENDPOINTS.DRIVE_CONNECTED_URL)
+        return redirect(ENDPOINTS.NON_ADMIN_DRIVE_UPLOAD_URL)
 
 
 
@@ -227,7 +227,7 @@ def upsert_repository_from_drive_import(
     folder_meta,
     company,
     repository_id=None,
-    status='COMPLETED',
+    status=CONSTANTS.COMPLETED,
     total_resources,
     error_message=None,
     created_by=None,
@@ -250,7 +250,7 @@ def upsert_repository_from_drive_import(
 
     update_fields = {
         'repository_name': repository_name,
-        'provider_type': 'GOOGLE_DRIVE',
+        'provider_type': CONSTANTS.GOOGLE_DRIVE,
         'status': status,
         'sync_enabled': True,
         'last_sync_cursor': (folder_meta or {}).get('id'),
@@ -261,7 +261,7 @@ def upsert_repository_from_drive_import(
         'updated_by': updated_by or created_by,
     }
 
-    if status == 'COMPLETED':
+    if status == CONSTANTS.COMPLETED:
         update_fields['last_successful_sync'] = now
         update_fields['last_failed_sync'] = None
     elif error_message:

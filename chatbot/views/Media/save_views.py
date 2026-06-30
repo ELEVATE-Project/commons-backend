@@ -20,6 +20,7 @@ from django.core.files.base import ContentFile
 import base64
 from django.utils.text import slugify
 from django.conf import settings
+import chatbot.constants.constants as CONSTANTS
 
 ENABLE_SIMILARITY_CHECK = getattr(settings, 'BATCH_UPLOAD_ENABLE_SIMILARITY_CHECK', False)
 CACHE_TIMEOUT = getattr(settings, 'BATCH_UPLOAD_CACHE_TIMEOUT', 7200)
@@ -160,12 +161,12 @@ class BatchMediaSaveView(View):
 
         MediaOrgMapping.objects.update_or_create(
             media_id_id=media.id,
-            defaults={'org_id': org_id},
+            defaults={'org_id': str(org_id)},
         )
 
     def is_google_drive_import(self, item_data):
         return bool(
-            item_data.get('source_provider') == 'GOOGLE_DRIVE'
+            item_data.get('source_provider') == CONSTANTS.GOOGLE_DRIVE
             or item_data.get('source_file_id')
             or item_data.get('source_folder_url')
         )

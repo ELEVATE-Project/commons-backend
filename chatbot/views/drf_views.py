@@ -16,6 +16,7 @@ from chatbot.serializer.company_serializer import (
 )
 from chatbot.serializer.profile_serializer import ProfileSerializer, CompanyChatSerializer
 from chatbot.serializer.repository_serializer import RepositorySerializer
+import chatbot.constants.constants as CONSTANTS
 
 
 class CompanyChatListCreateView(generics.ListCreateAPIView):
@@ -220,14 +221,14 @@ class RepositoryListView(generics.ListAPIView):
 
         try:
             page = int(request.query_params.get('page', 1))
-            limit = int(request.query_params.get('limit', 100))
+            limit = int(request.query_params.get('limit', CONSTANTS.REPOSITORY_LISTING_MAX_PAGE_SIZE))
         except (TypeError, ValueError):
             return Response(
                 {'error': 'page and limit must be integers'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        max_limit = 100
+        max_limit = CONSTANTS.REPOSITORY_LISTING_MAX_PAGE_SIZE
 
         if page < 1 or limit < 1:
             return Response(

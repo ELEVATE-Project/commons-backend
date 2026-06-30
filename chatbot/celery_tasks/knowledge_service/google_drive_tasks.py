@@ -10,7 +10,7 @@ from chatbot.models import CompanyBot, FileTypeChoices, Profile
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.views.Media.save_views import BatchMediaSaveView
-
+import chatbot.constants.constants as CONSTANTS
 
 def _get_status_cache_key(session_id):
     return CacheManager.get_cache_key(session_id, 'google_drive_import', 'status')
@@ -141,7 +141,7 @@ def process_google_drive_import(
     except Exception as exc:
         message = f'Failed to initialize Google Drive client: {exc}'
         _set_import_status(session_id, {
-            'status': 'FAILED',
+            'status': CONSTANTS.FAILED,
             'message': message,
             'session_id': session_id,
         })
@@ -161,7 +161,7 @@ def process_google_drive_import(
 
     if not company_bot:
         _set_import_status(session_id, {
-            'status': 'FAILED',
+            'status': CONSTANTS.FAILED,
             'message': 'No company bot available for Google Drive import.',
             'session_id': session_id,
         })
@@ -171,7 +171,7 @@ def process_google_drive_import(
                 folder_meta={'id': folder_id},
                 company=company,
                 repository_id=repository_id,
-                status='FAILED',
+                status=CONSTANTS.FAILED,
                 total_resources=0,
                 error_message='No company bot available for Google Drive import.',
                 created_by=user_profile,
@@ -187,7 +187,7 @@ def process_google_drive_import(
         is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
         if not is_public:
             _set_import_status(session_id, {
-                'status': 'FAILED',
+                'status': CONSTANTS.FAILED,
                 'message': 'Folder is not publicly shared.',
                 'session_id': session_id,
             })
@@ -197,7 +197,7 @@ def process_google_drive_import(
                     folder_meta=folder_meta,
                     company=company,
                     repository_id=repository_id,
-                    status='FAILED',
+                    status=CONSTANTS.FAILED,
                     total_resources=0,
                     error_message='Folder is not publicly shared.',
                     created_by=user_profile,
@@ -206,7 +206,7 @@ def process_google_drive_import(
             return
     except HttpError as exc:
         _set_import_status(session_id, {
-            'status': 'FAILED',
+            'status': CONSTANTS.FAILED,
             'message': f'Failed to read Google Drive folder: {exc}',
             'session_id': session_id,
         })
@@ -216,7 +216,7 @@ def process_google_drive_import(
                 folder_meta={'id': folder_id},
                 company=company,
                 repository_id=repository_id,
-                status='FAILED',
+                status=CONSTANTS.FAILED,
                 total_resources=0,
                 error_message=f'Failed to read Google Drive folder: {exc}',
                 created_by=user_profile,
@@ -227,7 +227,7 @@ def process_google_drive_import(
     all_files = get_all_files_in_folder(service, folder_id)
     if not all_files:
         _set_import_status(session_id, {
-            'status': 'FAILED',
+            'status': CONSTANTS.FAILED,
             'message': 'No files found in the selected Google Drive folder.',
             'session_id': session_id,
         })
@@ -237,7 +237,7 @@ def process_google_drive_import(
                 folder_meta=folder_meta,
                 company=company,
                 repository_id=repository_id,
-                status='FAILED',
+                status=CONSTANTS.FAILED,
                 total_resources=0,
                 error_message='No files found in the selected Google Drive folder.',
                 created_by=user_profile,
@@ -312,7 +312,7 @@ def process_google_drive_import(
                 'organization_slug': company.slug if company else '',
                 'organization_id': company.id if company else None,
                 'source_url': file_url,
-                'source_provider': 'GOOGLE_DRIVE',
+                'source_provider': CONSTANTS.GOOGLE_DRIVE,
                 'source_folder_url': folder_url,
                 'source_file_id': file_id,
                 'file_key': file_key,
@@ -347,7 +347,7 @@ def process_google_drive_import(
 
     success_count = sum(1 for result in processed_results if result.get('success'))
     failed_count = len(processed_results) - success_count
-    final_status = 'COMPLETED' if success_count else 'FAILED'
+    final_status = CONSTANTS.COMPLETED if success_count else CONSTANTS.FAILED
 
     repository = upsert_repository_from_drive_import(
         folder_url=folder_url,

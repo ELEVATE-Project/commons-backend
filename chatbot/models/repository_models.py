@@ -25,3 +25,9 @@ class Repository(models.Model):
 
     class Meta:
         db_table = 'repositories'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['org_id', 'root_link'],
+                name='repositories_org_id_root_link_uniq',
+            ),
+        ]

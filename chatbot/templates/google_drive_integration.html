@@ -42,6 +42,18 @@
         </table>
     </div>
 
+    <div class="pagination-container">
+        <button id="prev-page" class="pagination-btn" disabled>
+            &#8592; Previous
+        </button>
+    
+        <span id="page-info">Page 1</span>
+    
+        <button id="next-page" class="pagination-btn" disabled>
+            Next &#8594;
+        </button>
+    </div>
+
 </div>
 
 
@@ -160,10 +172,46 @@
     width: 120px;
     text-align: center;
 }
+
+.pagination-container {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.pagination-btn {
+    padding: 8px 18px;
+    border: 1px solid #0d6efd;
+    border-radius: 4px;
+    background: #0d6efd;
+    color: #fff;
+    cursor: pointer;
+    transition: all .2s ease;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: #0b5ed7;
+}
+
+.pagination-btn:disabled {
+    background: #d6d6d6;
+    border-color: #d6d6d6;
+    color: #888;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+#page-info {
+    font-weight: 600;
+}
 </style>
 
 
 <script>
+let page = 1;
+const limit = 10;
 document.addEventListener('DOMContentLoaded', function () {
     async function loadRepositories() {
         try {
@@ -171,8 +219,9 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!repositoriesOrgId) {
                 throw new Error('No organization selected for repository lookup.');
             }
+
             const response = await fetch(
-                `/api/repositories/?orgId=${encodeURIComponent(repositoriesOrgId)}`,
+                `/api/repositories/?orgId=${encodeURIComponent(repositoriesOrgId)}&page=${page}&limit=${limit}`,
                 {
                     method: 'GET',
                     headers: {
@@ -186,6 +235,17 @@ document.addEventListener('DOMContentLoaded', function () {
             console.log('Repositories:', data);
 
             const repositories = data.result.data;
+            const totalCount = data.result.count;
+            const totalPages = Math.ceil(totalCount / limit);
+
+            document.getElementById('page-info').textContent =
+                `Page ${page} of ${totalPages || 1}`;
+
+            const prevBtn = document.getElementById('prev-page');
+            const nextBtn = document.getElementById('next-page');
+
+            prevBtn.disabled = page <= 1;
+            nextBtn.disabled = page >= totalPages || totalPages === 0;
             const tbody = document.getElementById('repositories-body');
 
             tbody.innerHTML = '';
@@ -258,6 +318,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
     }
     loadRepositories();
+    document.getElementById('prev-page').addEventListener('click', () => {
+        if (page > 1) {
+            page--;
+            loadRepositories();
+        }
+    });
+
+    document.getElementById('next-page').addEventListener('click', () => {
+        page++;
+        loadRepositories();
+    });
 
 });
 </script>
