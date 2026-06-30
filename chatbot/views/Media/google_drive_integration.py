@@ -5,9 +5,7 @@ if insecure_transport:
 import io
 import json
 import re
-import tempfile
 import uuid
-import time
 
 from django.core.files.base import ContentFile
 from django.http import JsonResponse, FileResponse
@@ -15,13 +13,16 @@ from django.shortcuts import redirect
 from django.views.generic import TemplateView
 from django.views import View
 from django.conf import settings
+from django.utils import timezone
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.errors import HttpError
+
+from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media, Profile
+from chatbot.models.repository_models import Repository
 from chatbot.views.Media.extract_views import BatchMediaExtractView
-from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media
 from shikshalokam.models.enums import PriorityChoices
 import mimetypes
 # Import the native LLM extraction tools
@@ -29,9 +30,12 @@ from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
+import chatbot.constants.constants as CONSTANTS
+import chatbot.constants.endpoints as ENDPOINTS
 
 raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
 GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
+
 GOOGLE_EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "application/pdf",
     "application/vnd.google-apps.spreadsheet": "text/csv",
@@ -52,8 +56,8 @@ def get_client_secret_path():
 
 def get_redirect_uri(request):
     if request.path.startswith('/admin/'):
-        return request.build_absolute_uri('/admin/chatbot/media/google-drive/callback/')
-    return request.build_absolute_uri('/google-drive/callback/')
+        return request.build_absolute_uri(ENDPOINTS.GOOGLE_DRIVE_CALLBACK_URL)
+    return request.build_absolute_uri(ENDPOINTS.NON_ADMIN_GOOGLE_DRIVE_CALLBACK_URL)
 
 
 def get_drive_credentials(request):
@@ -83,13 +87,39 @@ class GoogleDriveIntegrationView(TemplateView):
         # Pull native collections to match your Batch Upload step1 layout requirements
         context['companies'] = get_company_queryset_for_user(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
-        
+
         # Match the normal media upload flow's extraction bot.
         default_bot = get_default_extraction_bot()
         context['default_bot_id'] = default_bot.id if default_bot else None
-        
-        # Check if requesting user has profile matching organization parameters
-        context['user_company'] = get_user_company(self.request.user)
+        if self.request.path.startswith('/admin/'):
+            context['drive_upload_url'] = ENDPOINTS.DRIVE_UPLOAD_URL
+
+        selected_company = None
+        company_identifier = (
+            self.request.GET.get('company_id')
+            or self.request.GET.get('organization_slug')
+            or self.request.GET.get('orgId')
+            or self.request.GET.get('org_id')
+        )
+
+        if company_identifier:
+            selected_company = Company.objects.filter(slug=company_identifier).first()
+            if not selected_company:
+                try:
+                    selected_company = Company.objects.filter(id=int(company_identifier)).first()
+                except (TypeError, ValueError):
+                    selected_company = None
+
+        # Fall back to the logged-in user's company when no explicit company was passed in.
+        if not selected_company and hasattr(self.request.user, 'email'):
+            profile = Profile.objects.filter(email=self.request.user.email).first()
+            if profile and profile.company:
+                selected_company = profile.company
+
+        if selected_company:
+            context['selected_company'] = selected_company
+            context['user_company'] = selected_company
+            context['repositories_org_id'] = selected_company.id
 
         return context
 
@@ -163,8 +193,8 @@ class GoogleDriveCallbackView(View):
         request.session.pop('oauth_code_verifier', None)
 
         if request.path.startswith('/admin/'):
-            return redirect('/admin/chatbot/media/google-drive/?connected=1')
-        return redirect('/google-drive/?connected=1')
+            return redirect(ENDPOINTS.DRIVE_CONNECTED_URL)
+        return redirect(ENDPOINTS.NON_ADMIN_DRIVE_UPLOAD_URL)
 
 
 
@@ -174,6 +204,105 @@ def extract_folder_id(folder_url):
         folder_url
     )
     return match.group(1) if match else None
+
+
+def get_request_profile(request, company=None):
+    user_email = getattr(request.user, 'email', None)
+    if not user_email:
+        return None
+
+    resolved_company = company or get_user_company(request.user)
+    if not resolved_company:
+        return None
+
+    return Profile.objects.select_related('company').filter(
+        email__iexact=user_email,
+        company=resolved_company,
+    ).first()
+
+
+def upsert_repository_from_drive_import(
+    *,
+    folder_url,
+    folder_meta,
+    company,
+    repository_id=None,
+    status=CONSTANTS.COMPLETED,
+    total_resources,
+    error_message=None,
+    created_by=None,
+    updated_by=None,
+):
+    org_id = company.id if company else None
+    if not org_id:
+        return None
+
+    repository_name = (
+        (folder_meta or {}).get('name')
+        or (company.name if company else None)
+        or 'Google Drive Repository'
+    )
+    org_name = (
+        (company.name if company else None)
+        or 'Unknown Organization'
+    )
+    now = timezone.now()
+
+    update_fields = {
+        'repository_name': repository_name,
+        'provider_type': CONSTANTS.GOOGLE_DRIVE,
+        'status': status,
+        'sync_enabled': True,
+        'last_sync_cursor': (folder_meta or {}).get('id'),
+        'last_sync_time': now,
+        'last_error_message': error_message,
+        'total_resources': total_resources,
+        'org_name': org_name,
+        'updated_by': updated_by or created_by,
+    }
+
+    if status == CONSTANTS.COMPLETED:
+        update_fields['last_successful_sync'] = now
+        update_fields['last_failed_sync'] = None
+    elif error_message:
+        update_fields['last_failed_sync'] = now
+
+    if repository_id:
+        repository = Repository.objects.filter(id=repository_id, org_id=org_id).first()
+        if repository:
+            for key, value in update_fields.items():
+                setattr(repository, key, value)
+            repository.root_link = folder_url
+            repository.save()
+            return repository
+
+    create_defaults = dict(update_fields)
+    create_defaults['created_by'] = created_by
+
+    repository, created = Repository.objects.get_or_create(
+        org_id=org_id,
+        root_link=folder_url,
+        defaults=create_defaults,
+    )
+    if not created:
+        for key, value in update_fields.items():
+            setattr(repository, key, value)
+        repository.save()
+    return repository
+
+
+def resolve_company_from_import(company_identifier):
+    if not company_identifier:
+        return None
+
+    company = Company.objects.filter(slug=company_identifier).first()
+    if company:
+        return company
+
+    try:
+        return Company.objects.filter(id=int(company_identifier)).first()
+    except (TypeError, ValueError):
+        return None
 
 
 def get_all_files_in_folder(service, initial_folder_id):
@@ -223,7 +352,7 @@ def download_drive_file(service, file_id):
     # 1. Ask Google for the permissions metadata alongside the file info
     metadata = service.files().get(
         fileId=file_id,
-        fields="id, name, mimeType, permissions"
+        fields="id, name, mimeType, permissions, webViewLink"
     ).execute()
 
     # 2. STRICT CHECK: Ensure the file itself is set to "Anyone with the link"
@@ -275,99 +404,62 @@ class GoogleDriveFileImportView(View):
         if not folder_id:
             return JsonResponse({'success': False, 'error': 'Invalid folder URL'}, status=400)
 
-        # 1. Resolve organization
-        company = Company.objects.filter(slug=company_id).first() if company_id else None
+        company = resolve_company_from_import(company_id)
         company_bot = CompanyBot.objects.filter(id=bot_id).first() if bot_id else None
-        if company and company_bot and company_bot.company_id != company.id:
-            return JsonResponse(
-                {'success': False, 'error': 'company_bot_mismatch'},
-                status=400
-            )
-        if company_bot and not company:
-            company = company_bot.company
         if not company_bot and company:
             company_bot = CompanyBot.objects.filter(company=company, route='/tag_extractor').first()
         company_bot = company_bot or get_default_extraction_bot()
-
         if not company_bot:
             return JsonResponse({'success': False, 'error': 'No company bot available'}, status=400)
 
-        # 2. Check strict permissions on root folder
-        try:
-            folder_meta = service.files().get(fileId=folder_id, fields="permissions").execute()
-            is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
-            if not is_public:
-                return JsonResponse({'success': False, 'error': 'not_public'}, status=403)
-        except HttpError:
-            return JsonResponse({'success': False, 'error': 'not_public'}, status=403)
+        request_profile = get_request_profile(request, company=company)
 
-        # 3. Recursively Fetch ALL Files
-        all_files = get_all_files_in_folder(service, folder_id)
-        if not all_files:
-            return JsonResponse({'success': False, 'error': 'empty_folder'}, status=400)
+        try:
+            folder_meta = service.files().get(
+                fileId=folder_id,
+                fields="id, name, permissions"
+            ).execute()
+        except HttpError as exc:
+            return JsonResponse(
+                {
+                    'success': False,
+                    'error': f'Failed to read Google Drive folder: {exc}',
+                },
+                status=400
+            )
+
+        repository = upsert_repository_from_drive_import(
+            folder_url=folder_url,
+            folder_meta=folder_meta,
+            company=company,
+            repository_id=None,
+            status='IN-PROGRESS',
+            total_resources=0,
+            created_by=request_profile,
+            updated_by=request_profile,
+        )
 
         session_id = str(uuid.uuid4())
-        extracted_data = []
+        from chatbot.celery_tasks.knowledge_service.google_drive_tasks import process_google_drive_import
 
-        # Dummy file wrapper for CacheManager compatibility
-        class DummyFile:
-            def __init__(self, name, size, content):
-                self.name = name
-                self.size = size
-                self._content = content
-            def chunks(self):
-                chunk_size = 8192
-                for i in range(0, len(self._content), chunk_size):
-                    yield self._content[i:i + chunk_size]
-            def read(self):
-                return self._content
+        task = process_google_drive_import.delay(
+            session_id=session_id,
+            credentials_data=request.session.get('google_credentials', {}),
+            folder_url=folder_url,
+            folder_id=folder_id,
+            company_id=company.id if company else None,
+            company_bot_id=company_bot.id if company_bot else None,
+            profile_id=request_profile.id if request_profile else None,
+            repository_id=str(repository.id) if repository else None,
+        )
 
-        # 4. Download, Cache, and Trigger LLM Extraction sequentially
-        for i, file_info in enumerate(all_files):
-            file_id = file_info['id']
-            original_name = file_info['name']
-            
-            try:
-                metadata, content = download_drive_file(service, file_id)
-                
-                # The DummyFile wrapper mimics a Django UploadedFile interface
-                dummy_file = DummyFile(original_name, len(content), content)
-                file_index = int(time.time() * 1000000) + i
-                
-                # Cache the file
-                file_key = CacheManager.cache_file(dummy_file, session_id, file_index)
-                if not file_key:
-                    raise RuntimeError("cache_file_failed")
-                
-                # REUSE the exact logic from the native upload flow
-                extract_view = BatchMediaExtractView()
-                data = extract_view.extract_file_data(
-                    file=dummy_file,
-                    company_bot=company_bot,
-                    file_index=file_index,
-                    request=request
-                )
-                
-                # Append the session metadata needed for the frontend
-                data['status'] = 'success'
-                data['session_id'] = session_id
-                data['file_key'] = file_key
-                
-                extracted_data.append(data)
-                
-            except Exception as e:
-                print(f"Skipped file {original_name}: {e}")
-                pass
-        
-        if not extracted_data:
-            return JsonResponse({'success': False, 'error': 'All files were private or corrupted.'}, status=400)
-
-        # 5. Return extraction tasks to frontend
         return JsonResponse({
-            'success': True, 
-            'data': extracted_data, 
-            'session_id': session_id, 
-            'company_bot_id': company_bot.id
+            'success': True,
+            'message': 'Folder uploaded successfully',
+            'session_id': session_id,
+            'task_id': task.id,
+            'company_bot_id': company_bot.id,
+            'repository_id': str(repository.id) if repository else None,
         })
 class GoogleDriveFileDownloadView(View):
     def get(self, request, file_id):

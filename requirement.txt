@@ -305,3 +305,4 @@ youtube-transcript-api==1.2.4
 zipp==3.23.0
 zope-interface==8.2
 zstandard==0.25.0
+uuid6==2025.0.1

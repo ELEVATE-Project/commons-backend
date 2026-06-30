@@ -1,5 +1,6 @@
 from chatbot.utils.image_converter import convert_image
 from chatbot.views.Media.extract_views import BatchMediaExtractView, BatchMediaRetryExtractView
+from chatbot.views.Media import drive_upload
 from chatbot.views.Media.media_tracking_views import MediaViewTrackAPIView, MediaDownloadTrackAPIView, \
     SolutionDownloadTrackView
 from chatbot.views.Media.save_views import BatchMediaSaveView, BatchMediaRetrySaveView
@@ -24,7 +25,7 @@ from chatbot.views.drf_views import CompanyChatListCreateView, CompanyChatRetrie
     CompanyBotListCreateView, CompanyBotRetrieveUpdateDestroyView, ProfileListCreateView, \
     ProfileRetrieveUpdateDestroyView, ChatSessionListCreateView, ChatSessionRetrieveUpdateDestroyView, \
     ChatSessionRetrieveUpdateDestroyViewSession, BotVernacularListCreateView, BotVernacularRetrieveUpdateDestroyView, \
-    FlowImageConfigView, FlowLanguagesView, FlowConnectionInfoView
+    FlowImageConfigView, FlowLanguagesView, FlowConnectionInfoView, RepositoryListView
 from chatbot.views.mitra_views import \
     create_project_view
 from chatbot.views.recommendation import generate_recommendation
@@ -92,6 +93,7 @@ urlpatterns = [
     path('api/flow-image-config/', FlowImageConfigView.as_view(), name='flow-image-config'),
     path('api/flow-languages/', FlowLanguagesView.as_view(), name='flow-languages'),
     path('api/flow-connection-info/', FlowConnectionInfoView.as_view(), name='flow-connection-info'),
+    path('api/repositories/', RepositoryListView.as_view(), name='repository-list'),
 
     path('api/save-company-chat/', save_chats_view, name="save-company-chat"),
     path('api/create-chatsession/', create_chatsession, name="create-chatsession"),
@@ -142,6 +144,7 @@ urlpatterns = [
     path('api/v1/', include(router.urls)),
     path('api/v1/documents', DocumentUploadView.as_view(), name='document-upload'),
     path('google-drive/', google_drive_integration.GoogleDriveIntegrationView.as_view(), name='google_drive_integration'),
+    path('google-drive/drive-upload/', drive_upload.DriveUploadView.as_view(), name='drive_upload'),
     path('google-drive/auth/', google_drive_integration.GoogleDriveAuthView.as_view(), name='google_drive_auth'),
     path('google-drive/callback/', google_drive_integration.GoogleDriveCallbackView.as_view(), name='google_drive_callback'),
     path('google-drive/files/import/', google_drive_integration.GoogleDriveFileImportView.as_view(), name='google_drive_file_import'),

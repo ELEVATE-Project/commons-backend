@@ -1,0 +1,291 @@
+{% extends 'admin/base_site.html' %}
+{% load i18n static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; <a href="/admin/chatbot/">Chatbot</a>
+    &rsaquo; <a href="/admin/chatbot/media/">Media</a>
+    &rsaquo; <a href="/admin/chatbot/media/google-drive/"> List Repositories</a>
+    &rsaquo; Drive Upload
+</div>
+{% endblock %}
+
+{% block content %}
+
+<style>
+    .gd-container { width: 100%; margin: 0; padding: 10px 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .gd-header-tools { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .gd-title { margin: 0; font-size: 26px; color: #333; font-weight: 500; }
+    .gd-btn-back { background: #f8f9fa; border: 1px solid #ddd; color: #444; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; transition: all 0.2s; display: inline-block; }
+    .gd-btn-back:hover { background: #e9ecef; color: #222; text-decoration: none; }
+
+    /* Forms */
+    .form-group { background: #f8f9fa; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
+    .form-label { display: block; font-weight: 600; color: #333; font-size: 16px; margin-bottom: 10px; }
+    .gd-input, .gd-select { width: 100%; max-width: 400px; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; background: #fff; outline: none; transition: border-color 0.2s; }
+    .gd-input:focus, .gd-select:focus { border-color: #417690; }
+    
+    .info-banner { background: #e8f4f8; border: 1px solid #bce2ef; padding: 20px; border-radius: 8px; color: #31708f; font-size: 14px; margin-bottom: 30px; display: flex; gap: 12px; align-items: flex-start; }
+
+    .gd-btn-primary { background: #417690; color: #fff; border: none; padding: 10px 25px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px;}
+    .gd-btn-primary:hover { background: #2f586d; }
+    .gd-btn-primary:disabled { background: #a0b8c4; cursor: not-allowed; }
+    .gd-btn-outline { background: transparent; border: 1px solid #ccc; color: #333; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; cursor: pointer; }
+
+    .upload-shell { background: #fff; padding: 30px; border-radius: 8px; border: 1px solid #e3e6f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .success-view { display: none; text-align: center; padding: 48px 20px; }
+    .success-view.visible { display: block; }
+    .success-icon { width: 96px; height: 96px; border-radius: 50%; background: #e8f5e9; color: #1b8f3a; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 18px; }
+    .success-icon svg { width: 56px; height: 56px; }
+    .success-title { margin: 0; font-size: 32px; line-height: 1.2; color: #1b8f3a; font-weight: 700; }
+    .notice-box { display: none; margin-bottom: 18px; padding: 14px 16px; border-radius: 6px; font-size: 14px; line-height: 1.5; }
+    .notice-box.visible { display: block; }
+    .notice-box.error { background: #fff1f0; border: 1px solid #ffa39e; color: #a8071a; }
+    .notice-box.info { background: #f0f7ff; border: 1px solid #91caff; color: #0958d9; }
+
+    /* BULLETPROOF MODALS */
+    .gd-modal-overlay { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; background: rgba(0,0,0,0.6) !important; z-index: 10000 !important; justify-content: center !important; align-items: center !important; }
+</style>
+
+<div class="gd-container">
+    <div class="gd-header-tools">
+        <h1 class="gd-title">Drive Upload</h1>
+    </div>
+
+    <div class="upload-shell">
+        <div id="form-view">
+            <div id="notice-box" class="notice-box" role="alert" aria-live="polite"></div>
+            <div class="form-group">
+                <label class="form-label" for="organizationSelect">Select Organization *</label>
+                <select id="organizationSelect" class="gd-select" style="width: 300px;" required>
+                    <option value="">-- Select Organization --</option>
+                    {% for company in companies %}
+                        <option value="{{ company.slug }}" data-org-id="{{ company.id }}" data-name="{{ company.name }}" {% if user_company and company.id == user_company.id %}selected{% endif %}>{{ company.name }}</option>
+                    {% endfor %}
+                </select>
+                <div style="margin-top: 8px; font-size: 12px; color: #666;">This organization will be used as metadata for all fetched files.</div>
+            </div>
+
+            <div style="display:none;">
+                <select id="companyBotSelect">
+                    <option value="">-- Select Company Bot --</option>
+                    {% for bot in company_bots %}
+                        <option value="{{ bot.id }}" {% if bot.id == default_bot_id %}selected{% endif %}>{{ bot.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="text-align: center; border: 2px dashed #417690; background: #fff; border-radius: 8px; padding: 40px 20px; margin-bottom: 25px;">
+                <div id="auth-container">
+                    <button id="connect-google-drive" class="gd-btn-primary" type="button">Connect Google Drive</button>
+                </div>
+
+                <div id="fetch-container" style="display: none; max-width: 600px; margin: 0 auto; text-align: left;">
+                    <label style="display:block; font-weight:600; margin-bottom:10px; color:#333;">Google Drive Folder URL *</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="folder-url" class="gd-input" placeholder="https://drive.google.com/drive/folders/..." style="flex:1; max-width:100%;" />
+                        <button id="load-and-upload-files" class="gd-btn-primary" type="button">Fetch & Upload All Files</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="success-view" class="success-view" aria-live="polite">
+            <div class="success-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 6L9 17l-5-5"></path>
+                </svg>
+            </div>
+            <h2 class="success-title">Repository Added Successfully</h2>
+        </div>
+
+        <a href="/admin/chatbot/media/" class="gd-btn-back" style="margin-top: 20px;">Back to Media List</a>
+    </div>
+</div>
+
+<div id="orgConfirmModal" class="gd-modal-overlay" style="display: none;">
+    <div style="background-color: white; padding: 30px; border-radius: 8px; width: 450px; text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+        <h3 style="margin-top: 0; margin-bottom: 20px; color: #ff9800;">Organization Selection</h3>
+        <p style="margin-bottom: 25px; line-height: 1.5; font-size: 15px;">You've selected a different organization than your profile organization. Are you sure you want to proceed with "<span id="selectedOrgName" style="font-weight: bold;"></span>"?</p>
+        <div style="display: flex; gap: 15px; justify-content: center;">
+            <button onclick="confirmOrgSelection(true)" class="gd-btn-primary" type="button">Yes, Use Selected</button>
+            <button onclick="confirmOrgSelection(false)" class="gd-btn-outline" type="button">No, Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div id="error-modal" class="gd-modal-overlay" style="display: none;">
+    <div style="background-color: white; border-radius: 8px; width: 500px; overflow: hidden; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+        <div style="background: #f8d7da; border-bottom: 1px solid #f5c6cb; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 id="error-modal-title" style="color: #721c24; margin:0; font-size: 18px; display:flex; align-items:center; gap:8px;">Error</h3>
+            <button onclick="document.getElementById('error-modal').style.display='none'" style="border:none; background:none; font-size:24px; cursor:pointer; color:#721c24;">&times;</button>
+        </div>
+        <div style="padding: 30px; text-align: center;">
+            <p id="error-modal-desc1" style="font-size: 16px; color: #333; font-weight: bold; margin-bottom: 15px;"></p>
+            <p id="error-modal-desc2" style="font-size: 14px; color: #666; margin-bottom: 25px; line-height: 1.5;"></p>
+            <button class="gd-btn-primary" style="background: #e74a3b; width: 100%;" onclick="document.getElementById('error-modal').style.display='none'" type="button">I Understand</button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const formView = document.getElementById('form-view');
+    const successView = document.getElementById('success-view');
+    const orgSelect = document.getElementById('organizationSelect');
+    orgSelect.addEventListener('change', function() {
+        const selectedOption = orgSelect.options[orgSelect.selectedIndex];
+        if(!selectedOption.value) return;
+        {% if user_company %}
+        if(selectedOption.value !== "{{ user_company.slug }}") {
+            document.getElementById('selectedOrgName').textContent = selectedOption.dataset.name;
+            document.getElementById('orgConfirmModal').style.setProperty('display', 'flex', 'important');
+        }
+        {% endif %}
+    });
+
+    window.confirmOrgSelection = function(proceed) {
+        document.getElementById('orgConfirmModal').style.setProperty('display', 'none', 'important');
+        if(!proceed) {
+            {% if user_company %} orgSelect.value = "{{ user_company.slug }}"; {% else %} orgSelect.value = ""; {% endif %}
+        }
+    };
+
+    if (window.location.search.includes('connected=1')) {
+        document.getElementById('auth-container').style.display = 'none';
+        document.getElementById('fetch-container').style.display = 'block';
+    }
+    // document.getElementById('connect-google-drive').addEventListener('click', () => window.location.href = 'auth/');
+    const connectGoogleDriveButton = document.getElementById('connect-google-drive');
+    if (connectGoogleDriveButton) {
+        connectGoogleDriveButton.addEventListener('click', () => {
+            window.location.href = "{{ google_drive_auth_url|escapejs }}";
+        });
+    }
+
+    function showErrorModal(title, desc1, desc2) {
+        document.getElementById('error-modal-title').innerHTML = `<svg style="width:20px;height:20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> ${title}`;
+        document.getElementById('error-modal-desc1').innerText = desc1;
+        document.getElementById('error-modal-desc2').textContent = desc2;
+        document.getElementById('error-modal').style.setProperty('display', 'flex', 'important');
+    }
+    function getCSRFToken() {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.startsWith('csrftoken=')) return cookie.substring('csrftoken='.length, cookie.length);
+        }
+        return document.querySelector('[name=csrfmiddlewaretoken]') ? document.querySelector('[name=csrfmiddlewaretoken]').value : '';
+    }
+
+    const loadAndUploadBtn = document.getElementById('load-and-upload-files');
+    const folderUrlInput = document.getElementById('folder-url');
+    const noticeBox = document.getElementById('notice-box');
+
+    function setNotice(message, kind) {
+        noticeBox.className = `notice-box visible ${kind || 'info'}`;
+        noticeBox.textContent = message;
+    }
+
+    function clearNotice() {
+        noticeBox.className = 'notice-box';
+        noticeBox.textContent = '';
+    }
+
+    function extractFolderId(url) {
+        if (!url) return '';
+        const folderMatch = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        if (folderMatch) return folderMatch[1];
+        const fileMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        return fileMatch ? fileMatch[1] : url.trim();
+    }
+
+    async function repositoryAlreadyProcessed(folderUrl, orgId) {
+        const repositoriesResponse = await fetch(`/api/repositories/?orgId=${encodeURIComponent(orgId)}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (!repositoriesResponse.ok) {
+            throw new Error('Unable to check existing repositories.');
+        }
+
+        const repositoriesData = await repositoriesResponse.json();
+        const repositories = (((repositoriesData || {}).result || {}).data) || [];
+        const targetFolderId = extractFolderId(folderUrl);
+        const normalizedFolderUrl = folderUrl.trim().replace(/\/+$/, '');
+
+        return repositories.some(repo => {
+            const rootLink = (repo.root_link || '').trim().replace(/\/+$/, '');
+            return rootLink === normalizedFolderUrl || extractFolderId(rootLink) === targetFolderId;
+        });
+    }
+
+    function showSuccessState() {
+        formView.style.display = 'none';
+        successView.classList.add('visible');
+    }
+    
+    loadAndUploadBtn.addEventListener('click', function () {
+        const folderUrl = folderUrlInput.value.trim();
+        const companySlug = orgSelect.value;
+        const selectedCompanyId = orgSelect.options[orgSelect.selectedIndex] ? orgSelect.options[orgSelect.selectedIndex].dataset.orgId : '';
+        if (!companySlug) return alert('Please select an Organization first.');
+        if (!folderUrl) return alert('Please paste a Google Drive folder URL.');
+        if (!selectedCompanyId) return alert('Unable to determine selected organization.');
+
+        loadAndUploadBtn.disabled = true;
+        clearNotice();
+
+        repositoryAlreadyProcessed(folderUrl, selectedCompanyId)
+            .then(alreadyProcessed => {
+                if (alreadyProcessed) {
+                    setNotice('This repository is already processed. Please use a different Google Drive folder.', 'error');
+                    loadAndUploadBtn.disabled = false;
+                    return Promise.reject(new Error('already_processed'));
+                }
+
+                return fetch("{{ google_drive_file_import_url|escapejs }}", {
+                    method: 'POST',
+                    keepalive: true,
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+                    body: JSON.stringify({ 
+                        folder_url: folderUrl, 
+                        company_id: orgSelect.value, 
+                        company_bot_id: document.getElementById('companyBotSelect').value 
+                    })
+                });
+            })
+            .then(async res => {
+                if (!res) return null;
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Initialization failed.');
+                return data;
+            })
+            .then(() => {
+                if (loadAndUploadBtn.disabled) {
+                    showSuccessState();
+                }
+            })
+            .catch(err => {
+                if (err.message === 'already_processed') return;
+                let msg = err.message === 'not_public' 
+                    ? 'The folder is private. Please update Google Drive sharing settings to "Anyone with the link".' 
+                    : err.message;
+                
+                showErrorModal('Error', msg, '');
+            })
+            .finally(() => {
+                loadAndUploadBtn.disabled = false;
+            });
+    });
+
+    document.getElementById('error-modal').addEventListener('click', function(e) {
+        if(e.target === this) { this.style.setProperty('display', 'none', 'important'); }
+    });
+
+
+});
+</script>
+{% endblock %}
