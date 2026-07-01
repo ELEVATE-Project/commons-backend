@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import uuid
@@ -71,6 +72,9 @@ def _merge_extraction_result(item, ai_result):
 
 
 def _format_item_for_save(item, organization_slug):
+    filename = item.get('filename') or ''
+    filename_base = os.path.splitext(filename)[0] if filename else ''
+    display_name = filename_base or item.get('name') or item.get('title')
     fallback_description = f"Extracted from {item['filename']}" if item.get('filename') else ''
     summary = item.get('summary')
     description = item.get('description')
@@ -82,8 +86,8 @@ def _format_item_for_save(item, organization_slug):
         'filename': item.get('filename'),
         'file_index': item.get('file_index'),
         'file_key': item.get('file_key'),
-        'name': item.get('title') or item.get('name'),
-        'title': item.get('title'),
+        'name': display_name,
+        'title': display_name,
         'summary': final_description,
         'description': final_description,
         'media_type': item.get('media_type'),
@@ -257,7 +261,17 @@ def process_google_drive_import(
         try:
             metadata, content = download_drive_file(service, file_id)
             file_url = metadata.get('webViewLink') or file_url
-            extension = original_name.rsplit('.', 1)[-1].lower() if '.' in original_name else 'pdf'
+            original_mime_type = metadata.get('mimeType', '')
+            exported_mime_type = {
+                'application/vnd.google-apps.document': 'application/pdf',
+                'application/vnd.google-apps.spreadsheet': 'text/csv',
+                'application/vnd.google-apps.presentation': 'application/pdf',
+            }.get(original_mime_type, original_mime_type)
+            if '.' not in original_name:
+                extension = 'csv' if exported_mime_type == 'text/csv' else 'pdf'
+                original_name = f"{original_name}.{extension}"
+            else:
+                extension = original_name.rsplit('.', 1)[-1].lower()
             if extension not in ['pdf', 'csv', 'txt', 'docx', 'xlsx', 'doc', 'xls']:
                 extension = 'pdf'
 
