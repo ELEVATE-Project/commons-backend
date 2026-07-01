@@ -142,6 +142,7 @@ jsonpatch
 json-repair
 retrying
 Markdown
+uuid6
 
 ############################
 # Dev / Testing

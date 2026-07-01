@@ -22,6 +22,7 @@ from googleapiclient.errors import HttpError
 
 from chatbot.models import Company, CompanyBot, FileDisplayMode, FileTypeChoices, KeyValue, Media, Profile
 from chatbot.models.repository_models import Repository
+from chatbot.views.Media.admin_context import add_media_admin_context
 from chatbot.views.Media.extract_views import BatchMediaExtractView
 from shikshalokam.models.enums import PriorityChoices
 import mimetypes
@@ -84,6 +85,7 @@ class GoogleDriveIntegrationView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        add_media_admin_context(context, self.request, 'List Repositories')
         # Pull native collections to match your Batch Upload step1 layout requirements
         context['companies'] = get_company_queryset_for_user(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
