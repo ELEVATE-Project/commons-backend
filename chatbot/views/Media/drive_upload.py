@@ -1,6 +1,7 @@
 from django.views.generic import TemplateView
 
 from chatbot.models import Company, CompanyBot, Profile
+from chatbot.views.Media.admin_context import add_media_admin_context
 from chatbot.views.Media.google_drive_integration import get_default_extraction_bot
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 import chatbot.constants.endpoints as ENDPOINTS
@@ -11,6 +12,7 @@ class DriveUploadView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        add_media_admin_context(context, self.request, 'Drive Upload')
         context['companies'] = get_company_queryset_for_user(self.request.user)
 
         default_bot = get_default_extraction_bot()

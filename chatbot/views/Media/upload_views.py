@@ -5,6 +5,7 @@ from chatbot.models import Tag, FileTypeChoices, TagSourceChoices, TagChoices
 from chatbot.models.media_models import PriorityChoices
 import json
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
+from chatbot.views.Media.admin_context import add_media_admin_context
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -13,6 +14,7 @@ class BatchMediaUploadView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        add_media_admin_context(context, self.request, 'Batch Upload')
         context['media_types'] = FileTypeChoices.choices
         context['priorities'] = PriorityChoices.choices
 
