@@ -89,6 +89,7 @@ class GoogleDriveIntegrationView(TemplateView):
         # Pull native collections to match your Batch Upload step1 layout requirements
         context['companies'] = get_company_queryset_for_user(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
+        context['is_superuser'] = getattr(self.request.user, 'is_superuser', False)
 
         # Match the normal media upload flow's extraction bot.
         default_bot = get_default_extraction_bot()
@@ -113,10 +114,8 @@ class GoogleDriveIntegrationView(TemplateView):
                     selected_company = None
 
         # Fall back to the logged-in user's company when no explicit company was passed in.
-        if not selected_company and hasattr(self.request.user, 'email'):
-            profile = Profile.objects.filter(email=self.request.user.email).first()
-            if profile and profile.company:
-                selected_company = profile.company
+        if not selected_company and not context['is_superuser']:
+            selected_company = get_user_company(self.request.user)
 
         if selected_company:
             context['selected_company'] = selected_company

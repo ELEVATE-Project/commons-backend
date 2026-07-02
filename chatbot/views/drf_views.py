@@ -16,6 +16,7 @@ from chatbot.serializer.company_serializer import (
 )
 from chatbot.serializer.profile_serializer import ProfileSerializer, CompanyChatSerializer
 from chatbot.serializer.repository_serializer import RepositorySerializer
+from chatbot.utils.company_utils import get_user_company
 import chatbot.constants.constants as CONSTANTS
 
 
@@ -202,23 +203,19 @@ class RepositoryListView(generics.ListAPIView):
     serializer_class = RepositorySerializer
 
     def get_queryset(self):
-        org_identifier = self.request.query_params.get('org_id') or self.request.query_params.get('orgId')
-        if not org_identifier:
+        user = self.request.user
+        queryset = Repository.objects.all().order_by('created_at', 'id')
+
+        if getattr(user, "is_superuser", False):
+            return queryset
+
+        user_company = get_user_company(user)
+        if not user_company:
             return Repository.objects.none()
-        try:
-            org_id = int(org_identifier)
-        except (TypeError, ValueError):
-            return Repository.objects.none()
-        return Repository.objects.filter(org_id=org_id).order_by('created_at', 'id')
+
+        return queryset.filter(org_id=user_company.id)
 
     def list(self, request, *args, **kwargs):
-        org_identifier = request.query_params.get('org_id') or request.query_params.get('orgId')
-        if not org_identifier:
-            return Response(
-                {'error': 'org_id/orgId query parameter is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         try:
             page = int(request.query_params.get('page', 1))
             limit = int(request.query_params.get('limit', CONSTANTS.REPOSITORY_LISTING_MAX_PAGE_SIZE))

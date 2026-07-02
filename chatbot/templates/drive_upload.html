@@ -217,6 +217,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const normalizedFolderUrl = folderUrl.trim().replace(/\/+$/, '');
 
         return repositories.some(repo => {
+            if (String(repo.org_id || '') !== String(orgId || '')) {
+                return false;
+            }
             const rootLink = (repo.root_link || '').trim().replace(/\/+$/, '');
             return rootLink === normalizedFolderUrl || extractFolderId(rootLink) === targetFolderId;
         });
