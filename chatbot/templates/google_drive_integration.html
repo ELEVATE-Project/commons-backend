@@ -216,12 +216,20 @@ document.addEventListener('DOMContentLoaded', function () {
     async function loadRepositories() {
         try {
             const repositoriesOrgId = "{{ repositories_org_id|default:''|escapejs }}";
-            if (!repositoriesOrgId) {
+            const isSuperuser = "{{ is_superuser|yesno:'true,false' }}" === "true";
+            if (!isSuperuser && !repositoriesOrgId) {
                 throw new Error('No organization selected for repository lookup.');
             }
 
+            const repositoryUrl = new URL('/api/repositories/', window.location.origin);
+            repositoryUrl.searchParams.set('page', page);
+            repositoryUrl.searchParams.set('limit', limit);
+            if (!isSuperuser) {
+                repositoryUrl.searchParams.set('orgId', repositoriesOrgId);
+            }
+
             const response = await fetch(
-                `/api/repositories/?orgId=${encodeURIComponent(repositoriesOrgId)}&page=${page}&limit=${limit}`,
+                repositoryUrl.toString(),
                 {
                     method: 'GET',
                     headers: {

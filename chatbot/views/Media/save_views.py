@@ -171,6 +171,18 @@ class BatchMediaSaveView(View):
             or item_data.get('source_folder_url')
         )
 
+    def get_file_title_from_item(self, item_data, fallback_filename=''):
+        """Use the actual file name without extension as the media title."""
+        for value in (
+                item_data.get('name'),
+                item_data.get('filename'),
+                fallback_filename,
+                item_data.get('title'),
+        ):
+            if value:
+                return os.path.splitext(str(value))[0]
+        return fallback_filename
+
     def wait_for_vector_db_save_safe(self, task_id, timeout=30):
         """Enhanced waiting with better error handling"""
         import time
@@ -311,8 +323,9 @@ class BatchMediaSaveView(View):
                         print(f"Warning: Company with slug {item_data['organization_slug']} not found")
                 if not organization_instance and selected_company:
                     organization_instance = selected_company
+                file_title = self.get_file_title_from_item(item_data, filename)
                 media = Media(
-                    name=item_data.get('title') or item_data.get('name') or filename,
+                    name=file_title,
                     media_type=item_data.get('media_type', FileTypeChoices.TXT.value),
                     priority=item_data.get('priority', 'P1'),
                     description=item_data.get('summary') or item_data.get('description') or '',
@@ -351,7 +364,7 @@ class BatchMediaSaveView(View):
 
                 # Keep title metadata consistent with the document upload flow and
                 # with admin/serializer code that reads TITLE from key-value rows.
-                title_value = item_data.get('title') or item_data.get('name')
+                title_value = file_title
                 if title_value:
                     KeyValue.objects.update_or_create(
                         media=media,
@@ -403,6 +416,13 @@ class BatchMediaSaveView(View):
                 print("item_data: ", item_data)
                 for kv in item_data.get('key_values', []):
                     cleaned_key = self.clean_key_for_ordered_list(kv['key'])
+                    if cleaned_key.upper() == 'TITLE':
+                        KeyValue.objects.update_or_create(
+                            media=media,
+                            key='TITLE',
+                            defaults={'value': file_title}
+                        )
+                        continue
                     KeyValue.objects.create(
                         media=media,
                         key=cleaned_key,
