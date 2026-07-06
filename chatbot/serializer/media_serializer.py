@@ -515,6 +515,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
             's3_url', 'tags', 'title', 'organization', 'org_logo', 'document_type',
             'key_entities', 'key_values', 'images', 'children',
             'file_size', 'size', 'display_mode', 'display_mode_display',
+            'view_count', 'download_count',
         ]
 
     def get_s3_url(self, obj):
