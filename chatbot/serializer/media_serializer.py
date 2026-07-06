@@ -383,6 +383,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
             's3_url', 'file', 'tag_names', 'title', 'organization',
             'document_type', 'key_entities', 'file_size', 'organization_url', 'org_logo',
             'display_mode', 'display_mode_display',
+            'view_count', 'download_count',
             'keyword_coverage', 'total_matching_fields', 'avg_relevance_score', 'max_similarity',
             'match_reason', 'thumbnail_url'
         ]
