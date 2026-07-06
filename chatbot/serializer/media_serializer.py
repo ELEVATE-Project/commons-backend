@@ -1,12 +1,27 @@
+import re
 from rest_framework import serializers
 from django.db.models import Q
-from chatbot.models import Media, KeyValue, Tag, FileDisplayMode, FileTypeChoices
+from chatbot.models import Media, KeyValue, Tag, FileDisplayMode, FileTypeChoices, SourceProviderChoices
 from chatbot.models.media_models import MediaImage
 import ast
 import json
 import os
 
 media_base_url = os.getenv("MEDIA_BASE_URL")
+
+GOOGLE_DRIVE_FILE_ID_PATTERN = re.compile(r'/d/([a-zA-Z0-9_-]+)')
+
+
+def build_google_drive_download_url(drive_url):
+    if not drive_url:
+        return drive_url
+
+    match = GOOGLE_DRIVE_FILE_ID_PATTERN.search(drive_url)
+    if not match:
+        return drive_url
+
+    return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+
 
 class S3UrlMixin:
     def resolve_s3_url(self, obj):
@@ -25,6 +40,12 @@ class S3UrlMixin:
                 return obj.get_s3_url()
 
         return obj.get_s3_url()
+
+    def resolve_file_url(self, obj):
+        if obj.source_provider == SourceProviderChoices.GOOGLE_DRIVE and obj.url:
+            return build_google_drive_download_url(obj.url)
+
+        return obj.get_s3_url() if hasattr(obj, 'get_s3_url') else None
 
     def resolve_thumbnail_url(self, obj):
         linked_file = obj.subdocuments.filter(
@@ -135,6 +156,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
         thumbnail_url = None
         view_count = 0
         download_count = 0
+        source_provider = None
 
         if media_id:
             try:
@@ -145,7 +167,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
                     'subdocuments__key_values'
                 ).only(
                     'id', 'file', 'media_type', 'organization__url', 'organization__logo', 'display_mode',
-                    'description', 'thumbnail', 'priority'
+                    'description', 'thumbnail', 'priority', 'source_provider'
                 ).get(id=media_id)
 
                 source_child = media_obj.subdocuments.filter(
@@ -185,6 +207,8 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
                 view_count = media_obj.view_count if media_obj.view_count else 0
                 download_count = media_obj.download_count if media_obj.download_count else 0
 
+                source_provider = media_obj.source_provider
+
             except Exception as e:
                 file_size = metadata.get('file_size', None)
                 organization_url = metadata.get('organization_url', None)
@@ -215,6 +239,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
             'priority_display': final_priority,
             'media_type': db_media_type,
             'media_type_display': db_media_type_display,
+            'source_provider': source_provider,
             'created_at': created_at,
             'updated_at': updated_at,
             's3_url': url,
@@ -353,7 +378,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         model = Media
         fields = [
             'id', 'name', 'description', 'priority', 'priority_display',
-            'media_type', 'media_type_display', 'created_at', 'updated_at',
+            'media_type', 'media_type_display', 'source_provider', 'created_at', 'updated_at',
             's3_url', 'file', 'tag_names', 'title', 'organization',
             'document_type', 'key_entities', 'file_size', 'organization_url', 'org_logo',
             'display_mode', 'display_mode_display',
@@ -394,7 +419,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         return self.resolve_thumbnail_url(obj)
 
     def get_file(self, obj):
-        return obj.get_s3_url() if hasattr(obj, 'get_s3_url') else None
+        return self.resolve_file_url(obj)
 
     def get_tag_names(self, obj):
         return list(obj.tags.values_list("name", flat=True))
@@ -484,7 +509,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         fields = [
             'id', 'name', 'description', 'priority', 'priority_display',
             'media_type', 'media_type_display', 'extracted_text',
-            'file', 'url', 'company_bot',
+            'file', 'url', 'source_provider', 'company_bot',
             'parent', 'parent_info', 'created_at', 'updated_at',
             's3_url', 'tags', 'title', 'organization', 'org_logo', 'document_type',
             'key_entities', 'key_values', 'images', 'children',
@@ -495,7 +520,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         return self.resolve_s3_url(obj)
 
     def get_file(self, obj):
-        return obj.get_s3_url() if hasattr(obj, 'get_s3_url') else None
+        return self.resolve_file_url(obj)
 
     def get_key_values(self, obj):
         basic_info = []

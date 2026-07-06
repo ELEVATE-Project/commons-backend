@@ -512,6 +512,13 @@ class FileDisplayMode(models.TextChoices):
     PRIVATE = "private", _("Private (Hidden from UI and AI)")
 
 
+class SourceProviderChoices(models.TextChoices):
+    GOOGLE_DRIVE = 'GOOGLE_DRIVE', _('Google Drive')
+    ONE_DRIVE = 'ONE_DRIVE', _('OneDrive')
+    AWS_S3 = 'AWS_S3', _('AWS S3')
+    LOCAL_UPLOAD = 'LOCAL_UPLOAD', _('Local Upload')
+
+
 class UserTypeChoices(models.TextChoices):
     GUEST = 'guest', _('Guest')
     AUTH = 'auth', _('Authenticated')
@@ -531,4 +538,3 @@ class LanguageOperationChoices(models.TextChoices):
 class OperationTypeChoices(models.TextChoices):
     LLM = 'llm', _('LLM')
     NON_LLM = 'non_llm', _('Non-LLM')
-
