@@ -333,7 +333,7 @@ class BatchMediaSaveView(View):
                     company_bot_id=company_bot_id,
                     organization=organization_instance,
                     url=item_data.get('source_url') if self.is_google_drive_import(item_data) else None,
-                    source_provider=item_data.get('source_provider') or CONSTANTS.LOCAL_UPLOAD,
+                    source_provider=item_data.get('source_provider') or CONSTANTS.LOCAL,
                 )
 
                 if file_content and file_name:

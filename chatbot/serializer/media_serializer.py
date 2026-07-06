@@ -1,6 +1,7 @@
 import re
 from rest_framework import serializers
 from django.db.models import Q
+from chatbot.constants.constants import GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX
 from chatbot.models import Media, KeyValue, Tag, FileDisplayMode, FileTypeChoices, SourceProviderChoices
 from chatbot.models.media_models import MediaImage
 import ast
@@ -20,7 +21,7 @@ def build_google_drive_download_url(drive_url):
     if not match:
         return drive_url
 
-    return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+    return f"{GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX}{match.group(1)}"
 
 
 class S3UrlMixin:

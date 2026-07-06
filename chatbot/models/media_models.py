@@ -159,7 +159,7 @@ class Media(models.Model):
         choices=SourceProviderChoices.choices,
         null=True,
         blank=True,
-        help_text="Source provider of the media (e.g. Google Drive, OneDrive, AWS S3)"
+        help_text="Source provider of the media (e.g. Google Drive, OneDrive, Local)"
     )
     priority = models.CharField(max_length=50, default=PriorityChoices.P1, choices=PriorityChoices.choices)
     media_type = models.CharField(max_length=100, choices=FileTypeChoices.choices, default=FileTypeChoices.TXT)
@@ -190,7 +190,7 @@ class Media(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
+    history = HistoricalRecords(excluded_fields=['source_provider'])
 
     def __str__(self):
         return self.name

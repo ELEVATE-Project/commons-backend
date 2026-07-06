@@ -515,8 +515,7 @@ class FileDisplayMode(models.TextChoices):
 class SourceProviderChoices(models.TextChoices):
     GOOGLE_DRIVE = 'GOOGLE_DRIVE', _('Google Drive')
     ONE_DRIVE = 'ONE_DRIVE', _('OneDrive')
-    AWS_S3 = 'AWS_S3', _('AWS S3')
-    LOCAL_UPLOAD = 'LOCAL_UPLOAD', _('Local Upload')
+    LOCAL = 'LOCAL', _('Local')
 
 
 class UserTypeChoices(models.TextChoices):

@@ -155,7 +155,7 @@ class DocumentUploadView(View):
                 company_bot=company_bot,
                 organization=company,
                 display_mode=FileDisplayMode.VISIBLE,
-                source_provider=CONSTANTS.LOCAL_UPLOAD
+                source_provider=CONSTANTS.LOCAL
             )
 
             # Save the uploaded file
