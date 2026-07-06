@@ -45,7 +45,7 @@ class S3UrlMixin:
         if obj.source_provider == SourceProviderChoices.GOOGLE_DRIVE and obj.url:
             return build_google_drive_download_url(obj.url)
 
-        return obj.get_s3_url() if hasattr(obj, 'get_s3_url') else None
+        return self.resolve_s3_url(obj)
 
     def resolve_thumbnail_url(self, obj):
         linked_file = obj.subdocuments.filter(
