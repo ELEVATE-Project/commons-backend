@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import models
-
+from urllib.parse import urlencode
 from chatbot.models import Tag, FileTypeChoices, FileDisplayMode, TagChoices, TagSourceChoices
 from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
@@ -800,9 +800,8 @@ class MediaSearchV2View(APIView):
         query = request.query_params.get('q', '').strip()
         
         try:
-            limit = int(
-                request.query_params.get('limit', 1000000000)
-            )
+            # Change default from 1 billion to a safe number like 100
+            limit = int(request.query_params.get('limit', 100))
             offset = int(request.query_params.get('offset', 0))
         except ValueError:
             return Response({
@@ -812,6 +811,20 @@ class MediaSearchV2View(APIView):
                 "previous": None,
                 "results": []
             }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Reject negative offsets or zero/negative limits
+        if limit < 1 or offset < 0:
+            return Response({
+                "error": "Limit must be at least 1 and offset must be 0 or greater.",
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Cap limit to a maximum of 1000 to prevent server memory exhaustion
+        if limit > 1000:
+            limit = 1000
         
         # Extract filter parameters (with backward compatibility)
         tags = self._parse_list_param(
@@ -841,6 +854,7 @@ class MediaSearchV2View(APIView):
             media_types = self._parse_list_param(
                 request.query_params.get('file_type', '')
             )
+        media_types = self._normalize_media_types(media_types)
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
@@ -856,6 +870,46 @@ class MediaSearchV2View(APIView):
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
         
+        if query:
+            return self._get_vector_search_response(
+                request=request,
+                query=query,
+                limit=limit,
+                offset=offset,
+                ordering=ordering,
+                ordering_param=ordering_param,
+                tags=tags,
+                organizations=organizations,
+                resource_types=resource_types,
+                media_types=media_types,
+            )
+
+        return self._get_database_list_response(
+            request=request,
+            limit=limit,
+            offset=offset,
+            ordering=ordering,
+            ordering_field=ordering_field,
+            ordering_reverse=ordering_reverse,
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            media_types=media_types,
+        )
+
+    def _get_vector_search_response(
+        self,
+        request,
+        query,
+        limit,
+        offset,
+        ordering,
+        ordering_param,
+        tags,
+        organizations,
+        resource_types,
+        media_types,
+    ):
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
         from chatbot.models import CompanyBot
@@ -894,78 +948,43 @@ class MediaSearchV2View(APIView):
                     "vector_db_error": True
                 }
             }, status=error_status)
-        
+
         all_results = vector_response.get('results', [])
-        print("all_results len: ", len(all_results))
-        # Apply content exclusion filter
-        all_results = self._apply_content_exclusion_filter_v2(
-            all_results
-        )
-        print("all_results len: ", len(all_results))
+        all_results = self._apply_content_exclusion_filter_v2(all_results)
 
         if media_types:
             all_results = self._apply_media_type_filter(all_results, media_types)
 
         total_results = len(all_results)
-        print("total_results len: ", total_results)
 
-        # Apply ordering
-        if ordering_field and all_results:
+        if ordering and all_results:
             all_results = self._apply_ordering(
-                all_results, ordering_field, ordering_reverse
+                all_results, *self._parse_ordering(ordering)
             )
-        
-        # Apply pagination
+
         paginated_results = (
             all_results[offset:offset + limit]
             if offset < len(all_results) else []
         )
-        
+
         serializer = MediaSearchResultSerializer(
             paginated_results, many=True
         )
-        
-        # Build pagination URLs
-        base_url = request.build_absolute_uri(request.path)
-        next_url = None
-        previous_url = None
-        
-        if offset + limit < total_results:
-            next_offset = offset + limit
-            next_url = (
-                f"{base_url}?q={query}&limit={limit}"
-                f"&offset={next_offset}"
-            )
-            if ordering_param:
-                next_url += f"&ordering={ordering}"
-            if tags:
-                next_url += f"&tags={','.join(tags)}"
-            if organizations:
-                next_url += f"&organizations={','.join(organizations)}"
-            if resource_types:
-                next_url += f"&resource_types={','.join(resource_types)}"
-            if media_types:
-                next_url += f"&media_types={','.join(media_types)}"
-        
-        if offset > 0:
-            previous_offset = max(0, offset - limit)
-            previous_url = (
-                f"{base_url}?q={query}&limit={limit}"
-                f"&offset={previous_offset}"
-            )
-            if ordering_param:
-                previous_url += f"&ordering={ordering}"
-            if tags:
-                previous_url += f"&tags={','.join(tags)}"
-            if organizations:
-                previous_url += f"&organizations={','.join(organizations)}"
-            if resource_types:
-                previous_url += f"&resource_types={','.join(resource_types)}"
-            if media_types:
-                previous_url += f"&media_types={','.join(media_types)}"
-        
-        print("len(serializer.data): ", len(serializer.data))
-        response_data = {
+
+        next_url, previous_url = self._build_pagination_urls(
+            request=request,
+            query=query,
+            limit=limit,
+            offset=offset,
+            total_results=total_results,
+            ordering=ordering_param if ordering_param else '',
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            media_types=media_types,
+        )
+
+        return Response({
             "count": total_results,
             "next": next_url,
             "previous": previous_url,
@@ -977,13 +996,230 @@ class MediaSearchV2View(APIView):
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
-                "search_config": vector_response.get(
-                    'search_config', {}
-                )
+                "search_config": vector_response.get('search_config', {})
             }
+        }, status=status.HTTP_200_OK)
+
+    def _get_database_list_response(
+        self,
+        request,
+        limit,
+        offset,
+        ordering,
+        ordering_field,
+        ordering_reverse,
+        tags,
+        organizations,
+        resource_types,
+        media_types,
+    ):
+        queryset = self._build_database_queryset()
+        queryset = self._apply_database_filters(
+            queryset=queryset,
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            media_types=media_types,
+        )
+
+        total_results = queryset.count()
+
+        if ordering_field:
+            queryset = self._apply_database_ordering(
+                queryset=queryset,
+                field=ordering_field,
+                reverse=ordering_reverse,
+            )
+
+        paginated_results = list(queryset[offset:offset + limit])
+        serializer = MediaListSerializer(
+            paginated_results,
+            many=True,
+            context={'request': request}
+        )
+
+        next_url, previous_url = self._build_pagination_urls(
+            request=request,
+            query='',
+            limit=limit,
+            offset=offset,
+            total_results=total_results,
+            ordering=ordering,
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            media_types=media_types,
+        )
+
+        return Response({
+            "count": total_results,
+            "next": next_url,
+            "previous": previous_url,
+            "results": serializer.data,
+            "search_metadata": {
+                "query": "",
+                "source": "database",
+                "offset": offset,
+                "limit": limit,
+                "ordering": ordering,
+                "returned_results": len(serializer.data),
+            }
+        }, status=status.HTTP_200_OK)
+
+    def _build_database_queryset(self):
+        queryset = Media.objects.filter(
+            display_mode=FileDisplayMode.VISIBLE
+        ).exclude(
+            key_values__key__iregex=r'^document[_ ]type$',
+            key_values__value__icontains='source document'
+        )
+        title_subquery = KeyValue.objects.filter(
+            media=OuterRef('pk'),
+            key__iexact='TITLE'
+        ).values('value')[:1]
+
+        queryset = queryset.annotate(
+            title=Subquery(title_subquery, output_field=CharField()),
+            organization_name=Coalesce(
+                'organization__name',
+                Value('', output_field=CharField())
+            )
+        )
+
+        source_child_qs = Media.objects.filter(
+            parent=OuterRef('pk'),
+            key_values__key__iregex=r'^document[_ ]type$',
+            key_values__value__icontains='source document'
+        ).order_by('id')
+
+        queryset = queryset.annotate(
+            overridden_media_type=Coalesce(
+                Subquery(source_child_qs.values('media_type')[:1]),
+                F('media_type')
+            )
+        )
+
+        queryset = queryset.annotate(
+            overridden_media_type_display=Case(
+                *[
+                    When(
+                        overridden_media_type=choice[0],
+                        then=Value(str(choice[1]))
+                    )
+                    for choice in FileTypeChoices.choices
+                ],
+                default=Value(""),
+                output_field=CharField()
+            )
+        )
+
+        return queryset.select_related(
+            'organization', 'parent'
+        ).prefetch_related(
+            'tags', 'key_values', 'subdocuments', 'subdocuments__key_values'
+        ).distinct()
+
+    def _apply_database_filters(
+        self,
+        queryset,
+        tags,
+        organizations,
+        resource_types,
+        media_types,
+    ):
+        if tags:
+            tag_conditions = Q()
+            for tag in tags:
+                tag_conditions |= Q(tags__name__icontains=tag)
+            queryset = queryset.filter(tag_conditions)
+
+        if organizations:
+            org_conditions = Q()
+            for org in organizations:
+                org_conditions |= Q(organization__name__icontains=org)
+            queryset = queryset.filter(org_conditions)
+
+        if resource_types:
+            resource_conditions = Q()
+            for resource_type in resource_types:
+                resource_conditions |= Q(
+                    key_values__key__iregex=r'^document[_ ]type$',
+                    key_values__value__icontains=resource_type
+                )
+            queryset = queryset.filter(resource_conditions)
+
+        if media_types:
+            queryset = queryset.filter(overridden_media_type__in=media_types)
+
+        return queryset.distinct()
+
+    def _apply_database_ordering(self, queryset, field, reverse=False):
+        ordering_map = {
+            'id': 'id',
+            'name': 'name',
+            'created_at': 'created_at',
+            'updated_at': 'updated_at',
+            'priority': 'priority',
+            'media_type': 'overridden_media_type',
+            'organization': 'organization_name',
+            'title': 'title',
         }
+
+        ordering_field = ordering_map.get(field, 'created_at')
+        prefix = '-' if reverse else ''
+        return queryset.order_by(f'{prefix}{ordering_field}', f'{prefix}id')
+
+    def _build_pagination_urls(
+        self,
+        request,
+        query,
+        limit,
+        offset,
+        total_results,
+        ordering='',
+        tags=None,
+        organizations=None,
+        resource_types=None,
+        media_types=None,
+    ):
+        base_url = request.build_absolute_uri(request.path)
         
-        return Response(response_data, status=status.HTTP_200_OK)
+        # Initialize a dictionary instead of a list
+        query_params = {
+            "limit": str(limit),
+            "offset": str(offset),
+        }
+
+        # Add items to the dictionary
+        if query:
+            query_params["q"] = query
+        if ordering:
+            query_params["ordering"] = ordering
+        if tags:
+            query_params["tags"] = ",".join(tags)
+        if organizations:
+            query_params["organizations"] = ",".join(organizations)
+        if resource_types:
+            query_params["resource_types"] = ",".join(resource_types)
+        if media_types:
+            query_params["media_types"] = ",".join(media_types)
+
+        next_url = None
+        previous_url = None
+
+        # Safely encode the URL using urlencode
+        if offset + limit < total_results:
+            next_params = query_params.copy()
+            next_params["offset"] = str(offset + limit)
+            next_url = f"{base_url}?{urlencode(next_params, doseq=True)}"
+
+        if offset > 0:
+            previous_offset = max(0, offset - limit)
+            previous_params = query_params.copy()
+            previous_params["offset"] = str(previous_offset)
+            previous_url = f"{base_url}?{urlencode(previous_params, doseq=True)}"
+
+        return next_url, previous_url
 
     def _apply_media_type_filter(self, results, requested_media_types):
         """
@@ -1093,6 +1329,13 @@ class MediaSearchV2View(APIView):
             item.strip() for item in param_value.split(',')
             if item.strip()
         ]
+    
+    def _normalize_media_types(self, media_types):
+        normalized = []
+        for media_type in media_types:
+            mime_type = FileTypeChoices.get_mime_from_extension(media_type)
+            normalized.append(mime_type or media_type)
+        return normalized
     
     def _parse_ordering(self, ordering_param):
         # Parse ordering parameter to (field, reverse) tuple
