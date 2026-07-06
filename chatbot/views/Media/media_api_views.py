@@ -5,7 +5,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import models
-
 from urllib.parse import urlencode
 from chatbot.models import Tag, FileTypeChoices, FileDisplayMode, TagChoices, TagSourceChoices
 from chatbot.models.media_models import Media, KeyValue
@@ -812,6 +811,20 @@ class MediaSearchV2View(APIView):
                 "previous": None,
                 "results": []
             }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Reject negative offsets or zero/negative limits
+        if limit < 1 or offset < 0:
+            return Response({
+                "error": "Limit must be at least 1 and offset must be 0 or greater.",
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Cap limit to a maximum of 1000 to prevent server memory exhaustion
+        if limit > 1000:
+            limit = 1000
         
         # Reject negative offsets or zero/negative limits
         if limit < 1 or offset < 0:
@@ -855,7 +868,6 @@ class MediaSearchV2View(APIView):
             media_types = self._parse_list_param(
                 request.query_params.get('file_type', '')
             )
-
         media_types = self._normalize_media_types(media_types)
         
         # Determine ordering: score for search, user choice otherwise
@@ -871,7 +883,7 @@ class MediaSearchV2View(APIView):
             ordering = ordering_param if ordering_param else '-created_at'
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
-
+        
         if query:
             return self._get_vector_search_response(
                 request=request,
@@ -912,7 +924,6 @@ class MediaSearchV2View(APIView):
         resource_types,
         media_types,
     ):
-
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
         from chatbot.models import CompanyBot
@@ -951,7 +962,7 @@ class MediaSearchV2View(APIView):
                     "vector_db_error": True
                 }
             }, status=error_status)
-        
+
         all_results = vector_response.get('results', [])
         all_results = self._apply_content_exclusion_filter_v2(all_results)
 
@@ -964,13 +975,12 @@ class MediaSearchV2View(APIView):
             all_results = self._apply_ordering(
                 all_results, *self._parse_ordering(ordering)
             )
-        
 
         paginated_results = (
             all_results[offset:offset + limit]
             if offset < len(all_results) else []
         )
-        
+
         serializer = MediaSearchResultSerializer(
             paginated_results, many=True
         )
@@ -1334,6 +1344,13 @@ class MediaSearchV2View(APIView):
             if item.strip()
         ]
 
+    def _normalize_media_types(self, media_types):
+        normalized = []
+        for media_type in media_types:
+            mime_type = FileTypeChoices.get_mime_from_extension(media_type)
+            normalized.append(mime_type or media_type)
+        return normalized
+    
     def _normalize_media_types(self, media_types):
         normalized = []
         for media_type in media_types:
