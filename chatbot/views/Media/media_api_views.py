@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import models
-
+from urllib.parse import urlencode
 from chatbot.models import Tag, FileTypeChoices, FileDisplayMode, TagChoices, TagSourceChoices
 from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
@@ -800,9 +800,8 @@ class MediaSearchV2View(APIView):
         query = request.query_params.get('q', '').strip()
         
         try:
-            limit = int(
-                request.query_params.get('limit', 1000000000)
-            )
+            # Change default from 1 billion to a safe number like 100
+            limit = int(request.query_params.get('limit', 100))
             offset = int(request.query_params.get('offset', 0))
         except ValueError:
             return Response({
@@ -812,6 +811,20 @@ class MediaSearchV2View(APIView):
                 "previous": None,
                 "results": []
             }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Reject negative offsets or zero/negative limits
+        if limit < 1 or offset < 0:
+            return Response({
+                "error": "Limit must be at least 1 and offset must be 0 or greater.",
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Cap limit to a maximum of 1000 to prevent server memory exhaustion
+        if limit > 1000:
+            limit = 1000
         
         # Extract filter parameters (with backward compatibility)
         tags = self._parse_list_param(
@@ -841,6 +854,7 @@ class MediaSearchV2View(APIView):
             media_types = self._parse_list_param(
                 request.query_params.get('file_type', '')
             )
+        media_types = self._normalize_media_types(media_types)
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
@@ -1055,8 +1069,10 @@ class MediaSearchV2View(APIView):
     def _build_database_queryset(self):
         queryset = Media.objects.filter(
             display_mode=FileDisplayMode.VISIBLE
+        ).exclude(
+            key_values__key__iregex=r'^document[_ ]type$',
+            key_values__value__icontains='source document'
         )
-
         title_subquery = KeyValue.objects.filter(
             media=OuterRef('pk'),
             key__iexact='TITLE'
@@ -1167,34 +1183,41 @@ class MediaSearchV2View(APIView):
         media_types=None,
     ):
         base_url = request.build_absolute_uri(request.path)
-        query_params = [f"limit={limit}", f"offset={offset}"]
+        
+        # Initialize a dictionary instead of a list
+        query_params = {
+            "limit": str(limit),
+            "offset": str(offset),
+        }
 
+        # Add items to the dictionary
         if query:
-            query_params.insert(0, f"q={query}")
+            query_params["q"] = query
         if ordering:
-            query_params.append(f"ordering={ordering}")
+            query_params["ordering"] = ordering
         if tags:
-            query_params.append(f"tags={','.join(tags)}")
+            query_params["tags"] = ",".join(tags)
         if organizations:
-            query_params.append(f"organizations={','.join(organizations)}")
+            query_params["organizations"] = ",".join(organizations)
         if resource_types:
-            query_params.append(f"resource_types={','.join(resource_types)}")
+            query_params["resource_types"] = ",".join(resource_types)
         if media_types:
-            query_params.append(f"media_types={','.join(media_types)}")
+            query_params["media_types"] = ",".join(media_types)
 
         next_url = None
         previous_url = None
 
+        # Safely encode the URL using urlencode
         if offset + limit < total_results:
             next_params = query_params.copy()
-            next_params[query_params.index(f"offset={offset}")] = f"offset={offset + limit}"
-            next_url = f"{base_url}?{'&'.join(next_params)}"
+            next_params["offset"] = str(offset + limit)
+            next_url = f"{base_url}?{urlencode(next_params, doseq=True)}"
 
         if offset > 0:
             previous_offset = max(0, offset - limit)
             previous_params = query_params.copy()
-            previous_params[query_params.index(f"offset={offset}")] = f"offset={previous_offset}"
-            previous_url = f"{base_url}?{'&'.join(previous_params)}"
+            previous_params["offset"] = str(previous_offset)
+            previous_url = f"{base_url}?{urlencode(previous_params, doseq=True)}"
 
         return next_url, previous_url
 
@@ -1306,6 +1329,13 @@ class MediaSearchV2View(APIView):
             item.strip() for item in param_value.split(',')
             if item.strip()
         ]
+    
+    def _normalize_media_types(self, media_types):
+        normalized = []
+        for media_type in media_types:
+            mime_type = FileTypeChoices.get_mime_from_extension(media_type)
+            normalized.append(mime_type or media_type)
+        return normalized
     
     def _parse_ordering(self, ordering_param):
         # Parse ordering parameter to (field, reverse) tuple
