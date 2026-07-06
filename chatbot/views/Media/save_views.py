@@ -100,6 +100,7 @@ class BatchMediaSaveView(View):
                 parent=parent_media,
                 organization=parent_media.organization,
                 url=source_doc_url,
+                source_provider=parent_media.source_provider,
                 display_mode=FileDisplayMode.PRIVATE
             )
 
@@ -332,6 +333,7 @@ class BatchMediaSaveView(View):
                     company_bot_id=company_bot_id,
                     organization=organization_instance,
                     url=item_data.get('source_url') if self.is_google_drive_import(item_data) else None,
+                    source_provider=item_data.get('source_provider') or CONSTANTS.LOCAL,
                 )
 
                 if file_content and file_name:
@@ -852,6 +854,7 @@ class BatchMediaSaveView(View):
                 parent=actual_parent,
                 organization=organization_instance,
                 url=file_url or source_doc_url,
+                source_provider=source_doc.get('source_provider') or parent_media.source_provider,
                 display_mode=subdoc_data.get('display_mode', FileDisplayMode.VISIBLE),
             )
 

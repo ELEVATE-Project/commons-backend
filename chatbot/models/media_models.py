@@ -2,7 +2,7 @@ import os
 import base64
 from django.db import models
 from chatbot.models import Profile, CompanyBot, MediaTemplateChoices, PDFStrategyChoices, Tag, \
-    FileTypeChoices, Company, MediaTypeChoices, FileDisplayMode
+    FileTypeChoices, Company, MediaTypeChoices, FileDisplayMode, SourceProviderChoices
 from shikshalokam.models.enums import PriorityChoices
 from django.contrib.postgres.indexes import GinIndex
 from django.contrib.postgres.search import SearchVector, TrigramSimilarity
@@ -154,6 +154,13 @@ class Media(models.Model):
     name = models.CharField(max_length=1000)
     organization = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     url = models.URLField(max_length=1000, null=True, blank=True)
+    source_provider = models.CharField(
+        max_length=100,
+        choices=SourceProviderChoices.choices,
+        null=True,
+        blank=True,
+        help_text="Source provider of the media (e.g. Google Drive, OneDrive, Local)"
+    )
     priority = models.CharField(max_length=50, default=PriorityChoices.P1, choices=PriorityChoices.choices)
     media_type = models.CharField(max_length=100, choices=FileTypeChoices.choices, default=FileTypeChoices.TXT)
     company_bot = models.ForeignKey(CompanyBot, on_delete=models.DO_NOTHING)
@@ -183,7 +190,7 @@ class Media(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
+    history = HistoricalRecords(excluded_fields=['source_provider'])
 
     def __str__(self):
         return self.name

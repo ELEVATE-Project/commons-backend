@@ -7,6 +7,7 @@ from django.utils.decorators import method_decorator
 from chatbot.models import Media, KeyValue, CompanyBot, Company, FileTypeChoices, FileDisplayMode
 from shikshalokam.models.enums import PriorityChoices
 from django.core.files.base import ContentFile
+import chatbot.constants.constants as CONSTANTS
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -153,7 +154,8 @@ class DocumentUploadView(View):
                 description=summary,
                 company_bot=company_bot,
                 organization=company,
-                display_mode=FileDisplayMode.VISIBLE
+                display_mode=FileDisplayMode.VISIBLE,
+                source_provider=CONSTANTS.LOCAL
             )
 
             # Save the uploaded file
