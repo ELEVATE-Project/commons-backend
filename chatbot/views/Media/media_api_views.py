@@ -781,7 +781,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
 
         related = (siblings | similar_tags).distinct()[:20]
 
-        serializer = MediaListSerializer(related, many=True)
+        serializer = MediaListSerializer(related, many=True, context={'request': request})
         return Response({
             'media_id': media.id,
             'related_count': related.count(),
@@ -883,7 +883,7 @@ class MediaSearchV2View(APIView):
             ordering = ordering_param if ordering_param else '-created_at'
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
-        
+
         if query:
             return self._get_vector_search_response(
                 request=request,
@@ -897,6 +897,12 @@ class MediaSearchV2View(APIView):
                 resource_types=resource_types,
                 media_types=media_types,
             )
+
+        # Normalize score ordering (only valid for search) to created_at for database queries
+        if ordering_field == 'score':
+            ordering_field = 'created_at'
+            ordering_reverse = True
+            ordering = '-created_at'
 
         return self._get_database_list_response(
             request=request,
@@ -1049,7 +1055,7 @@ class MediaSearchV2View(APIView):
 
         paginated_results = queryset[offset:offset + limit]
 
-        serializer = MediaListSerializer(paginated_results, many=True)
+        serializer = MediaListSerializer(paginated_results, many=True, context={'request': request})
 
         next_url, previous_url = self._build_pagination_urls(
             request=request,
