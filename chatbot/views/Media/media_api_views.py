@@ -781,7 +781,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
 
         related = (siblings | similar_tags).distinct()[:20]
 
-        serializer = MediaListSerializer(related, many=True)
+        serializer = MediaListSerializer(related, many=True, context={'request': request})
         return Response({
             'media_id': media.id,
             'related_count': related.count(),
@@ -826,6 +826,20 @@ class MediaSearchV2View(APIView):
         if limit > 1000:
             limit = 1000
         
+        # Reject negative offsets or zero/negative limits
+        if limit < 1 or offset < 0:
+            return Response({
+                "error": "Limit must be at least 1 and offset must be 0 or greater.",
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Cap limit to a maximum of 1000 to prevent server memory exhaustion
+        if limit > 1000:
+            limit = 1000
+
         # Extract filter parameters (with backward compatibility)
         tags = self._parse_list_param(
             request.query_params.get('tags', '')
@@ -869,7 +883,7 @@ class MediaSearchV2View(APIView):
             ordering = ordering_param if ordering_param else '-created_at'
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
-        
+
         if query:
             return self._get_vector_search_response(
                 request=request,
@@ -883,6 +897,12 @@ class MediaSearchV2View(APIView):
                 resource_types=resource_types,
                 media_types=media_types,
             )
+
+        # Normalize score ordering (only valid for search) to created_at for database queries
+        if ordering_field == 'score':
+            ordering_field = 'created_at'
+            ordering_reverse = True
+            ordering = '-created_at'
 
         return self._get_database_list_response(
             request=request,
@@ -970,7 +990,12 @@ class MediaSearchV2View(APIView):
         serializer = MediaSearchResultSerializer(
             paginated_results, many=True
         )
-
+        
+        # Build pagination URLs
+        base_url = request.build_absolute_uri(request.path)
+        next_url = None
+        previous_url = None
+        
         next_url, previous_url = self._build_pagination_urls(
             request=request,
             query=query,
@@ -1015,7 +1040,7 @@ class MediaSearchV2View(APIView):
     ):
         queryset = self._build_database_queryset()
         queryset = self._apply_database_filters(
-            queryset=queryset,
+            queryset,
             tags=tags,
             organizations=organizations,
             resource_types=resource_types,
@@ -1031,12 +1056,9 @@ class MediaSearchV2View(APIView):
                 reverse=ordering_reverse,
             )
 
-        paginated_results = list(queryset[offset:offset + limit])
-        serializer = MediaListSerializer(
-            paginated_results,
-            many=True,
-            context={'request': request}
-        )
+        paginated_results = queryset[offset:offset + limit]
+
+        serializer = MediaListSerializer(paginated_results, many=True, context={'request': request})
 
         next_url, previous_url = self._build_pagination_urls(
             request=request,
@@ -1057,8 +1079,7 @@ class MediaSearchV2View(APIView):
             "previous": previous_url,
             "results": serializer.data,
             "search_metadata": {
-                "query": "",
-                "source": "database",
+                "query": '',
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
@@ -1073,6 +1094,7 @@ class MediaSearchV2View(APIView):
             key_values__key__iregex=r'^document[_ ]type$',
             key_values__value__icontains='source document'
         )
+
         title_subquery = KeyValue.objects.filter(
             media=OuterRef('pk'),
             key__iexact='TITLE'
@@ -1182,8 +1204,9 @@ class MediaSearchV2View(APIView):
         resource_types=None,
         media_types=None,
     ):
-        base_url = request.build_absolute_uri(request.path)
-        
+        base_url = request.build_absolute_uri(request.path)       
+
+
         # Initialize a dictionary instead of a list
         query_params = {
             "limit": str(limit),
@@ -1329,6 +1352,13 @@ class MediaSearchV2View(APIView):
             item.strip() for item in param_value.split(',')
             if item.strip()
         ]
+
+    def _normalize_media_types(self, media_types):
+        normalized = []
+        for media_type in media_types:
+            mime_type = FileTypeChoices.get_mime_from_extension(media_type)
+            normalized.append(mime_type or media_type)
+        return normalized
     
     def _normalize_media_types(self, media_types):
         normalized = []
