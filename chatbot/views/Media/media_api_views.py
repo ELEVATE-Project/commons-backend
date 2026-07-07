@@ -1049,9 +1049,12 @@ class MediaSearchV2View(APIView):
 
         total_results = queryset.count()
 
-        queryset = self._apply_database_ordering(
-            queryset, ordering_field, ordering_reverse
-        )
+        if ordering_field:
+            queryset = self._apply_database_ordering(
+                queryset=queryset,
+                field=ordering_field,
+                reverse=ordering_reverse,
+            )
 
         paginated_results = queryset[offset:offset + limit]
 
