@@ -466,6 +466,11 @@ LOGGING = {
             'level': os.getenv('DEFAULT_LOG_LEVEL', 'INFO'),
             'propagate': False,
         },
+        'chatbot': {
+            'handlers': ['debug_file', 'info_file', 'warning_file', 'error_file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
     },
     'formatters': {
         'verbose': {

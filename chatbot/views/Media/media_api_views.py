@@ -1,4 +1,5 @@
 import json_repair
+import logging
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,6 +20,8 @@ from django.db.models import (
     CharField, IntegerField, Case, When, F
 )
 from django.db.models.functions import Greatest, Coalesce, Lower
+
+logger = logging.getLogger(__name__)
 
 
 class FetchThemeView(APIView):
@@ -795,7 +798,34 @@ class MediaSearchV2View(APIView):
         'id', 'name', 'created_at', 'updated_at', 'priority',
         'media_type', 'organization', 'title', 'score'
     ]
-    
+
+    def _serialize_media_items(self, items, serializer_class, context=None, is_search_result=False):
+        """
+        Serialize media items individually, filtering out items that fail due to missing S3 files.
+
+        Args:
+            items: List of media objects or search results to serialize
+            serializer_class: The serializer class to use
+            context: Optional context dict for serializer
+            is_search_result: Whether items are search results (dict) vs Media objects
+
+        Returns:
+            List of successfully serialized items
+        """
+        serialized_data = []
+        for item in items:
+            try:
+                serializer = serializer_class(item, context=context)
+                serialized_data.append(serializer.data)
+            except (FileNotFoundError, ValueError, AttributeError) as e:
+                media_id = item.get('source_id') if is_search_result else (item.id if hasattr(item, 'id') else 'unknown')
+                logger.debug(f"This file fetch from s3 bucket was unsuccessful hence removing it from response. Media ID: {media_id}, Error: {str(e)}")
+            except Exception as e:
+                media_id = item.get('source_id') if is_search_result else (item.id if hasattr(item, 'id') else 'unknown')
+                logger.debug(f"Error serializing media item (Media ID: {media_id}): {type(e).__name__}: {str(e)}")
+
+        return serialized_data
+
     def get(self, request, format=None):
         query = request.query_params.get('q', '').strip()
         
@@ -987,15 +1017,17 @@ class MediaSearchV2View(APIView):
             if offset < len(all_results) else []
         )
 
-        serializer = MediaSearchResultSerializer(
-            paginated_results, many=True
+        serialized_results = self._serialize_media_items(
+            paginated_results,
+            MediaSearchResultSerializer,
+            is_search_result=True
         )
-        
+
         # Build pagination URLs
         base_url = request.build_absolute_uri(request.path)
         next_url = None
         previous_url = None
-        
+
         next_url, previous_url = self._build_pagination_urls(
             request=request,
             query=query,
@@ -1013,14 +1045,14 @@ class MediaSearchV2View(APIView):
             "count": total_results,
             "next": next_url,
             "previous": previous_url,
-            "results": serializer.data,
+            "results": serialized_results,
             "search_metadata": {
                 "query": query,
                 "top_k": top_k,
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
-                "returned_results": len(serializer.data),
+                "returned_results": len(serialized_results),
                 "search_config": vector_response.get('search_config', {})
             }
         }, status=status.HTTP_200_OK)
@@ -1058,7 +1090,12 @@ class MediaSearchV2View(APIView):
 
         paginated_results = queryset[offset:offset + limit]
 
-        serializer = MediaListSerializer(paginated_results, many=True, context={'request': request})
+        serialized_results = self._serialize_media_items(
+            paginated_results,
+            MediaListSerializer,
+            context={'request': request},
+            is_search_result=False
+        )
 
         next_url, previous_url = self._build_pagination_urls(
             request=request,
@@ -1077,13 +1114,13 @@ class MediaSearchV2View(APIView):
             "count": total_results,
             "next": next_url,
             "previous": previous_url,
-            "results": serializer.data,
+            "results": serialized_results,
             "search_metadata": {
                 "query": '',
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
-                "returned_results": len(serializer.data),
+                "returned_results": len(serialized_results),
             }
         }, status=status.HTTP_200_OK)
 
