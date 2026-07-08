@@ -1005,23 +1005,25 @@ class MediaSearchV2View(APIView):
         if media_types:
             all_results = self._apply_media_type_filter(all_results, media_types)
 
-        total_results = len(all_results)
-
         if ordering and all_results:
             all_results = self._apply_ordering(
                 all_results, *self._parse_ordering(ordering)
             )
 
-        paginated_results = (
-            all_results[offset:offset + limit]
-            if offset < len(all_results) else []
-        )
-
-        serialized_results = self._serialize_media_items(
-            paginated_results,
+        # Serialize all results first, then paginate to ensure no gaps from serialization failures
+        all_serialized = self._serialize_media_items(
+            all_results,
             MediaSearchResultSerializer,
             is_search_result=True
         )
+
+        # Apply pagination to serialized results
+        paginated_results = (
+            all_serialized[offset:offset + limit]
+            if offset < len(all_serialized) else []
+        )
+
+        total_results = len(all_serialized)
 
         # Build pagination URLs
         base_url = request.build_absolute_uri(request.path)
@@ -1045,14 +1047,14 @@ class MediaSearchV2View(APIView):
             "count": total_results,
             "next": next_url,
             "previous": previous_url,
-            "results": serialized_results,
+            "results": paginated_results,
             "search_metadata": {
                 "query": query,
                 "top_k": top_k,
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
-                "returned_results": len(serialized_results),
+                "returned_results": len(paginated_results),
                 "search_config": vector_response.get('search_config', {})
             }
         }, status=status.HTTP_200_OK)
@@ -1079,7 +1081,7 @@ class MediaSearchV2View(APIView):
             media_types=media_types,
         )
 
-        total_results = queryset.count()
+        total_database_count = queryset.count()
 
         if ordering_field:
             queryset = self._apply_database_ordering(
@@ -1088,21 +1090,41 @@ class MediaSearchV2View(APIView):
                 reverse=ordering_reverse,
             )
 
-        paginated_results = queryset[offset:offset + limit]
+        # Fetch and serialize until we have enough items or reach end of queryset
+        serialized_results = []
+        current_offset = offset
+        over_fetch_factor = 3
+        max_iterations = 10
+        iteration = 0
 
-        serialized_results = self._serialize_media_items(
-            paginated_results,
-            MediaListSerializer,
-            context={'request': request},
-            is_search_result=False
-        )
+        while len(serialized_results) < limit and current_offset < total_database_count and iteration < max_iterations:
+            fetch_limit = current_offset + (limit * over_fetch_factor)
+            batch_results = list(queryset[current_offset:fetch_limit])
+
+            if not batch_results:
+                break
+
+            batch_serialized = self._serialize_media_items(
+                batch_results,
+                MediaListSerializer,
+                context={'request': request},
+                is_search_result=False
+            )
+
+            serialized_results.extend(batch_serialized)
+            current_offset = fetch_limit
+            iteration += 1
+
+        # Return exactly limit items if available, fewer only if we've exhausted the queryset
+        paginated_results = serialized_results[:limit]
+        total_results = len(paginated_results)
 
         next_url, previous_url = self._build_pagination_urls(
             request=request,
             query='',
             limit=limit,
             offset=offset,
-            total_results=total_results,
+            total_results=total_database_count,
             ordering=ordering,
             tags=tags,
             organizations=organizations,
@@ -1111,16 +1133,16 @@ class MediaSearchV2View(APIView):
         )
 
         return Response({
-            "count": total_results,
+            "count": total_database_count,
             "next": next_url,
             "previous": previous_url,
-            "results": serialized_results,
+            "results": paginated_results,
             "search_metadata": {
                 "query": '',
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
-                "returned_results": len(serialized_results),
+                "returned_results": len(paginated_results),
             }
         }, status=status.HTTP_200_OK)
 
