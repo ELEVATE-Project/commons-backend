@@ -86,8 +86,8 @@ class S3UrlMixin:
             if obj.thumbnail and obj.thumbnail.name:
                 if default_storage.exists(obj.thumbnail.name):
                     return obj.get_thumbnail_s3_url()
-        except (FileNotFoundError, AttributeError, ValueError, Exception):
-            pass
+        except (FileNotFoundError, AttributeError, ValueError, OSError) as e:
+            logger.warning("Failed to resolve thumbnail URL for '%s': %s", obj.thumbnail.name, e)
         return None
 
 
