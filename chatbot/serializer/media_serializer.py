@@ -1,7 +1,8 @@
 import re
 from rest_framework import serializers
 from django.db.models import Q
-from chatbot.constants.constants import GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX
+from django.core.files.storage import default_storage
+from chatbot.constants.constants import GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX, FILE_NOT_FOUND
 from chatbot.models import Media, KeyValue, Tag, FileDisplayMode, FileTypeChoices, SourceProviderChoices
 from chatbot.models.media_models import MediaImage
 import ast
@@ -32,15 +33,24 @@ class S3UrlMixin:
         ).first()
 
         if linked_file:
-            return linked_file.get_s3_url()
+            return self._safe_get_s3_url(linked_file)
 
         if obj.parent:
             parent_kv = obj.parent.key_values.filter(key__iregex=r'^document[_ ]type$').first()
             parent_doc_type = parent_kv.value.lower() if parent_kv and parent_kv.value else None
             if parent_doc_type in ["template", "source document"]:
-                return obj.get_s3_url()
+                return self._safe_get_s3_url(obj)
 
-        return obj.get_s3_url()
+        return self._safe_get_s3_url(obj)
+
+    def _safe_get_s3_url(self, obj):
+        try:
+            if obj.file and obj.file.name:
+                if default_storage.exists(obj.file.name):
+                    return obj.get_s3_url()
+        except (FileNotFoundError, AttributeError, ValueError, OSError) as e:
+            logger.warning("Failed to resolve S3 URL for file '%s': %s", obj.file.name, e)
+        return FILE_NOT_FOUND
 
     def resolve_file_url(self, obj):
         if obj.source_provider == SourceProviderChoices.GOOGLE_DRIVE and obj.url:
@@ -56,7 +66,7 @@ class S3UrlMixin:
 
         if linked_file:
             if linked_file.thumbnail:
-                return linked_file.get_thumbnail_s3_url()
+                return self._safe_get_thumbnail_url(linked_file)
             return None
 
         if obj.parent:
@@ -64,11 +74,20 @@ class S3UrlMixin:
             parent_doc_type = parent_kv.value.lower() if parent_kv and parent_kv.value else None
             if parent_doc_type in ["template", "source document"]:
                 if obj.thumbnail:
-                    return obj.get_thumbnail_s3_url()
+                    return self._safe_get_thumbnail_url(obj)
                 return None
 
         if obj.thumbnail:
-            return obj.get_thumbnail_s3_url()
+            return self._safe_get_thumbnail_url(obj)
+        return None
+
+    def _safe_get_thumbnail_url(self, obj):
+        try:
+            if obj.thumbnail and obj.thumbnail.name:
+                if default_storage.exists(obj.thumbnail.name):
+                    return obj.get_thumbnail_s3_url()
+        except (FileNotFoundError, AttributeError, ValueError, OSError) as e:
+            logger.warning("Failed to resolve thumbnail URL for '%s': %s", obj.thumbnail.name, e)
         return None
 
 
@@ -112,7 +131,10 @@ class MediaImageSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         if obj.file:
-            return obj.file.url
+            try:
+                return obj.file.url
+            except (FileNotFoundError, AttributeError, ValueError):
+                return None
         return None
 
 
@@ -184,7 +206,10 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
                     db_media_type_display = media_obj.get_media_type_display()
 
                 if media_obj.file:
-                    file_size = getattr(media_obj.file, "size", None)
+                    try:
+                        file_size = getattr(media_obj.file, "size", None)
+                    except (FileNotFoundError, AttributeError, ValueError):
+                        file_size = None
 
                 thumbnail_url = self.resolve_thumbnail_url(media_obj)
 
@@ -456,7 +481,12 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         return self.get_metadata_field(obj, 'KEY ENTITIES')
 
     def get_file_size(self, obj):
-        return getattr(obj.file, "size", None) if obj.file else None
+        if obj.file:
+            try:
+                return getattr(obj.file, "size", None)
+            except (FileNotFoundError, AttributeError, ValueError):
+                return None
+        return None
 
     def get_media_type(self, obj):
         if hasattr(obj, "overridden_media_type"):
@@ -683,7 +713,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
             if obj.file and hasattr(obj.file, 'size'):
                 return obj.file.size
             return None
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, FileNotFoundError):
             return None
 
     def get_size(self, obj):
@@ -699,7 +729,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
                     size /= 1024.0
                 return f"{size:.1f} PB"
             return None
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, FileNotFoundError):
             return None
 
     def get_media_type(self, obj):
