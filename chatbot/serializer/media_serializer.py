@@ -48,8 +48,8 @@ class S3UrlMixin:
             if obj.file and obj.file.name:
                 if default_storage.exists(obj.file.name):
                     return obj.get_s3_url()
-        except (FileNotFoundError, AttributeError, ValueError, Exception):
-            pass
+        except (FileNotFoundError, AttributeError, ValueError, OSError) as e:
+            logger.warning("Failed to resolve S3 URL for file '%s': %s", obj.file.name, e)
         return FILE_NOT_FOUND
 
     def resolve_file_url(self, obj):
