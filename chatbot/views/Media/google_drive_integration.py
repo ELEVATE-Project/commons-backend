@@ -228,7 +228,7 @@ def validate_google_drive_url(drive_url):
 
     # Valid characters in base URL: alphanumeric, -, _, /, :, .
     # Invalid: %, ^, &, *, @, #, !, etc. (outside of query string)
-    base_url_pattern = r'^https://drive\.google\.com/drive/(folders|file)/[a-zA-Z0-9_-]+/?$'
+    base_url_pattern = r'^https://drive\.google\.com/drive/(?:u/\d+/)?(folders|file)/[a-zA-Z0-9_-]+/?$'
     if not re.match(base_url_pattern, base_url):
         return False, "Invalid Google Drive URL format or contains suspicious characters in the base path"
 
