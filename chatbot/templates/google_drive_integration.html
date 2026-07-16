@@ -27,16 +27,18 @@
             <thead>
                 <tr>
                     <th style="width:8%">Sl No</th>
-                    <th style="width:45%">Repository URL</th>
-                    <th style="width:15%">Status</th>
-                    <th style="width:22%">Created At</th>
+                    <th style="width:50%">Repository URL</th>
+                    <th style="width:17%">Status</th>
+                    <th style="width:25%">Created At</th>
+                    <!-- COMMENTED OUT - Action column (to be implemented in upcoming phase)
                     <th style="width:10%">Action</th>
+                    -->
                 </tr>
             </thead>
     
             <tbody id="repositories-body">
                 <tr>
-                    <td colspan="5">Loading repositories...</td>
+                    <td colspan="4">Loading repositories...</td>
                 </tr>
             </tbody>
         </table>
@@ -146,6 +148,7 @@
     border-radius: 4px;
 }
 
+/* COMMENTED OUT - Delete button functionality (to be implemented in upcoming phase)
 .delete-btn {
     background: #dc3545;
     color: #fff;
@@ -160,6 +163,7 @@
 .delete-btn:hover {
     background: #bb2d3b;
 }
+*/
 
 #repositories-table th:first-child,
 #repositories-table td:first-child {
@@ -167,11 +171,13 @@
     text-align: center;
 }
 
+/* COMMENTED OUT - Last column styling for Action column (to be implemented in upcoming phase)
 #repositories-table th:last-child,
 #repositories-table td:last-child {
     width: 120px;
     text-align: center;
 }
+*/
 
 .pagination-container {
     display: flex;
@@ -290,6 +296,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 const actionCell = document.createElement('td');
                 actionCell.style.textAlign = 'center';
 
+                /* COMMENTED OUT - Delete button functionality (to be implemented in upcoming phase)
                 const deleteBtn = document.createElement('button');
                 deleteBtn.type = 'button';
                 deleteBtn.className = 'delete-btn';
@@ -301,6 +308,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
 
                 actionCell.appendChild(deleteBtn);
+                */
                 row.appendChild(actionCell);
 
                 tbody.appendChild(row);
@@ -309,7 +317,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (repositories.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5">No repositories found</td>
+                        <td colspan="4">No repositories found</td>
                     </tr>
                 `;
             }
@@ -319,7 +327,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             document.getElementById('repositories-body').innerHTML = `
                 <tr>
-                    <td colspan="5">Failed to load repositories</td>
+                    <td colspan="4">Failed to load repositories</td>
                 </tr>
             `;
         }
