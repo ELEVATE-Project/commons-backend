@@ -199,6 +199,50 @@ class GoogleDriveCallbackView(View):
 
 
 
+def validate_google_drive_url(drive_url):
+    """
+    Validate Google Drive URL for suspicious/invalid special characters.
+    Ensures the URL follows the expected Google Drive URL pattern.
+
+    Args:
+        drive_url: The Google Drive URL to validate
+
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not drive_url:
+        return False, "URL is required"
+
+    drive_url = drive_url.strip()
+
+    # Check if URL starts with valid Google Drive domain
+    if not drive_url.startswith('https://drive.google.com'):
+        return False, "Invalid Google Drive URL: must start with https://drive.google.com"
+
+    # Extract the base URL and query string
+    if '?' in drive_url:
+        base_url, query_string = drive_url.split('?', 1)
+    else:
+        base_url = drive_url
+        query_string = ''
+
+    # Valid characters in base URL: alphanumeric, -, _, /, :, .
+    # Invalid: %, ^, &, *, @, #, !, etc. (outside of query string)
+    base_url_pattern = r'^https://drive\.google\.com/drive/(folders|file)/[a-zA-Z0-9_-]+/?$'
+    if not re.match(base_url_pattern, base_url):
+        return False, "Invalid Google Drive URL format or contains suspicious characters in the base path"
+
+    # Check query string for suspicious patterns
+    # Query strings should only have alphanumeric, =, &, _, -
+    if query_string:
+        # Allow only safe characters in query string: alphanumeric, =, &, _, -, .
+        if not re.match(r'^[a-zA-Z0-9=&_\-.]*$', query_string):
+            suspicious_chars = set(re.findall(r'[^a-zA-Z0-9=&_\-.]', query_string))
+            return False, f"URL contains invalid special characters: {', '.join(sorted(suspicious_chars))}"
+
+    return True, None
+
+
 def extract_folder_id(folder_url):
     match = re.search(
         r'/folders/([a-zA-Z0-9_-]+)',
@@ -400,6 +444,15 @@ class GoogleDriveFileImportView(View):
 
         if not folder_url:
             return JsonResponse({'success': False, 'error': 'folder_url is required'}, status=400)
+
+        # Validate Google Drive URL for suspicious characters
+        is_valid_url, validation_error = validate_google_drive_url(folder_url)
+        if not is_valid_url:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid Google Drive URL',
+                'message': validation_error
+            }, status=400)
 
         folder_id = extract_folder_id(folder_url)
         if not folder_id:
