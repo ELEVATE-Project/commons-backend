@@ -38,7 +38,7 @@
     
             <tbody id="repositories-body">
                 <tr>
-                    <td colspan="5">Loading repositories...</td>
+                    <td colspan="4">Loading repositories...</td>
                 </tr>
             </tbody>
         </table>
@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (repositories.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5">No repositories found</td>
+                        <td colspan="4">No repositories found</td>
                     </tr>
                 `;
             }
@@ -327,7 +327,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             document.getElementById('repositories-body').innerHTML = `
                 <tr>
-                    <td colspan="5">Failed to load repositories</td>
+                    <td colspan="4">Failed to load repositories</td>
                 </tr>
             `;
         }
