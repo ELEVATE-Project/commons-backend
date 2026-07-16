@@ -450,8 +450,7 @@ class GoogleDriveFileImportView(View):
         if not is_valid_url:
             return JsonResponse({
                 'success': False,
-                'error': 'Invalid Google Drive URL',
-                'message': validation_error
+                'error': f'Invalid Google Drive URL: {validation_error}'
             }, status=400)
 
         folder_id = extract_folder_id(folder_url)
