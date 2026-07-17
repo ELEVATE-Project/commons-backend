@@ -2,7 +2,7 @@
 - hosts: elevate
   vars:
     #contents: "{{ lookup('file', '/opt/rsync/text.txt') }}"
-    project_path: /opt/backend/deployment
+    project_path: /opt/deployment
   tasks:
     - name: Slurp hosts file
       slurp:
