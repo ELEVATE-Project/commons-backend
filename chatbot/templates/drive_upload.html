@@ -74,7 +74,7 @@
             <div id="notice-box" class="notice-box" role="alert" aria-live="polite"></div>
             <div class="form-group">
                 <label class="form-label" for="organizationSelect">Select Organization *</label>
-                <select id="organizationSelect" class="gd-select" style="width: 300px;" required {% if not is_superuser %}disabled title="Your organization cannot be changed. Contact administrator to change organization."{% endif %}>
+                <select id="organizationSelect" class="gd-select" style="width: 300px;" required {% if not is_superuser %}disabled{% endif %}>
                     <option value="">-- Select Organization --</option>
                     {% for company in companies %}
                         <option value="{{ company.slug }}" data-org-id="{{ company.id }}" data-name="{{ company.name }}" {% if user_company and company.id == user_company.id %}selected{% endif %}>{{ company.name }}</option>
