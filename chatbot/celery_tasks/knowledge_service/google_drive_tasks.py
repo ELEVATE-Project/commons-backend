@@ -34,9 +34,11 @@ def _merge_extraction_result(item, ai_result):
     # - older or nested output under enhanced_data
     source = ai_result
 
+    # Extract tags from multiple possible field names
+    raw_tags = source.get('tags') or source.get('auto_tags') or enhanced.get('tags') or enhanced.get('auto_tags') or []
     item['auto_tags'] = [
         tag.get('text') if isinstance(tag, dict) else tag
-        for tag in (source.get('auto_tags') or enhanced.get('auto_tags') or [])
+        for tag in raw_tags
     ]
 
     title = source.get('title') or enhanced.get('title')
