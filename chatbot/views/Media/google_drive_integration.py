@@ -223,12 +223,12 @@ def validate_google_drive_url(drive_url):
         return False, f"Invalid URL format: {str(e)}"
 
     # Validate scheme: must be HTTPS
-    if parsed.scheme != 'https':
-        return False, "Invalid Google Drive URL: must use HTTPS scheme"
+    if parsed.scheme != CONSTANTS.HTTPS:
+        return False, f"Invalid Google Drive URL: must use {CONSTANTS.HTTPS.upper()} scheme"
 
     # Validate hostname: must be drive.google.com
-    if parsed.netloc != 'drive.google.com':
-        return False, "Invalid Google Drive URL: must be from drive.google.com"
+    if parsed.netloc != CONSTANTS.GOOGLE_DRIVE_HOSTNAME:
+        return False, f"Invalid Google Drive URL: must be from {CONSTANTS.GOOGLE_DRIVE_HOSTNAME}"
 
     # Validate path format
     # Supports multiple Google Drive URL formats:
