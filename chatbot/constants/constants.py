@@ -6,3 +6,5 @@ FAILED = 'FAILED'
 REPOSITORY_LISTING_MAX_PAGE_SIZE = 100
 GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX = 'https://drive.google.com/uc?export=download&id='
 FILE_NOT_FOUND = 'NOT_FOUND'
+HTTPS = 'https'
+GOOGLE_DRIVE_HOSTNAME = 'drive.google.com'

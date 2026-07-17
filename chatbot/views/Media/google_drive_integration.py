@@ -6,6 +6,7 @@ import io
 import json
 import re
 import uuid
+from urllib.parse import urlparse
 
 from django.core.files.base import ContentFile
 from django.http import JsonResponse, FileResponse
@@ -197,6 +198,60 @@ class GoogleDriveCallbackView(View):
             return redirect(ENDPOINTS.DRIVE_CONNECTED_URL)
         return redirect(ENDPOINTS.NON_ADMIN_DRIVE_UPLOAD_URL)
 
+
+
+def validate_google_drive_url(drive_url):
+    """
+    Validate Google Drive URL using URL parsing.
+    Ensures the URL follows the expected Google Drive URL pattern.
+
+    Args:
+        drive_url: The Google Drive URL to validate
+
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not drive_url:
+        return False, "URL is required"
+
+    drive_url = drive_url.strip()
+
+    # Parse the URL into components
+    try:
+        parsed = urlparse(drive_url)
+    except Exception as e:
+        return False, f"Invalid URL format: {str(e)}"
+
+    # Validate scheme: must be HTTPS
+    if parsed.scheme != CONSTANTS.HTTPS:
+        return False, f"Invalid Google Drive URL: must use {CONSTANTS.HTTPS.upper()} scheme"
+
+    # Validate hostname: must be drive.google.com
+    if parsed.netloc != CONSTANTS.GOOGLE_DRIVE_HOSTNAME:
+        return False, f"Invalid Google Drive URL: must be from {CONSTANTS.GOOGLE_DRIVE_HOSTNAME}"
+
+    # Validate path format
+    # Supports multiple Google Drive URL formats:
+    # - /drive/folders/ID
+    # - /drive/u/0/folders/ID (with user context)
+    # - /file/d/ID
+    path_pattern = r'^/(?:drive(?:/u/\d+)?/folders|file/d)/[a-zA-Z0-9_-]+(?:/view)?/?$'
+    if not re.match(path_pattern, parsed.path):
+        return False, "Invalid Google Drive URL path: must be a valid folder or file path"
+
+    # Validate query string (if present)
+    # Query strings are generally safe when properly URL-encoded
+    # We only reject clearly invalid characters
+    if parsed.query:
+        invalid_chars = set(re.findall(r'[^a-zA-Z0-9=&_\-.%~+:/?]', parsed.query))
+        if invalid_chars:
+            return False, f"URL query contains invalid characters: {', '.join(sorted(invalid_chars))}"
+
+    # Fragment should not be present in Google Drive URLs
+    if parsed.fragment:
+        return False, "URL contains unexpected fragment - please use the base URL without anchors"
+
+    return True, None
 
 
 def extract_folder_id(folder_url):
@@ -400,6 +455,14 @@ class GoogleDriveFileImportView(View):
 
         if not folder_url:
             return JsonResponse({'success': False, 'error': 'folder_url is required'}, status=400)
+
+        # Validate Google Drive URL for suspicious characters
+        is_valid_url, validation_error = validate_google_drive_url(folder_url)
+        if not is_valid_url:
+            return JsonResponse({
+                'success': False,
+                'error': validation_error
+            }, status=400)
 
         folder_id = extract_folder_id(folder_url)
         if not folder_id:
