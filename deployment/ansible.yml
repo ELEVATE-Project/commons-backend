@@ -41,10 +41,10 @@
       register: credentials
 
     - name: Get gcp credentials
-      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/client_secret.json'"
+      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data' > '{{ release_path }}/client_secret.json'"
 
     - name: Get config.json 
-      shell: "curl --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/secrets.json'"
+      shell: "curl --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data' > '{{ release_path }}/config/secrets.json'"
 
 
     - name: Delete Old Folder & create folder
@@ -60,13 +60,6 @@
       shell: cat {{ current_path }}/data2.json | {{ current_path }}/deployment/json2env.sh > {{ current_path }}/.env
       register: envConfig 
     - debug: msg=" cred {{ envConfig }} "
-
-    - name: move gcp credentials 
-      shell: mv {{ current_path }}/client_secret.json  {{ current_path }}/
-
-    - name: move config.json  
-      shell: mv {{ current_path }}/secrets.json  {{ current_path }}/config/
-
 
     - name: Delete release folder
       file:
