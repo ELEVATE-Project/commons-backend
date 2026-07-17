@@ -34,9 +34,7 @@
         dest: "{{ release_path }}"
         clone: yes
         update: yes
-        version: "{{ gitBranch }}"
-    - name: Update npm
-      shell: cd {{release_path}}/src && npm i 
+        version: "{{ gitBranch }}" 
 
     - name: Run vault credentials
       shell: "curl --location --request GET '{{ vaultAddress }}commons-backend' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data' > '{{ release_path }}/data2.json'"
@@ -56,10 +54,10 @@
       shell: mv "{{ release_path }}"/* {{ current_path }}/
     
     - name: set permission
-      shell: chmod 744 {{ current_path }}/src/scripts/json2env.sh  
+      shell: chmod 744 {{ current_path }}/deployment/json2env.sh  
       
     - name: generate .env 
-      shell: cat {{ current_path }}/data2.json | {{ current_path }}/src/scripts/json2env.sh > {{ current_path }}/src/.env
+      shell: cat {{ current_path }}/data2.json | {{ current_path }}/deployment/json2env.sh > {{ current_path }}/.env
       register: envConfig 
     - debug: msg=" cred {{ envConfig }} "
 
