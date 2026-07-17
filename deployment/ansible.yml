@@ -2,11 +2,11 @@
 - hosts: elevate
   vars:
     #contents: "{{ lookup('file', '/opt/rsync/text.txt') }}"
-    project_path: /opt/backend/deployment
+    project_path: /opt/deployment
   tasks:
     - name: Slurp hosts file
       slurp:
-        src: "/opt/deployment/.token"
+        src: "{{ project_path }}/.token"
       register: slurpfile
     #- debug: msg="{{ slurpfile['content'] | b64decode }}"
     #- debug: msg="the value of foo.txt is {{ contents }}"
