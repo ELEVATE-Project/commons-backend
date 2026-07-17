@@ -108,23 +108,23 @@
         executable: /bin/bash
         chdir: "{{ current_path }}"
         
-  - name: Stop existing Uvicorn
-    shell: pkill -f sg-commons-uvicorn
-    ignore_errors: yes
-  
-  - name: Start Uvicorn
-    shell: |
-      sudo bash -c 'exec -a sg-commons-uvicorn {{ current_path }}/.venv/bin/uvicorn \
-      shikshalokam_mohini.asgi:application \
-      --host 0.0.0.0 \
-      --port 9000 \
-      --workers 4' > {{ current_path }}/commons.log 2>&1 &
-    args:
-      executable: /bin/bash
-  
-  - name: Verify Uvicorn process
-    shell: pgrep -af sg-commons-uvicorn
-    register: uvicorn_status
-  
-  - debug:
-      var: uvicorn_status.stdout_lines
+    - name: Stop existing Uvicorn
+      shell: pkill -f sg-commons-uvicorn
+      ignore_errors: yes
+    
+    - name: Start Uvicorn
+      shell: |
+        sudo bash -c 'exec -a sg-commons-uvicorn {{ current_path }}/.venv/bin/uvicorn \
+        shikshalokam_mohini.asgi:application \
+        --host 0.0.0.0 \
+        --port 9000 \
+        --workers 4' > {{ current_path }}/commons.log 2>&1 &
+      args:
+        executable: /bin/bash
+    
+    - name: Verify Uvicorn process
+      shell: pgrep -af sg-commons-uvicorn
+      register: uvicorn_status
+    
+    - debug:
+        var: uvicorn_status.stdout_lines
