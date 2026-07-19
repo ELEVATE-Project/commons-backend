@@ -80,8 +80,7 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         'company_bot'
     )
     search_fields = ('name', 'key_values__value')
-    actions = ['export_selected', 'change_display_mode_action']
-    list_export = ('csv', 'xlsx')
+    actions = ['change_display_mode_action']
     inlines = [KeyValueInline, MediaImagesInline]
     raw_id_fields = ('company_bot', 'parent', 'organization')
     date_hierarchy = 'created_at'
