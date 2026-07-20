@@ -260,6 +260,18 @@ def process_google_drive_import(
         original_name = file_info['name']
         file_url = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
+        # Skip clearly unsupported files before downloading them. Extensionless
+        # files (e.g. native Google Docs) pass here and are re-checked after the
+        # export MIME type is known below.
+        if '.' in original_name:
+            prelim_ext = original_name.rsplit('.', 1)[-1].lower()
+            if not FileTypeChoices.is_valid_extension(prelim_ext):
+                print(
+                    f"[DriveImport] Ignoring unsupported file '{original_name}' "
+                    f"(extension: '{prelim_ext}')"
+                )
+                continue
+
         try:
             metadata, content = download_drive_file(service, file_id)
             file_url = metadata.get('webViewLink') or file_url
@@ -269,13 +281,29 @@ def process_google_drive_import(
                 'application/vnd.google-apps.spreadsheet': 'text/csv',
                 'application/vnd.google-apps.presentation': 'application/pdf',
             }.get(original_mime_type, original_mime_type)
-            if '.' not in original_name:
-                extension = 'csv' if exported_mime_type == 'text/csv' else 'pdf'
-                original_name = f"{original_name}.{extension}"
-            else:
+            if '.' in original_name:
                 extension = original_name.rsplit('.', 1)[-1].lower()
-            if extension not in ['pdf', 'csv', 'txt', 'docx', 'xlsx', 'doc', 'xls']:
-                extension = 'pdf'
+            else:
+                # No extension (e.g. native Google Docs/Sheets/Slides that were
+                # exported). Derive the extension from the exported MIME type.
+                mime_to_ext = {
+                    str(mime): ext.lstrip('.')
+                    for mime, ext in FileTypeChoices.get_extension_mapping().items()
+                }
+                extension = mime_to_ext.get(exported_mime_type, '')
+
+            # Only allow the supported document types. Any other file is ignored
+            # entirely — do not process, cache, or persist it.
+            if not FileTypeChoices.is_valid_extension(extension):
+                print(
+                    f"[DriveImport] Ignoring unsupported file '{original_name}' "
+                    f"(extension: '{extension or 'none'}')"
+                )
+                continue
+
+            # Ensure the filename carries the resolved extension.
+            if '.' not in original_name:
+                original_name = f"{original_name}.{extension}"
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{extension}") as tmp:
                 tmp.write(content)
