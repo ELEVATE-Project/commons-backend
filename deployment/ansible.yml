@@ -37,14 +37,14 @@
         version: "{{ gitBranch }}" 
 
     - name: Run vault credentials
-      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq 'data.data' > '{{ release_path }}/data2.json'"
+      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/data2.json'"
       register: credentials
 
     - name: Get gcp credentials
-      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq 'data.data' > '{{ release_path }}/client_secret.json'"
+      shell: "curl --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/client_secret.json'"
 
     - name: Get config.json 
-      shell: "curl --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq 'data.data' > '{{ release_path }}/config/secrets.json'"
+      shell: "curl --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/config/secrets.json'"
 
 
     - name: Delete Old Folder & create folder
