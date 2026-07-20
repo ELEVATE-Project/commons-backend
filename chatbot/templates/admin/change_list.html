@@ -54,3 +54,123 @@
 
 {% endif %}
 {% endblock %}
+
+{% block extrajs %}
+{{ block.super }}
+{% if opts.model_name == 'media' %}
+<script>
+(function() {
+  const POLL_INTERVAL = {{ media_poll_interval|default:5000 }}; // milliseconds, from MEDIA_POLL_INTERVAL env
+  let isReady = false;
+
+  // In-memory cache of media IDs we've already seen across polls.
+  // This is the single source of truth for what is "new" — NOT the DOM,
+  // which may be paginated/filtered and therefore not reflect all records.
+  const knownMediaIds = new Set();
+  let isFirstPoll = true;
+
+  function getTableRows() {
+    const tbody = document.querySelector('table tbody');
+    if (!tbody) return [];
+    return tbody.querySelectorAll('tr');
+  }
+
+  function getTableBody() {
+    return document.querySelector('table tbody');
+  }
+
+  function updateTableWithNewData(apiItems) {
+    const apiIds = apiItems.map(item => String(item.id));
+
+    // First poll: establish the baseline. Everything currently returned is
+    // considered "already known" so we do NOT reload. This avoids treating
+    // the initial page load's records as brand new.
+    if (isFirstPoll) {
+      apiIds.forEach(id => knownMediaIds.add(id));
+      isFirstPoll = false;
+      return;
+    }
+
+    // Subsequent polls: a record is genuinely new only if its ID was never
+    // seen before. The DOM is intentionally ignored here.
+    const newIds = apiItems
+      .filter(item => !knownMediaIds.has(String(item.id)))
+      .map(item => String(item.id));
+
+    // Keep the cache in sync with everything the API returned this poll,
+    // regardless of what we do below, so nothing is ever detected twice.
+    apiIds.forEach(id => knownMediaIds.add(id));
+
+    if (newIds.length === 0) return;
+
+    // We can't safely build these admin rows in JS — the list_display columns
+    // (title, organization, parent, counts, dates…) are computed server-side
+    // and aren't in the poll payload. So we let Django re-render the correct
+    // rows. With ordering = ('-created_at',), the new rows appear at the top.
+    location.reload();
+  }
+
+  async function pollMediaData() {
+    if (!isReady) return;
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pageNum = urlParams.get('p') || '1';
+      const apiUrl = `/api/v1/media/?page=${pageNum}&limit=100`;
+
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json();
+      const mediaItems = data.results || [];
+
+      if (mediaItems.length === 0) return;
+
+      updateTableWithNewData(mediaItems);
+    } catch (error) {
+      // Polling failures are silently ignored; the next poll will retry.
+    }
+  }
+
+  function checkTableReady() {
+    const tbody = getTableBody();
+    if (tbody && getTableRows().length > 0) {
+      isReady = true;
+
+      setTimeout(() => {
+        pollMediaData();
+        setInterval(pollMediaData, POLL_INTERVAL);
+      }, 1000);
+
+      return true;
+    }
+    return false;
+  }
+
+  function waitForTable() {
+    let attempts = 0;
+    const maxAttempts = 50;
+
+    const checkInterval = setInterval(() => {
+      attempts++;
+      if (checkTableReady()) {
+        clearInterval(checkInterval);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(checkInterval);
+      }
+    }, 100);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitForTable);
+  } else {
+    waitForTable();
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -229,6 +229,9 @@ REDIS_HOST = os.environ.get('REDIS_HOST', "127.0.0.1")
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 REDIS_USE_SSL = os.environ.get('REDIS_USE_SSL', 'false').lower() == 'true'
 
+# Interval (in milliseconds) for the Media admin real-time polling.
+MEDIA_POLL_INTERVAL = int(os.getenv('MEDIA_POLL_INTERVAL', 5000))
+
 # Build Redis connection URL with SSL support
 REDIS_PROTOCOL = 'rediss' if REDIS_USE_SSL else 'redis'
 REDIS_URL = f'{REDIS_PROTOCOL}://{REDIS_HOST}:{REDIS_PORT}'

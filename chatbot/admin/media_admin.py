@@ -256,6 +256,13 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         }
         return render(request, 'admin/change_display_mode.html', context)
 
+    def changelist_view(self, request, extra_context=None):
+        """Expose the polling interval (from settings/env) to the template."""
+        from django.conf import settings
+        extra_context = extra_context or {}
+        extra_context['media_poll_interval'] = getattr(settings, 'MEDIA_POLL_INTERVAL', 5000)
+        return super().changelist_view(request, extra_context=extra_context)
+
     def get_urls(self):
         """Add custom URLs for batch upload and display mode change"""
         from django.urls import path
