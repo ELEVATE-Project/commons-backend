@@ -566,9 +566,6 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         geography = obj.key_values.filter(key__iexact='GEOGRAPHY').first()
         document_type = obj.key_values.filter(key__iregex=r'^document[_ ]type$').first()
 
-        if title and title.value:
-            basic_info.append(f"<div><b>Title:</b> {title.value}</div>")
-
         if organization_name:
             organization_url = obj.organization.url if obj.organization and obj.organization.url else "#"
             basic_info.append(
