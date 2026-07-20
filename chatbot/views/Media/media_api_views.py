@@ -514,8 +514,9 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
             if organizations_list:
                 org_conditions = Q()
                 for org in organizations_list:
+                    # The frontend passes organization slugs, so match on slug.
                     org_conditions |= Q(
-                        organization__name__icontains=org
+                        organization__slug__iexact=org
                     )
                 filter_conditions &= org_conditions
 
@@ -1158,7 +1159,8 @@ class MediaSearchV2View(APIView):
         if organizations:
             org_conditions = Q()
             for org in organizations:
-                org_conditions |= Q(organization__name__icontains=org)
+                # The frontend passes organization slugs, so match on slug.
+                org_conditions |= Q(organization__slug__iexact=org)
             queryset = queryset.filter(org_conditions)
 
         if resource_types:
