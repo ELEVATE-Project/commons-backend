@@ -13,7 +13,15 @@ class DriveUploadView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         add_media_admin_context(context, self.request, 'Drive Upload')
-        context['companies'] = get_company_queryset_for_user(self.request.user)
+
+        # Set superuser flag for template
+        context['is_superuser'] = getattr(self.request.user, 'is_superuser', False)
+
+        # For superusers, show all companies; for others, show only their companies
+        if context['is_superuser']:
+            context['companies'] = Company.objects.all()
+        else:
+            context['companies'] = get_company_queryset_for_user(self.request.user)
 
         default_bot = get_default_extraction_bot()
         context['default_bot_id'] = default_bot.id if default_bot else None

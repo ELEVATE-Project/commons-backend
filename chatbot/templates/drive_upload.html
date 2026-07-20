@@ -46,6 +46,22 @@
 
     /* BULLETPROOF MODALS */
     .gd-modal-overlay { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; background: rgba(0,0,0,0.6) !important; z-index: 10000 !important; justify-content: center !important; align-items: center !important; }
+
+    /* Disabled select styling - hide dropdown arrow */
+    select:disabled {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        background-image: none !important;
+        background-color: #f5f5f5;
+        cursor: not-allowed;
+        padding-right: 12px;
+    }
+
+    /* Remove default arrow background for disabled select */
+    select:disabled::-ms-expand {
+        display: none;
+    }
 </style>
 
 <div class="gd-container">
@@ -58,7 +74,7 @@
             <div id="notice-box" class="notice-box" role="alert" aria-live="polite"></div>
             <div class="form-group">
                 <label class="form-label" for="organizationSelect">Select Organization *</label>
-                <select id="organizationSelect" class="gd-select" style="width: 300px;" required>
+                <select id="organizationSelect" class="gd-select" style="width: 300px;" required {% if not is_superuser %}disabled{% endif %}>
                     <option value="">-- Select Organization --</option>
                     {% for company in companies %}
                         <option value="{{ company.slug }}" data-org-id="{{ company.id }}" data-name="{{ company.name }}" {% if user_company and company.id == user_company.id %}selected{% endif %}>{{ company.name }}</option>
@@ -134,6 +150,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const formView = document.getElementById('form-view');
     const successView = document.getElementById('success-view');
     const orgSelect = document.getElementById('organizationSelect');
+
+    // Restore selected organization from sessionStorage if available
+    const savedOrgSlug = sessionStorage.getItem('drive_upload_selected_org');
+    if (savedOrgSlug && orgSelect) {
+        orgSelect.value = savedOrgSlug;
+        sessionStorage.removeItem('drive_upload_selected_org');
+    }
+
     orgSelect.addEventListener('change', function() {
         const selectedOption = orgSelect.options[orgSelect.selectedIndex];
         if(!selectedOption.value) return;
@@ -156,10 +180,15 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('auth-container').style.display = 'none';
         document.getElementById('fetch-container').style.display = 'block';
     }
-    // document.getElementById('connect-google-drive').addEventListener('click', () => window.location.href = 'auth/');
+
     const connectGoogleDriveButton = document.getElementById('connect-google-drive');
     if (connectGoogleDriveButton) {
         connectGoogleDriveButton.addEventListener('click', () => {
+            // Save selected organization before redirecting to Google auth
+            const selectedOrgSlug = orgSelect.value;
+            if (selectedOrgSlug) {
+                sessionStorage.setItem('drive_upload_selected_org', selectedOrgSlug);
+            }
             window.location.href = "{{ google_drive_auth_url|escapejs }}";
         });
     }
