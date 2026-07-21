@@ -43,6 +43,16 @@ class BatchMediaExtractView(View):
             print(f"Processing {len(files)} files with indices: {file_indices}")
 
             for i, file in enumerate(files):
+                # Only allow the supported document types. Any other file is
+                # ignored entirely — not cached, not processed, not returned.
+                file_ext = file.name.rsplit('.', 1)[-1].lower() if '.' in file.name else ''
+                if not FileTypeChoices.is_valid_extension(file_ext):
+                    print(
+                        f"Ignoring unsupported file '{file.name}' "
+                        f"(extension: '{file_ext or 'none'}')"
+                    )
+                    continue
+
                 try:
                     # Use provided file index or generate unique one
                     if i < len(file_indices) and file_indices[i]:

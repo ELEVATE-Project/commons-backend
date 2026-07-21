@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from chatbot.models import FileTypeChoices
 from chatbot.utils.knowledge_service.base.extraction_config import DEFAULT_HEADERS, ACCESS_DENIED_PATTERNS
 from chatbot.utils.knowledge_service.base.extraction_utils import convert_google_drive_url
+import chatbot.constants.constants as CONSTANTS
 
 logger = logging.getLogger('django')
 
@@ -138,10 +139,10 @@ class DocumentURLProcessor:
                         time.sleep(2)  # Wait before retry
 
                         # Try alternative URL format for Google Drive
-                        if 'drive.google.com' in download_url and '/d/' in url:
+                        if CONSTANTS.GOOGLE_DRIVE_HOSTNAME in download_url and '/d/' in url:
                             file_id = url.split('/d/')[1].split('/')[0]
                             # Try alternative format
-                            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                            download_url = f"{CONSTANTS.HTTPS_PROTOCOL}{CONSTANTS.GOOGLE_DRIVE_HOSTNAME}/uc?export=download&id={file_id}"
                             logger.info(f"Trying alternative URL format: {download_url}")
                     else:
                         raise
