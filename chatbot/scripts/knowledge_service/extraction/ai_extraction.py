@@ -17,6 +17,7 @@ import logging
 from urllib.parse import urlparse
 from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.models import FileTypeChoices
+import chatbot.constants.constants as CONSTANTS
 
 # Set up logging
 logger = logging.getLogger('django')
@@ -252,7 +253,7 @@ class DocumentExtractor:
             elif 'drive.google.com/file' in url:
                 if '/d/' in url:
                     file_id = url.split('/d/')[1].split('/')[0]
-                    return f"https://drive.google.com/uc?id={file_id}&export=download"
+                    return f"{CONSTANTS.GOOGLE_DRIVE_BASE_URL}/uc?id={file_id}&export=download"
 
             elif 'docs.google.com/spreadsheets' in url:
                 if '/d/' in url:
@@ -1169,7 +1170,7 @@ class DocumentExtractor:
                         if 'drive.google.com' in download_url and '/d/' in url:
                             file_id = url.split('/d/')[1].split('/')[0]
                             # Try alternative format
-                            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                            download_url = f"{CONSTANTS.GOOGLE_DRIVE_BASE_URL}/uc?export=download&id={file_id}"
                             logger.info(f"Trying alternative URL format: {download_url}")
                     else:
                         raise

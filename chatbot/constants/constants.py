@@ -8,3 +8,4 @@ GOOGLE_DRIVE_DOWNLOAD_URL_PREFIX = 'https://drive.google.com/uc?export=download&
 FILE_NOT_FOUND = 'NOT_FOUND'
 HTTPS = 'https'
 GOOGLE_DRIVE_HOSTNAME = 'drive.google.com'
+GOOGLE_DRIVE_BASE_URL = "https://drive.google.com"
