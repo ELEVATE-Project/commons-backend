@@ -262,6 +262,29 @@ def extract_folder_id(folder_url):
     return match.group(1) if match else None
 
 
+def find_existing_repository(company, folder_id, folder_url):
+    """
+    Return the repository already imported for this company and Drive folder, if any.
+
+    Deliberately not scoped to the requesting user: a folder imported by one member
+    of the company must count as a duplicate for every other member. Matching falls
+    back to the folder id so that different URL forms of the same folder are caught.
+    """
+    if not company:
+        return None
+
+    normalized_url = (folder_url or '').strip().rstrip('/')
+
+    for repository in Repository.objects.filter(org_id=company.id).select_related('created_by'):
+        root_link = (repository.root_link or '').strip().rstrip('/')
+        if normalized_url and root_link == normalized_url:
+            return repository
+        if folder_id and extract_folder_id(root_link) == folder_id:
+            return repository
+
+    return None
+
+
 def get_request_profile(request, company=None):
     user_email = getattr(request.user, 'email', None)
     if not user_email:
@@ -469,6 +492,17 @@ class GoogleDriveFileImportView(View):
             return JsonResponse({'success': False, 'error': 'Invalid folder URL'}, status=400)
 
         company = resolve_company_from_import(company_id)
+
+        existing_repository = find_existing_repository(company, folder_id, folder_url)
+        if existing_repository:
+            uploaded_by = getattr(existing_repository.created_by, 'email', None)
+            error_message = 'This repository has already been uploaded for this organization.'
+            if uploaded_by:
+                error_message = (
+                    f'This repository has already been uploaded for this organization by {uploaded_by}.'
+                )
+            return JsonResponse({'success': False, 'error': error_message}, status=409)
+
         company_bot = CompanyBot.objects.filter(id=bot_id).first() if bot_id else None
         if not company_bot and company:
             company_bot = CompanyBot.objects.filter(company=company, route='/tag_extractor').first()

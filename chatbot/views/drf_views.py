@@ -16,7 +16,7 @@ from chatbot.serializer.company_serializer import (
 )
 from chatbot.serializer.profile_serializer import ProfileSerializer, CompanyChatSerializer
 from chatbot.serializer.repository_serializer import RepositorySerializer
-from chatbot.utils.company_utils import get_user_company
+from chatbot.utils.company_utils import get_user_company, get_user_profile
 import chatbot.constants.constants as CONSTANTS
 
 
@@ -213,7 +213,11 @@ class RepositoryListView(generics.ListAPIView):
         if not user_company:
             return Repository.objects.none()
 
-        return queryset.filter(org_id=user_company.id)
+        user_profile = get_user_profile(user)
+        if not user_profile:
+            return Repository.objects.none()
+
+        return queryset.filter(org_id=user_company.id, created_by=user_profile)
 
     def list(self, request, *args, **kwargs):
         try:
