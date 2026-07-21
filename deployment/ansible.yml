@@ -39,17 +39,20 @@
     - name: Run vault credentials
       shell: "curl --location --request GET '{{ vaultAddress }}commons-backend' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/data2.json'"
       register: credentials
-    - debug: msg=" {{ credentials.stdout }}"
+    - debug: 
+       var: "{{ credentials }}"
 
     - name: Get gcp credentials
       shell: "curl --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/client_secret.json'"
       register: vault_response
-    - debug: msg=" {{ vault_response.stdout }}"
+    - debug: 
+       var: "{{ vault_response }}"
       
     - name: Get config.json 
       shell: "curl --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode }}' | jq '.data.data' > '{{ release_path }}/config/secrets.json'"
       register: vault_config_response
-    - debug: msg ="{{ vault_config_response.stdout }}"
+    - debug: 
+       var: "{{ vault_config_response }}"
       
     - name: Delete Old Folder & create folder
       shell: rm -rf {{ current_path }} &&  cd {{ project_path }} && mkdir commons-backend
