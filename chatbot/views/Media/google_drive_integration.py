@@ -9,6 +9,7 @@ import uuid
 from urllib.parse import urlparse
 
 from django.core.files.base import ContentFile
+from django.db.models import Q
 from django.http import JsonResponse, FileResponse
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
@@ -254,12 +255,50 @@ def validate_google_drive_url(drive_url):
     return True, None
 
 
+# Drive folder ids are restricted to this charset; anything else must not reach the
+# root_link regex filter below as a raw pattern.
+SAFE_FOLDER_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
 def extract_folder_id(folder_url):
     match = re.search(
         r'/folders/([a-zA-Z0-9_-]+)',
         folder_url
     )
     return match.group(1) if match else None
+
+
+def find_existing_repository(company, folder_id, folder_url):
+    """
+    Return the repository already imported for this company and Drive folder, if any.
+
+    Deliberately not scoped to the requesting user: a folder imported by one member
+    of the company must count as a duplicate for every other member. Matching falls
+    back to the folder id so that different URL forms of the same folder are caught.
+    """
+    if not company:
+        return None
+
+    normalized_url = (folder_url or '').strip().rstrip('/')
+
+    match_query = Q()
+    if normalized_url:
+        match_query |= Q(root_link=normalized_url) | Q(root_link=f'{normalized_url}/')
+    if folder_id and SAFE_FOLDER_ID_RE.match(folder_id):
+        # Anchored on a non-id character (or end of string) so folder 'abc' is not
+        # matched by a stored link for folder 'abcdef'.
+        match_query |= Q(root_link__regex=rf'/folders/{folder_id}([^A-Za-z0-9_-]|$)')
+
+    if not match_query:
+        return None
+
+    return (
+        Repository.objects
+        .filter(match_query, org_id=company.id)
+        .select_related('created_by')
+        .order_by('created_at', 'id')
+        .first()
+    )
 
 
 def get_request_profile(request, company=None):
@@ -469,6 +508,17 @@ class GoogleDriveFileImportView(View):
             return JsonResponse({'success': False, 'error': 'Invalid folder URL'}, status=400)
 
         company = resolve_company_from_import(company_id)
+
+        existing_repository = find_existing_repository(company, folder_id, folder_url)
+        if existing_repository:
+            uploaded_by = getattr(existing_repository.created_by, 'email', None)
+            error_message = 'This repository has already been uploaded for this organization.'
+            if uploaded_by:
+                error_message = (
+                    f'This repository has already been uploaded for this organization by {uploaded_by}.'
+                )
+            return JsonResponse({'success': False, 'error': error_message}, status=409)
+
         company_bot = CompanyBot.objects.filter(id=bot_id).first() if bot_id else None
         if not company_bot and company:
             company_bot = CompanyBot.objects.filter(company=company, route='/tag_extractor').first()

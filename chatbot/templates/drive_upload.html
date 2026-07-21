@@ -292,6 +292,12 @@ document.addEventListener('DOMContentLoaded', function () {
             .then(async res => {
                 if (!res) return null;
                 const data = await res.json();
+                if (res.status === 409) {
+                    // Folder already imported by someone else in this company: show it in the
+                    // inline notice like the client-side check does, not in the error modal.
+                    setNotice(data.error || 'This repository is already processed. Please use a different Google Drive folder.', 'error');
+                    return Promise.reject(new Error('already_processed'));
+                }
                 if (!res.ok) throw new Error(data.error || 'Initialization failed.');
                 return data;
             })
