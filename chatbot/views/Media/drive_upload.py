@@ -28,9 +28,11 @@ class DriveUploadView(TemplateView):
         if self.request.path.startswith('/admin/'):
             context['google_drive_auth_url'] = ENDPOINTS.GOOGLE_DRIVE_AUTH_URL
             context['google_drive_file_import_url'] = ENDPOINTS.GOOGLE_DRIVE_FILES_IMPORT_URL
+            context['list_repositories_url'] = ENDPOINTS.LIST_REPOSITORIES_URL
         else:
             context['google_drive_auth_url'] = ENDPOINTS.NON_ADMIN_GOOGLE_DRIVE_AUTH_URL
             context['google_drive_file_import_url'] = ENDPOINTS.NON_ADMIN_GOOGLE_DRIVE_FILES_IMPORT_URL
+            context['list_repositories_url'] = ENDPOINTS.NON_ADMIN_LIST_REPOSITORIES_URL
 
         user_email = getattr(self.request.user, 'email', None)
         if user_email:
