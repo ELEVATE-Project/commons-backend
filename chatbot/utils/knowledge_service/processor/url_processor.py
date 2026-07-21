@@ -142,7 +142,7 @@ class DocumentURLProcessor:
                         if CONSTANTS.GOOGLE_DRIVE_HOSTNAME in download_url and '/d/' in url:
                             file_id = url.split('/d/')[1].split('/')[0]
                             # Try alternative format
-                            download_url = f"{CONSTANTS.GOOGLE_DRIVE_BASE_URL}/uc?export=download&id={file_id}"
+                            download_url = f"{CONSTANTS.HTTPS_PROTOCOL}{CONSTANTS.GOOGLE_DRIVE_HOSTNAME}/uc?export=download&id={file_id}"
                             logger.info(f"Trying alternative URL format: {download_url}")
                     else:
                         raise

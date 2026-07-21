@@ -258,7 +258,7 @@ def process_google_drive_import(
     for i, file_info in enumerate(all_files):
         file_id = file_info['id']
         original_name = file_info['name']
-        file_url = f"{CONSTANTS.GOOGLE_DRIVE_BASE_URL}/file/d/{file_id}/view?usp=sharing"
+        file_url = f"{CONSTANTS.HTTPS_PROTOCOL}{CONSTANTS.GOOGLE_DRIVE_HOSTNAME}/file/d/{file_id}/view?usp=sharing"
 
         # Skip clearly unsupported files before downloading them. Extensionless
         # files (e.g. native Google Docs) pass here and are re-checked after the
