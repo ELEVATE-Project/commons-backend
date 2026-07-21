@@ -9,6 +9,7 @@ import uuid
 from urllib.parse import urlparse
 
 from django.core.files.base import ContentFile
+from django.db.models import Q
 from django.http import JsonResponse, FileResponse
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
@@ -254,6 +255,11 @@ def validate_google_drive_url(drive_url):
     return True, None
 
 
+# Drive folder ids are restricted to this charset; anything else must not reach the
+# root_link regex filter below as a raw pattern.
+SAFE_FOLDER_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
 def extract_folder_id(folder_url):
     match = re.search(
         r'/folders/([a-zA-Z0-9_-]+)',
@@ -275,14 +281,24 @@ def find_existing_repository(company, folder_id, folder_url):
 
     normalized_url = (folder_url or '').strip().rstrip('/')
 
-    for repository in Repository.objects.filter(org_id=company.id).select_related('created_by'):
-        root_link = (repository.root_link or '').strip().rstrip('/')
-        if normalized_url and root_link == normalized_url:
-            return repository
-        if folder_id and extract_folder_id(root_link) == folder_id:
-            return repository
+    match_query = Q()
+    if normalized_url:
+        match_query |= Q(root_link=normalized_url) | Q(root_link=f'{normalized_url}/')
+    if folder_id and SAFE_FOLDER_ID_RE.match(folder_id):
+        # Anchored on a non-id character (or end of string) so folder 'abc' is not
+        # matched by a stored link for folder 'abcdef'.
+        match_query |= Q(root_link__regex=rf'/folders/{folder_id}([^A-Za-z0-9_-]|$)')
 
-    return None
+    if not match_query:
+        return None
+
+    return (
+        Repository.objects
+        .filter(match_query, org_id=company.id)
+        .select_related('created_by')
+        .order_by('created_at', 'id')
+        .first()
+    )
 
 
 def get_request_profile(request, company=None):
