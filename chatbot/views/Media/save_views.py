@@ -173,12 +173,20 @@ class BatchMediaSaveView(View):
         )
 
     def get_file_title_from_item(self, item_data, fallback_filename=''):
-        """Use the actual file name without extension as the media title."""
+        """Prefer the AI-extracted title; fall back to the file name (without extension)."""
+        ai_title = item_data.get('title')
+        if ai_title and str(ai_title).strip():
+            return str(ai_title).strip()
+        # Fall back to a TITLE key-value (AI title propagated via build_key_values)
+        for kv in item_data.get('key_values', []) or []:
+            if str(kv.get('key', '')).strip().upper() == 'TITLE':
+                kv_value = str(kv.get('value', '') or '').strip()
+                if kv_value:
+                    return kv_value
         for value in (
                 item_data.get('name'),
                 item_data.get('filename'),
                 fallback_filename,
-                item_data.get('title'),
         ):
             if value:
                 return os.path.splitext(str(value))[0]
@@ -419,10 +427,12 @@ class BatchMediaSaveView(View):
                 for kv in item_data.get('key_values', []):
                     cleaned_key = self.clean_key_for_ordered_list(kv['key'])
                     if cleaned_key.upper() == 'TITLE':
+                        # Prefer the incoming (AI-extracted) TITLE value; fall back to file_title
+                        incoming_title = (kv.get('value') or '').strip()
                         KeyValue.objects.update_or_create(
                             media=media,
                             key='TITLE',
-                            defaults={'value': file_title}
+                            defaults={'value': incoming_title or file_title}
                         )
                         continue
                     KeyValue.objects.create(
@@ -783,21 +793,20 @@ class BatchMediaSaveView(View):
                     extension = extension_mapping.get(media_type, '.txt')
                     filename += extension
 
-            # Use filename (without extension) as the subdocument title
+            # Prefer the AI-extracted title; fall back to the file name (without extension)
+            llm_title = subdoc_data.get('title', '').strip()
             filename_without_ext = os.path.splitext(filename)[0] if filename else ""
 
-            if filename_without_ext and len(filename_without_ext.strip()) > 0:
+            if llm_title and len(llm_title) > 0:
+                subdoc_title = llm_title
+                print(f"Using LLM-extracted title: {subdoc_title}")
+            elif filename_without_ext and len(filename_without_ext.strip()) > 0:
                 subdoc_title = filename_without_ext
                 print(f"Using filename as title: {subdoc_title}")
             else:
-                llm_title = subdoc_data.get('title', '').strip()
-                if llm_title and len(llm_title) > 0:
-                    subdoc_title = llm_title
-                    print(f"Using LLM-extracted title: {subdoc_title}")
-                else:
-                    # Final fallback - create a descriptive title
-                    subdoc_title = f"Document from {Path(urlparse(file_url).path).name or 'linked document'}"
-                    print(f"Using fallback title: {subdoc_title}")
+                # Final fallback - create a descriptive title
+                subdoc_title = f"Document from {Path(urlparse(file_url).path).name or 'linked document'}"
+                print(f"Using fallback title: {subdoc_title}")
 
             print(f"Saving subdocument with title: {subdoc_title} (from filename: {filename})")
 
