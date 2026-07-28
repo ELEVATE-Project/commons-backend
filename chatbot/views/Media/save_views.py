@@ -794,7 +794,8 @@ class BatchMediaSaveView(View):
                     filename += extension
 
             # Prefer the AI-extracted title; fall back to the file name (without extension)
-            llm_title = subdoc_data.get('title', '').strip()
+            raw_title = subdoc_data.get('title')
+            llm_title = raw_title.strip() if isinstance(raw_title, str) else ''
             filename_without_ext = os.path.splitext(filename)[0] if filename else ""
 
             if llm_title and len(llm_title) > 0:
@@ -855,7 +856,7 @@ class BatchMediaSaveView(View):
 
             # Create subdocument media
             subdoc_media = Media(
-                name=subdoc_data.get('title') or subdoc_title or filename,
+                name=subdoc_title,
                 media_type=subdoc_data.get('media_type', FileTypeChoices.TXT.value),
                 priority=parent_media.priority,
                 description=subdoc_data.get('summary') or subdoc_data.get('description') or '',
