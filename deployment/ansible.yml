@@ -102,7 +102,7 @@
     - name: Run Django migrations
       shell: |
         source .venv/bin/activate
-        export $(grep -v '^#' .env | xargs)
+        export $(cat .env | xargs)
         python3 manage.py migrate
       args:
         executable: /bin/bash
