@@ -77,6 +77,7 @@ def _format_item_for_save(item, organization_slug):
     filename = item.get('filename') or ''
     filename_base = os.path.splitext(filename)[0] if filename else ''
     display_name = filename_base or item.get('name') or item.get('title')
+    ai_title = str(item.get('title')).strip() if (item.get('title') and str(item.get('title')).strip()) else display_name
     fallback_description = f"Extracted from {item['filename']}" if item.get('filename') else ''
     summary = item.get('summary')
     description = item.get('description')
@@ -88,8 +89,8 @@ def _format_item_for_save(item, organization_slug):
         'filename': item.get('filename'),
         'file_index': item.get('file_index'),
         'file_key': item.get('file_key'),
-        'name': display_name,
-        'title': display_name,
+        'name': ai_title,
+        'title': ai_title,
         'summary': final_description,
         'description': final_description,
         'media_type': item.get('media_type'),

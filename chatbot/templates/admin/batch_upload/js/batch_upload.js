@@ -1698,6 +1698,12 @@ async function waitForAllTasksToComplete(taskIds) {
                                     if (aiResult.enhanced_data) {
                                         const enhanced = aiResult.enhanced_data;
 
+                                        // Use the AI-extracted title for both the name and title of the resource
+                                        const aiTitle = typeof enhanced.title === 'string' ? enhanced.title.trim() : '';
+                                        if (aiTitle) {
+                                            item.data.title = aiTitle;
+                                            item.data.name = aiTitle;
+                                        }
                                         if (enhanced.description) item.data.description = enhanced.description;
                                         if (enhanced.hasOwnProperty('extracted_text')) item.data.extracted_text = enhanced.extracted_text;
                                         if (enhanced.media_type) item.data.media_type = enhanced.media_type;
