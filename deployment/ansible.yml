@@ -120,17 +120,19 @@
     
     - name: Start Uvicorn
       shell: |
-        sudo bash -c 'exec -a sg-commons-uvicorn {{ current_path }}/.venv/bin/uvicorn \
-        shikshalokam_mohini.asgi:application \
-        --host 0.0.0.0 \
-        --port 9000 \
-        --workers 4' > {{ current_path }}/commons.log 2>&1 &
+        nohup bash -c 'exec -a sg-commons-uvicorn {{ current_path }}/.venv/bin/uvicorn \
+          shikshalokam_mohini.asgi:application \
+          --host 0.0.0.0 \
+          --port 9000 \
+          --workers 4' \
+          > {{ current_path }}/commons.log 2>&1 &
       args:
-        executable: /bin/bash
+        executable: /bin/bash    
     
-    - name: Verify Uvicorn process
+    - name: Verify Uvicorn
       shell: pgrep -af sg-commons-uvicorn
       register: uvicorn_status
+      failed_when: uvicorn_status.rc != 0
     
     - debug:
         var: uvicorn_status.stdout_lines
