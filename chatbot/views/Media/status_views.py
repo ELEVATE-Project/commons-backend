@@ -346,8 +346,10 @@ class BatchMediaTaskStatusView(View):
         is_main_excel = self.is_excel_file(original_filename, media_type_value) or self.is_excel_file(main_url, media_type_value)
         print("AI DATA ------->", ai_data)
         summary_text = get_summary_text(ai_data, repaired_structured_content)
+        ai_title = ai_data.get('title')
+        ai_title = ai_title.strip() if isinstance(ai_title, str) else ''
         main_data = {
-            'title': ai_data.get('title') or original_filename or '',
+            'title': ai_title or original_filename or '',
             'summary': summary_text,
             'extracted_text': ai_data.get('exact_content', '') if is_main_excel else '',
             'organization': ai_data.get('organization', '') or company_name or '',
