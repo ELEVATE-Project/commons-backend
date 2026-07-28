@@ -97,6 +97,12 @@
       args:
         executable: /bin/bash
         chdir: "{{ current_path }}"
+
+    - name: Create logs directory
+      file:
+        path: /opt/deployment/commons-backend/logs
+        state: directory
+        mode: '0755'
     
     # Run Django migrations
     - name: Run Django migrations
