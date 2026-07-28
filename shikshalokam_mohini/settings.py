@@ -233,6 +233,14 @@ REDIS_USE_SSL = os.environ.get('REDIS_USE_SSL', 'false').lower() == 'true'
 REDIS_PROTOCOL = 'rediss' if REDIS_USE_SSL else 'redis'
 REDIS_URL = f'{REDIS_PROTOCOL}://{REDIS_HOST}:{REDIS_PORT}'
 
+# Celery uses its own Redis database and a service-specific queue so a shared
+# Redis instance never mixes this service's tasks with another service's
+# (databases: 0 = channels, 1 = cache, 2 = celery broker/results)
+REDIS_CELERY_DB = int(os.environ.get('REDIS_CELERY_DB', 2))
+CELERY_BROKER_URL = f'{REDIS_URL}/{REDIS_CELERY_DB}'
+CELERY_RESULT_BACKEND = f'{REDIS_URL}/{REDIS_CELERY_DB}'
+CELERY_TASK_DEFAULT_QUEUE = os.environ.get('CELERY_TASK_DEFAULT_QUEUE', 'sg_commons_queue')
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
