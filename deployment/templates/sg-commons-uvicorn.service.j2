@@ -1,0 +1,25 @@
+[Unit]
+Description=SG Commons Uvicorn
+After=network.target
+
+[Service]
+Type=simple
+User={{ deploy_user }}
+Group={{ deploy_user }}
+WorkingDirectory={{ current_path }}
+Environment="DJANGO_SETTINGS_MODULE=shikshalokam_mohini.settings"
+
+ExecStart={{ current_path }}/.venv/bin/uvicorn \
+    shikshalokam_mohini.asgi:application \
+    --host 0.0.0.0 \
+    --port {{ uvicorn_port }} \
+    --workers {{ uvicorn_workers }}
+
+Restart=always
+RestartSec=5
+
+StandardOutput=append:{{ current_path }}/commons.log
+StandardError=append:{{ current_path }}/commons.log
+
+[Install]
+WantedBy=multi-user.target
