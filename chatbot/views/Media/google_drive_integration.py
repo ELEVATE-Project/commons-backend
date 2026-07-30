@@ -424,7 +424,7 @@ def get_all_files_in_folder(service, initial_folder_id):
                 
                 # Separate actual files from sub-folders
                 for item in results.get('files', []):
-                    if item['mimeType'] == 'application/vnd.google-apps.folder':
+                    if item['mimeType'] == CONSTANTS.GOOGLE_DRIVE_FOLDER_MIME_TYPE:
                         # Found a nested folder! Add it to the queue to search later
                         folders_to_search.append(item['id'])
                     else:
@@ -472,7 +472,7 @@ def drive_folder_has_files(service, initial_folder_id):
                 break
 
             for item in results.get('files', []):
-                if item['mimeType'] == 'application/vnd.google-apps.folder':
+                if item['mimeType'] == CONSTANTS.GOOGLE_DRIVE_FOLDER_MIME_TYPE:
                     folders_to_search.append(item['id'])
                 else:
                     return True

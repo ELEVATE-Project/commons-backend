@@ -9,3 +9,4 @@ FILE_NOT_FOUND = 'NOT_FOUND'
 HTTPS = 'https'
 GOOGLE_DRIVE_HOSTNAME = 'drive.google.com'
 HTTPS_PROTOCOL = "https://"
+GOOGLE_DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder'
