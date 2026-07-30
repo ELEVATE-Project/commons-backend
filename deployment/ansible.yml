@@ -1,138 +1,177 @@
 ---
 - hosts: elevate
+  become: yes
+
   vars:
-    #contents: "{{ lookup('file', '/opt/rsync/text.txt') }}"
     project_path: /opt/deployment
+    current_path: /opt/deployment/commons-backend
+    deploy_user: ubuntu
+    uvicorn_port: 9000
+    uvicorn_workers: 4
+
   tasks:
-    - name: Slurp hosts file
+    - name: Read Vault token
       slurp:
         src: "{{ project_path }}/.token"
       register: slurpfile
-    #- debug: msg="{{ slurpfile['content'] | b64decode }}"
-    #- debug: msg="the value of foo.txt is {{ contents }}"
-    
-    - name: Create release folder
+
+    - name: Create release path
       set_fact:
         release_path: "{{ project_path }}/releases/{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
-        current_path: "{{ project_path }}/commons-backend"
-    
-    - name: Retrieve current release folder
-      command: readlink -f mentoring
-      register: current_release_path
-      ignore_errors: yes
-      args:
-        chdir: "{{ project_path }}"
-    - name: Create new folder
+
+    - name: Create release directory
       file:
-        dest={{ release_path }}
-        mode=0755
-        recurse=yes
-        state=directory
-    - name: Clone the repository
+        path: "{{ release_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone repository
       git:
         repo: https://github.com/ELEVATE-Project/commons-backend.git
         dest: "{{ release_path }}"
+        version: "{{ gitBranch }}"
         clone: yes
         update: yes
-        version: "{{ gitBranch }}" 
 
-    - name: Run vault credentials
-      shell: "curl --silent --insecure --location --request GET '{{ vaultAddress }}commons-backend' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode | trim }}' | jq '.data.data' > '{{ release_path }}/data2.json'"
-      register: credentials
-    - debug: 
-       var: credentials
+    - name: Download application secrets
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-backend"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/data2.json"
 
-    - name: Get gcp credentials
-      shell: "curl --silent --insecure --location --request GET '{{ vaultAddress }}commons-backend-gcp-auth' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode | trim }}' | jq '.data.data' > '{{ release_path }}/client_secret.json'"
-      register: vault_response
-    - debug: 
-       var: vault_response
-      
-    - name: Get config.json 
-      shell: "curl --silent --insecure --location --request GET '{{ vaultAddress }}commons-gcp-config' --header 'X-Vault-Token: {{ slurpfile['content'] | b64decode | trim }}' | jq '.data.data' > '{{ release_path }}/config/secrets.json'"
-      register: vault_config_response
-    - debug: 
-       var: vault_config_response
-      
-    - name: Delete Old Folder & create folder
-      shell: rm -rf {{ current_path }} &&  cd {{ project_path }} && mkdir commons-backend
+    - name: Download GCP credentials
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-backend-gcp-auth"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/client_secret.json"
 
-    - name: Move code from release  to service folder
-      shell: mv "{{ release_path }}"/* {{ current_path }}/
-    
-    - name: set permission
-      shell: chmod 744 {{ current_path }}/deployment/json2env.sh  
-      
-    - name: generate .env 
-      shell: cat {{ current_path }}/data2.json | {{ current_path }}/deployment/json2env.sh > {{ current_path }}/.env
-      register: envConfig 
-    - debug: msg=" cred {{ envConfig }} "
+    - name: Download config secrets
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-gcp-config"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/config/secrets.json"
 
-    # - name: Delete release folder
-    #   file:
-    #     path: "{{ release_path }}"
-    #     state: absent
+    - name: Remove current deployment
+      file:
+        path: "{{ current_path }}"
+        state: absent
 
-    
-    # Create virtual environment
+    - name: Create deployment directory
+      file:
+        path: "{{ current_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Move release into deployment directory
+      shell: mv {{ release_path }}/* {{ current_path }}/
+
+    - name: Make json2env executable
+      file:
+        path: "{{ current_path }}/deployment/json2env.sh"
+        mode: "0744"
+
+    - name: Generate .env
+      shell: >
+        cat {{ current_path }}/data2.json |
+        {{ current_path }}/deployment/json2env.sh
+        > {{ current_path }}/.env
+
     - name: Create Python virtual environment
-      shell: uv venv
+      command: uv venv
       args:
         chdir: "{{ current_path }}"
-    
-    # Install project dependencies
-    - name: Install project dependencies
-      shell: |
-        source .venv/bin/activate
-        uv sync
+        creates: "{{ current_path }}/.venv"
+
+    - name: Install dependencies
+      shell: uv sync
       args:
-        executable: /bin/bash
         chdir: "{{ current_path }}"
-    
-    # Install psycopg2-binary
+
     - name: Install psycopg2-binary
-      shell: |
-        source .venv/bin/activate
-        uv pip install psycopg2-binary
+      shell: uv pip install psycopg2-binary
       args:
-        executable: /bin/bash
         chdir: "{{ current_path }}"
 
     - name: Create logs directory
       file:
-        path: /opt/deployment/commons-backend/logs
+        path: "{{ current_path }}/logs"
         state: directory
-        mode: '0755'
-    
-    # Run Django migrations
+        mode: "0755"
+
     - name: Run Django migrations
       shell: |
-        source .venv/bin/activate
-        export $(cat .env | xargs)
-        python3 manage.py migrate
+        export $(grep -v '^#' .env | xargs)
+        .venv/bin/python manage.py migrate
       args:
         executable: /bin/bash
         chdir: "{{ current_path }}"
-        
-    - name: Stop existing Uvicorn
-      shell: pkill -f sg-commons-uvicorn
-      ignore_errors: yes
-    
-    - name: Start Uvicorn
-      shell: |
-        nohup bash -c 'exec -a sg-commons-uvicorn {{ current_path }}/.venv/bin/uvicorn \
-          shikshalokam_mohini.asgi:application \
-          --host 0.0.0.0 \
-          --port 9000 \
-          --workers 4' \
-          > {{ current_path }}/commons.log 2>&1 &
-      args:
-        executable: /bin/bash    
-    
+
+    - name: Install Uvicorn service
+      template:
+        src: templates/sg-commons-uvicorn.service.j2
+        dest: /etc/systemd/system/sg-commons-uvicorn.service
+        mode: "0644"
+      notify:
+        - Reload systemd
+
+    - name: Install Celery service
+      template:
+        src: templates/sg-commons-celery.service.j2
+        dest: /etc/systemd/system/sg-commons-celery.service
+        mode: "0644"
+      notify:
+        - Reload systemd
+
+    - meta: flush_handlers
+
+    - name: Enable Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        enabled: yes
+
+    - name: Enable Celery
+      systemd:
+        name: sg-commons-celery
+        enabled: yes
+
+    - name: Restart Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        state: restarted
+
+    - name: Restart Celery
+      systemd:
+        name: sg-commons-celery
+        state: restarted
+
     - name: Verify Uvicorn
-      shell: pgrep -af sg-commons-uvicorn
+      command: systemctl is-active sg-commons-uvicorn
       register: uvicorn_status
-      failed_when: uvicorn_status.rc != 0
-    
+      changed_when: false
+      failed_when: uvicorn_status.stdout != "active"
+
     - debug:
-        var: uvicorn_status.stdout_lines
+        var: uvicorn_status.stdout
+
+    - name: Verify Celery
+      command: systemctl is-active sg-commons-celery
+      register: celery_status
+      changed_when: false
+      failed_when: celery_status.stdout != "active"
+
+    - debug:
+        var: celery_status.stdout
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
