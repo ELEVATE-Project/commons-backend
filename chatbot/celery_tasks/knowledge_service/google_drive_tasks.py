@@ -225,7 +225,28 @@ def process_google_drive_import(
             )
         return
 
-    all_files = get_all_files_in_folder(service, folder_id)
+    try:
+        all_files = get_all_files_in_folder(service, folder_id)
+    except HttpError as exc:
+        _set_import_status(session_id, {
+            'status': CONSTANTS.FAILED,
+            'message': f'Failed to read Google Drive folder: {exc}',
+            'session_id': session_id,
+        })
+        if repository_id:
+            upsert_repository_from_drive_import(
+                folder_url=folder_url,
+                folder_meta=folder_meta,
+                company=company,
+                repository_id=repository_id,
+                status=CONSTANTS.FAILED,
+                total_resources=0,
+                error_message=f'Failed to read Google Drive folder: {exc}',
+                created_by=user_profile,
+                updated_by=user_profile,
+            )
+        return
+
     if not all_files:
         _set_import_status(session_id, {
             'status': CONSTANTS.FAILED,

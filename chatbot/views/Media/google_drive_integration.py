@@ -436,10 +436,14 @@ def get_all_files_in_folder(service, initial_folder_id):
                     break
                     
             except HttpError as error:
+                if current_folder_id == initial_folder_id:
+                    # Failure on the root folder means the listing itself failed;
+                    # an empty result here must not be mistaken for an empty folder.
+                    raise
                 # If a nested folder has restricted permissions, skip it and continue
                 print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
                 break
-                
+
     return files_found
 
 
@@ -467,6 +471,10 @@ def drive_folder_has_files(service, initial_folder_id):
                     pageToken=page_token
                 ).execute()
             except HttpError as error:
+                if current_folder_id == initial_folder_id:
+                    # Failure on the root folder means the listing itself failed;
+                    # an empty result here must not be mistaken for an empty folder.
+                    raise
                 # If a nested folder has restricted permissions, skip it and continue
                 print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
                 break
@@ -590,7 +598,17 @@ class GoogleDriveFileImportView(View):
                 status=400
             )
 
-        if not drive_folder_has_files(service, folder_id):
+        try:
+            folder_has_files = drive_folder_has_files(service, folder_id)
+        except HttpError as exc:
+            return JsonResponse(
+                {
+                    'success': False,
+                    'error': f'Failed to read Google Drive folder: {exc}',
+                },
+                status=400
+            )
+        if not folder_has_files:
             return JsonResponse(
                 {'success': False, 'error': MESSAGES.EMPTY_DRIVE_FOLDER_MESSAGE},
                 status=400
