@@ -35,6 +35,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 import chatbot.constants.constants as CONSTANTS
 import chatbot.constants.endpoints as ENDPOINTS
+import chatbot.constants.dialogue_messages as MESSAGES
 
 raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
 GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
@@ -443,6 +444,46 @@ def get_all_files_in_folder(service, initial_folder_id):
 
 
 
+def drive_folder_has_files(service, initial_folder_id):
+    """
+    Return True as soon as any file (not a folder) is found in the folder tree.
+
+    Cheap emptiness probe used before an import is queued: for a non-empty
+    folder this normally costs a single API call, unlike
+    get_all_files_in_folder which always lists everything.
+    """
+    folders_to_search = [initial_folder_id]
+
+    while folders_to_search:
+        current_folder_id = folders_to_search.pop(0)
+        page_token = None
+
+        while True:
+            try:
+                results = service.files().list(
+                    q=f"'{current_folder_id}' in parents and trashed=false",
+                    pageSize=1000,
+                    fields="nextPageToken, files(id, mimeType)",
+                    pageToken=page_token
+                ).execute()
+            except HttpError as error:
+                # If a nested folder has restricted permissions, skip it and continue
+                print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
+                break
+
+            for item in results.get('files', []):
+                if item['mimeType'] == 'application/vnd.google-apps.folder':
+                    folders_to_search.append(item['id'])
+                else:
+                    return True
+
+            page_token = results.get('nextPageToken')
+            if not page_token:
+                break
+
+    return False
+
+
 def download_drive_file(service, file_id):
     # 1. Ask Google for the permissions metadata alongside the file info
     metadata = service.files().get(
@@ -539,6 +580,19 @@ class GoogleDriveFileImportView(View):
                     'success': False,
                     'error': f'Failed to read Google Drive folder: {exc}',
                 },
+                status=400
+            )
+
+        is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
+        if not is_public:
+            return JsonResponse(
+                {'success': False, 'error': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE},
+                status=400
+            )
+
+        if not drive_folder_has_files(service, folder_id):
+            return JsonResponse(
+                {'success': False, 'error': MESSAGES.EMPTY_DRIVE_FOLDER_MESSAGE},
                 status=400
             )
 
