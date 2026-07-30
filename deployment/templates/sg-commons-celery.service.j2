@@ -4,12 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User={{ deploy_user }}
-Group={{ deploy_user }}
-WorkingDirectory={{ current_path }}
+User=jenkins
+Group=jenkins
+
+WorkingDirectory=/opt/deployment/commons-backend
+
+Environment="PYTHONPATH=/opt/deployment/commons-backend"
 Environment="DJANGO_SETTINGS_MODULE=shikshalokam_mohini.settings"
 
-ExecStart={{ current_path }}/.venv/bin/celery \
+ExecStart=/opt/deployment/commons-backend/.venv/bin/celery \
     -A shikshalokam_mohini \
     worker \
     --pool=threads
@@ -17,8 +20,8 @@ ExecStart={{ current_path }}/.venv/bin/celery \
 Restart=always
 RestartSec=5
 
-StandardOutput=append:{{ current_path }}/commons_celery.log
-StandardError=append:{{ current_path }}/commons_celery.log
+StandardOutput=append:/opt/deployment/commons-backend/commons_celery.log
+StandardError=append:/opt/deployment/commons-backend/commons_celery.log
 
 [Install]
 WantedBy=multi-user.target
