@@ -239,7 +239,7 @@ def validate_google_drive_url(drive_url):
     # - /file/d/ID
     path_pattern = r'^/(?:drive(?:/u/\d+)?/folders|file/d)/[a-zA-Z0-9_-]+(?:/view)?/?$'
     if not re.match(path_pattern, parsed.path):
-        return False, "Invalid Google Drive URL path: must be a valid folder or file path"
+        return False, "Invalid Google Drive URL path: must be a valid folder."
 
     # Validate query string (if present)
     # Query strings are generally safe when properly URL-encoded
@@ -247,11 +247,11 @@ def validate_google_drive_url(drive_url):
     if parsed.query:
         invalid_chars = set(re.findall(r'[^a-zA-Z0-9=&_\-.%~+:/?]', parsed.query))
         if invalid_chars:
-            return False, f"URL query contains invalid characters: {', '.join(sorted(invalid_chars))}"
+            return False, "Invalid Google Drive URL path: must be a valid folder."
 
     # Fragment should not be present in Google Drive URLs
     if parsed.fragment:
-        return False, "URL contains unexpected fragment - please use the base URL without anchors"
+        return False, "Invalid Google Drive URL path: must be a valid folder."
 
     return True, None
 
@@ -586,7 +586,7 @@ class GoogleDriveFileImportView(View):
             return JsonResponse(
                 {
                     'success': False,
-                    'error': f'Failed to read Google Drive folder: {exc}',
+                    'error': "Invalid Google Drive URL path: must be a valid folder.",
                 },
                 status=400
             )
@@ -604,7 +604,7 @@ class GoogleDriveFileImportView(View):
             return JsonResponse(
                 {
                     'success': False,
-                    'error': f'Failed to read Google Drive folder: {exc}',
+                    'error': "Invalid Google Drive URL path: must be a valid folder.",
                 },
                 status=400
             )
