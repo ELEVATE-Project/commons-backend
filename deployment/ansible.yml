@@ -1,5 +1,6 @@
 ---
 - hosts: elevate
+  become: yes
 
   vars:
     project_path: /opt/deployment
