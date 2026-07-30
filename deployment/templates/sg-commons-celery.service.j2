@@ -1,0 +1,24 @@
+[Unit]
+Description=SG Commons Celery Worker
+After=network.target
+
+[Service]
+Type=simple
+User={{ deploy_user }}
+Group={{ deploy_user }}
+WorkingDirectory={{ current_path }}
+Environment="DJANGO_SETTINGS_MODULE=shikshalokam_mohini.settings"
+
+ExecStart={{ current_path }}/.venv/bin/celery \
+    -A shikshalokam_mohini \
+    worker \
+    --pool=threads
+
+Restart=always
+RestartSec=5
+
+StandardOutput=append:{{ current_path }}/commons_celery.log
+StandardError=append:{{ current_path }}/commons_celery.log
+
+[Install]
+WantedBy=multi-user.target
