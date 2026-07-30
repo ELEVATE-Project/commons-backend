@@ -4,22 +4,25 @@ After=network.target
 
 [Service]
 Type=simple
-User={{ deploy_user }}
-Group={{ deploy_user }}
-WorkingDirectory={{ current_path }}
+User=jenkins
+Group=jenkins
+
+WorkingDirectory=/opt/deployment/commons-backend
+
+Environment="PYTHONPATH=/opt/deployment/commons-backend"
 Environment="DJANGO_SETTINGS_MODULE=shikshalokam_mohini.settings"
 
-ExecStart={{ current_path }}/.venv/bin/uvicorn \
+ExecStart=/opt/deployment/commons-backend/.venv/bin/uvicorn \
     shikshalokam_mohini.asgi:application \
     --host 0.0.0.0 \
-    --port {{ uvicorn_port }} \
-    --workers {{ uvicorn_workers }}
+    --port 9000 \
+    --workers 4
 
 Restart=always
 RestartSec=5
 
-StandardOutput=append:{{ current_path }}/commons.log
-StandardError=append:{{ current_path }}/commons.log
+StandardOutput=append:/opt/deployment/commons-backend/commons.log
+StandardError=append:/opt/deployment/commons-backend/commons.log
 
 [Install]
 WantedBy=multi-user.target
