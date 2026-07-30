@@ -5,7 +5,6 @@
   vars:
     project_path: /opt/deployment
     current_path: /opt/deployment/commons-backend
-    deploy_user: jenkins
     uvicorn_port: 9000
     uvicorn_workers: 4
 
