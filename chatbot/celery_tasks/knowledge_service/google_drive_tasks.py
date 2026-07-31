@@ -12,6 +12,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.views.Media.save_views import BatchMediaSaveView
 import chatbot.constants.constants as CONSTANTS
+import chatbot.constants.dialogue_messages as MESSAGES
 
 def _get_status_cache_key(session_id):
     return CacheManager.get_cache_key(session_id, 'google_drive_import', 'status')
@@ -128,6 +129,7 @@ def process_google_drive_import(
     from googleapiclient.errors import HttpError
 
     from chatbot.models import Company
+    from chatbot.models.repository_models import Repository
     from chatbot.views.Media.google_drive_integration import (
         download_drive_file,
         get_all_files_in_folder,
@@ -195,21 +197,13 @@ def process_google_drive_import(
         if not is_public:
             _set_import_status(session_id, {
                 'status': CONSTANTS.FAILED,
-                'message': 'Folder is not publicly shared.',
+                'message': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE,
                 'session_id': session_id,
             })
+            # A non-public folder must not leave a repository row behind; remove
+            # the IN-PROGRESS row created when the import was queued.
             if repository_id:
-                upsert_repository_from_drive_import(
-                    folder_url=folder_url,
-                    folder_meta=folder_meta,
-                    company=company,
-                    repository_id=repository_id,
-                    status=CONSTANTS.FAILED,
-                    total_resources=0,
-                    error_message='Folder is not publicly shared.',
-                    created_by=user_profile,
-                    updated_by=user_profile,
-                )
+                Repository.objects.filter(id=repository_id).delete()
             return
     except HttpError as exc:
         _set_import_status(session_id, {
@@ -231,11 +225,12 @@ def process_google_drive_import(
             )
         return
 
-    all_files = get_all_files_in_folder(service, folder_id)
-    if not all_files:
+    try:
+        all_files = get_all_files_in_folder(service, folder_id)
+    except HttpError as exc:
         _set_import_status(session_id, {
             'status': CONSTANTS.FAILED,
-            'message': 'No files found in the selected Google Drive folder.',
+            'message': f'Failed to read Google Drive folder: {exc}',
             'session_id': session_id,
         })
         if repository_id:
@@ -246,10 +241,22 @@ def process_google_drive_import(
                 repository_id=repository_id,
                 status=CONSTANTS.FAILED,
                 total_resources=0,
-                error_message='No files found in the selected Google Drive folder.',
+                error_message=f'Failed to read Google Drive folder: {exc}',
                 created_by=user_profile,
                 updated_by=user_profile,
             )
+        return
+
+    if not all_files:
+        _set_import_status(session_id, {
+            'status': CONSTANTS.FAILED,
+            'message': MESSAGES.EMPTY_DRIVE_FOLDER_MESSAGE,
+            'session_id': session_id,
+        })
+        # An empty folder must not leave a repository row behind; remove the
+        # IN-PROGRESS row created when the import was queued.
+        if repository_id:
+            Repository.objects.filter(id=repository_id).delete()
         return
 
     save_view = BatchMediaSaveView()

@@ -204,7 +204,7 @@ class RepositoryListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        queryset = Repository.objects.all().order_by('created_at', 'id')
+        queryset = Repository.objects.all().order_by('-updated_at', 'id')
 
         if getattr(user, "is_superuser", False):
             return queryset

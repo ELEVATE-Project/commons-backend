@@ -35,6 +35,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
 import chatbot.constants.constants as CONSTANTS
 import chatbot.constants.endpoints as ENDPOINTS
+import chatbot.constants.dialogue_messages as MESSAGES
 
 raw_scopes = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.readonly')
 GOOGLE_DRIVE_SCOPES = [scope.strip() for scope in raw_scopes.split(',')]
@@ -238,7 +239,7 @@ def validate_google_drive_url(drive_url):
     # - /file/d/ID
     path_pattern = r'^/(?:drive(?:/u/\d+)?/folders|file/d)/[a-zA-Z0-9_-]+(?:/view)?/?$'
     if not re.match(path_pattern, parsed.path):
-        return False, "Invalid Google Drive URL path: must be a valid folder or file path"
+        return False, "Invalid Google Drive URL path: must be a valid folder."
 
     # Validate query string (if present)
     # Query strings are generally safe when properly URL-encoded
@@ -246,11 +247,11 @@ def validate_google_drive_url(drive_url):
     if parsed.query:
         invalid_chars = set(re.findall(r'[^a-zA-Z0-9=&_\-.%~+:/?]', parsed.query))
         if invalid_chars:
-            return False, f"URL query contains invalid characters: {', '.join(sorted(invalid_chars))}"
+            return False, "Invalid Google Drive URL path: must be a valid folder."
 
     # Fragment should not be present in Google Drive URLs
     if parsed.fragment:
-        return False, "URL contains unexpected fragment - please use the base URL without anchors"
+        return False, "Invalid Google Drive URL path: must be a valid folder."
 
     return True, None
 
@@ -423,7 +424,7 @@ def get_all_files_in_folder(service, initial_folder_id):
                 
                 # Separate actual files from sub-folders
                 for item in results.get('files', []):
-                    if item['mimeType'] == 'application/vnd.google-apps.folder':
+                    if item['mimeType'] == CONSTANTS.GOOGLE_DRIVE_FOLDER_MIME_TYPE:
                         # Found a nested folder! Add it to the queue to search later
                         folders_to_search.append(item['id'])
                     else:
@@ -435,12 +436,60 @@ def get_all_files_in_folder(service, initial_folder_id):
                     break
                     
             except HttpError as error:
+                if current_folder_id == initial_folder_id:
+                    # Failure on the root folder means the listing itself failed;
+                    # an empty result here must not be mistaken for an empty folder.
+                    raise
                 # If a nested folder has restricted permissions, skip it and continue
                 print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
                 break
-                
+
     return files_found
 
+
+
+def drive_folder_has_files(service, initial_folder_id):
+    """
+    Return True as soon as any file (not a folder) is found in the folder tree.
+
+    Cheap emptiness probe used before an import is queued: for a non-empty
+    folder this normally costs a single API call, unlike
+    get_all_files_in_folder which always lists everything.
+    """
+    folders_to_search = [initial_folder_id]
+
+    while folders_to_search:
+        current_folder_id = folders_to_search.pop(0)
+        page_token = None
+
+        while True:
+            try:
+                results = service.files().list(
+                    q=f"'{current_folder_id}' in parents and trashed=false",
+                    pageSize=1000,
+                    fields="nextPageToken, files(id, mimeType)",
+                    pageToken=page_token
+                ).execute()
+            except HttpError as error:
+                if current_folder_id == initial_folder_id:
+                    # Failure on the root folder means the listing itself failed;
+                    # an empty result here must not be mistaken for an empty folder.
+                    raise
+                # If a nested folder has restricted permissions, skip it and continue
+                print(f"Skipping inaccessible nested folder {current_folder_id}: {error}")
+                break
+
+            for item in results.get('files', []):
+                if item['mimeType'] == CONSTANTS.GOOGLE_DRIVE_FOLDER_MIME_TYPE:
+                    folders_to_search.append(item['id'])
+                else:
+                    return True
+
+            page_token = results.get('nextPageToken')
+            if not page_token:
+                break
+
+    return False
 
 
 def download_drive_file(service, file_id):
@@ -537,8 +586,31 @@ class GoogleDriveFileImportView(View):
             return JsonResponse(
                 {
                     'success': False,
-                    'error': f'Failed to read Google Drive folder: {exc}',
+                    'error': "Invalid Google Drive URL path: must be a valid folder.",
                 },
+                status=400
+            )
+
+        is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
+        if not is_public:
+            return JsonResponse(
+                {'success': False, 'error': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE},
+                status=400
+            )
+
+        try:
+            folder_has_files = drive_folder_has_files(service, folder_id)
+        except HttpError as exc:
+            return JsonResponse(
+                {
+                    'success': False,
+                    'error': "Invalid Google Drive URL path: must be a valid folder.",
+                },
+                status=400
+            )
+        if not folder_has_files:
+            return JsonResponse(
+                {'success': False, 'error': MESSAGES.EMPTY_DRIVE_FOLDER_MESSAGE},
                 status=400
             )
 
