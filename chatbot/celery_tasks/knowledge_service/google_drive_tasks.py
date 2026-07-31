@@ -134,6 +134,8 @@ def process_google_drive_import(
         download_drive_file,
         get_all_files_in_folder,
         get_default_extraction_bot,
+        is_drive_file_public,
+        probe_drive_item_access,
         resolve_company_from_import,
         upsert_repository_from_drive_import,
     )
@@ -193,8 +195,7 @@ def process_google_drive_import(
             fileId=folder_id,
             fields="id, name, mimeType, permissions"
         ).execute()
-        is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
-        if not is_public:
+        if not is_drive_file_public(folder_id, folder_meta):
             _set_import_status(session_id, {
                 'status': CONSTANTS.FAILED,
                 'message': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE,
@@ -206,6 +207,19 @@ def process_google_drive_import(
                 Repository.objects.filter(id=repository_id).delete()
             return
     except HttpError as exc:
+        # Drive answers 404 both for ids that don't exist and for folders the
+        # user has no access to; a private folder must report as not public.
+        if probe_drive_item_access(folder_id) == CONSTANTS.DRIVE_ACCESS_PRIVATE:
+            _set_import_status(session_id, {
+                'status': CONSTANTS.FAILED,
+                'message': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE,
+                'session_id': session_id,
+            })
+            # A non-public folder must not leave a repository row behind; remove
+            # the IN-PROGRESS row created when the import was queued.
+            if repository_id:
+                Repository.objects.filter(id=repository_id).delete()
+            return
         _set_import_status(session_id, {
             'status': CONSTANTS.FAILED,
             'message': f'Failed to read Google Drive folder: {exc}',
