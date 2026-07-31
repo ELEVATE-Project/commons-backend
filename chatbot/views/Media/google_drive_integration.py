@@ -8,6 +8,8 @@ import re
 import uuid
 from urllib.parse import urlparse
 
+import requests
+
 from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.http import JsonResponse, FileResponse
@@ -76,6 +78,50 @@ def get_drive_service(request):
     if not credentials:
         return None
     return build('drive', 'v3', credentials=credentials)
+
+
+def probe_drive_item_access(file_id):
+    """
+    Classify a Drive item without using the requesting user's credentials.
+
+    Returns 'public' when the item is reachable anonymously, 'private' when
+    it exists but requires sign-in, and 'not_found' when the id resolves to
+    nothing (or the probe itself failed).
+    """
+    # Probe the public URL anonymously: Google redirects requests for
+    # existing non-public items to the sign-in page and 404s unknown ids.
+    try:
+        response = requests.get(
+            f"{CONSTANTS.GOOGLE_DRIVE_OPEN_URL_PREFIX}{file_id}",
+            timeout=10,
+            allow_redirects=True,
+        )
+    except requests.RequestException:
+        return CONSTANTS.DRIVE_ACCESS_NOT_FOUND
+    if response.status_code == 200:
+        if CONSTANTS.GOOGLE_SIGN_IN_HOSTNAME in response.url:
+            return CONSTANTS.DRIVE_ACCESS_PRIVATE
+        return CONSTANTS.DRIVE_ACCESS_PUBLIC
+    return CONSTANTS.DRIVE_ACCESS_NOT_FOUND
+
+
+def is_drive_file_public(file_id, metadata=None):
+    """
+    Determine whether a Drive file/folder is shared as "anyone with the link".
+
+    The Drive API only includes the `permissions` field for users who can
+    manage the item (its owner or an editor). For items owned by another
+    account the field is omitted entirely, so its absence must not be read as
+    "not public" — in that case fall back to probing the item without user
+    credentials, which only succeeds when it is link-public.
+    """
+    permissions = (metadata or {}).get('permissions')
+    if permissions is not None:
+        return any(
+            p.get('type') == CONSTANTS.GOOGLE_DRIVE_ANYONE_PERMISSION_TYPE
+            for p in permissions
+        )
+    return probe_drive_item_access(file_id) == CONSTANTS.DRIVE_ACCESS_PUBLIC
 
 
 def get_default_extraction_bot():
@@ -500,8 +546,7 @@ def download_drive_file(service, file_id):
     ).execute()
 
     # 2. STRICT CHECK: Ensure the file itself is set to "Anyone with the link"
-    is_public = any(p.get('type') == 'anyone' for p in metadata.get('permissions', []))
-    if not is_public:
+    if not is_drive_file_public(file_id, metadata):
         raise ValueError("not_public")
 
     mime_type = metadata["mimeType"]
@@ -583,6 +628,14 @@ class GoogleDriveFileImportView(View):
                 fields="id, name, permissions"
             ).execute()
         except HttpError as exc:
+            # Drive answers 404 both for ids that don't exist and for folders
+            # the user has no access to, so probe anonymously to tell a
+            # private folder apart from a bad URL.
+            if probe_drive_item_access(folder_id) == CONSTANTS.DRIVE_ACCESS_PRIVATE:
+                return JsonResponse(
+                    {'success': False, 'error': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE},
+                    status=400
+                )
             return JsonResponse(
                 {
                     'success': False,
@@ -591,8 +644,7 @@ class GoogleDriveFileImportView(View):
                 status=400
             )
 
-        is_public = any(p.get('type') == 'anyone' for p in folder_meta.get('permissions', []))
-        if not is_public:
+        if not is_drive_file_public(folder_id, folder_meta):
             return JsonResponse(
                 {'success': False, 'error': MESSAGES.NOT_PUBLIC_DRIVE_FOLDER_MESSAGE},
                 status=400
