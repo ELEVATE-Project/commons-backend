@@ -34,7 +34,7 @@
 
 ## ⚙️ New Environment Variables
 
-The following environment variables were added to configure Redis and the Celery workers used by the asynchronous Google Drive import pipeline:
+The following environment variables were added to configure the Google Drive OAuth integration, and Redis and the Celery workers used by the asynchronous import pipeline:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -43,7 +43,7 @@ The following environment variables were added to configure Redis and the Celery
 | `REDIS_USE_SSL` | `false` | Set to `true` to connect to Redis over SSL (`rediss://`). |
 | `REDIS_CELERY_DB` | `2` | Redis database number used for the Celery broker and result backend. |
 | `CELERY_TASK_DEFAULT_QUEUE` | `sg_commons_queue` | Default queue name that Celery tasks are published to and workers consume from. |
-
+| `GOOGLE_DRIVE_SCOPES` | `https://www.googleapis.com/auth/drive.readonly` | Google OAuth scopes requested when connecting a Google Drive account. Defaults to read-only Drive access. |
 ---
 
 👨‍💻 **Service:** Commons Backend
