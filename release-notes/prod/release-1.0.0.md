@@ -32,5 +32,19 @@
 
 ---
 
+## ⚙️ New Environment Variables
+
+The following environment variables were added to configure Redis and the Celery workers used by the asynchronous Google Drive import pipeline:
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_HOST` | `127.0.0.1` | Hostname of the Redis server used as the Celery broker and result backend. |
+| `REDIS_PORT` | `6379` | Port of the Redis server. |
+| `REDIS_USE_SSL` | `false` | Set to `true` to connect to Redis over SSL (`rediss://`). |
+| `REDIS_CELERY_DB` | `2` | Redis database number used for the Celery broker and result backend. |
+| `CELERY_TASK_DEFAULT_QUEUE` | `sg_commons_queue` | Default queue name that Celery tasks are published to and workers consume from. |
+
+---
+
 👨‍💻 **Service:** Commons Backend
 🏷️ **Version:** 1.0.0
