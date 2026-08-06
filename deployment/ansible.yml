@@ -114,14 +114,6 @@
         executable: /bin/bash
         chdir: "{{ current_path }}"
 
-    - name: Install Uvicorn service
-      template:
-        src: templates/sg-commons-uvicorn.service.j2
-        dest: /etc/systemd/system/sg-commons-uvicorn.service
-        mode: "0644"
-      notify:
-        - Reload systemd
-
     - name: Install Celery service
       template:
         src: templates/sg-commons-celery.service.j2
@@ -132,34 +124,15 @@
 
     - meta: flush_handlers
 
-    - name: Enable Uvicorn
-      systemd:
-        name: sg-commons-uvicorn
-        enabled: yes
-
     - name: Enable Celery
       systemd:
         name: sg-commons-celery
         enabled: yes
 
-    - name: Restart Uvicorn
-      systemd:
-        name: sg-commons-uvicorn
-        state: restarted
-
     - name: Restart Celery
       systemd:
         name: sg-commons-celery
         state: restarted
-
-    - name: Verify Uvicorn
-      command: systemctl is-active sg-commons-uvicorn
-      register: uvicorn_status
-      changed_when: false
-      failed_when: uvicorn_status.stdout != "active"
-
-    - debug:
-        var: uvicorn_status.stdout
 
     - name: Verify Celery
       command: systemctl is-active sg-commons-celery
@@ -169,6 +142,52 @@
 
     - debug:
         var: celery_status.stdout
+
+    - name: Disable legacy Uvicorn systemd service (migration cleanup)
+      systemd:
+        name: sg-commons-uvicorn
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: Stop any running Uvicorn process
+      shell: pkill -f "uvicorn shikshalokam_mohini.asgi:application" || true
+      changed_when: false
+
+    - name: Pause to let old Uvicorn process release the port
+      pause:
+        seconds: 2
+
+    - name: Start Uvicorn via setsid
+      shell: >
+        setsid {{ current_path }}/.venv/bin/uvicorn
+        shikshalokam_mohini.asgi:application
+        --host 0.0.0.0
+        --port {{ uvicorn_port }}
+        > {{ current_path }}/logs/commons.log 2>&1 < /dev/null &
+      args:
+        chdir: "{{ current_path }}"
+        executable: /bin/bash
+
+    - name: Wait for Uvicorn to come up
+      pause:
+        seconds: 3
+
+    - name: Verify Uvicorn process is running
+      shell: pgrep -f "uvicorn shikshalokam_mohini.asgi:application"
+      register: uvicorn_status
+      changed_when: false
+      failed_when: uvicorn_status.rc != 0
+
+    - name: Verify Uvicorn is listening on the port
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ uvicorn_port }}"
+        timeout: 15
+      register: uvicorn_port_check
+
+    - debug:
+        msg: "Uvicorn is running with PID(s): {{ uvicorn_status.stdout_lines }}"
 
   handlers:
     - name: Reload systemd
