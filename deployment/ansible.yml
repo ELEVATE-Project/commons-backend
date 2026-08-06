@@ -108,7 +108,7 @@
 
     - name: Run Django migrations
       shell: |
-        export $(grep -v '^#' .env | xargs)
+        export $(cat .env | xargs)
         .venv/bin/python manage.py migrate
       args:
         executable: /bin/bash
