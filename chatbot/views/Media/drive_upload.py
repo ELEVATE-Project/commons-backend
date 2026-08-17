@@ -1,9 +1,10 @@
 from django.views.generic import TemplateView
 
-from chatbot.models import Company, CompanyBot, Profile
+from chatbot.models import CompanyBot, Profile
 from chatbot.views.Media.admin_context import add_media_admin_context
 from chatbot.views.Media.google_drive_integration import get_default_extraction_bot
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
+from chatbot.utils.company_cache import get_all_companies
 import chatbot.constants.endpoints as ENDPOINTS
 
 
@@ -19,7 +20,7 @@ class DriveUploadView(TemplateView):
 
         # For superusers, show all companies; for others, show only their companies
         if context['is_superuser']:
-            context['companies'] = Company.objects.all()
+            context['companies'] = get_all_companies()
         else:
             context['companies'] = get_company_queryset_for_user(self.request.user)
 

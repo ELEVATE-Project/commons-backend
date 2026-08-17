@@ -34,7 +34,7 @@ import mimetypes
 from chatbot.celery_tasks.knowledge_service.tag_tasks import get_auto_extracted_data
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
-from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company
+from chatbot.utils.company_utils import get_companies_for_display, get_user_company
 import chatbot.constants.constants as CONSTANTS
 import chatbot.constants.endpoints as ENDPOINTS
 import chatbot.constants.dialogue_messages as MESSAGES
@@ -136,7 +136,7 @@ class GoogleDriveIntegrationView(TemplateView):
         context = super().get_context_data(**kwargs)
         add_media_admin_context(context, self.request, 'List Repositories')
         # Pull native collections to match your Batch Upload step1 layout requirements
-        context['companies'] = get_company_queryset_for_user(self.request.user)
+        context['companies'] = get_companies_for_display(self.request.user)
         context['company_bots'] = CompanyBot.objects.all()
         context['is_superuser'] = getattr(self.request.user, 'is_superuser', False)
 

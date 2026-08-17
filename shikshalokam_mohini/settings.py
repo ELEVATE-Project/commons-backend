@@ -29,7 +29,8 @@ def load_secrets():
     paths_to_try = [
         '/home/ubuntu/shikshalokam-mohini-service/config/secrets.json',
         os.path.join(CODE_BASE_DIR, "config/secrets.json"),
-        os.path.join(os.getcwd(), "config/secrets.json")
+        os.path.join(os.getcwd(), "config/secrets.json"),
+        '/Users/vishwanathbadiger/Desktop/secrets.json',
     ]
 
     for path in paths_to_try:
@@ -228,6 +229,7 @@ ASGI_APPLICATION = 'shikshalokam_mohini.asgi.application'
 REDIS_HOST = os.environ.get('REDIS_HOST', "127.0.0.1")
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 REDIS_USE_SSL = os.environ.get('REDIS_USE_SSL', 'false').lower() == 'true'
+REDIS_IGNORE_EXCEPTIONS = os.environ.get('REDIS_IGNORE_EXCEPTIONS', 'true').lower() == 'true'
 
 # Build Redis connection URL with SSL support
 REDIS_PROTOCOL = 'rediss' if REDIS_USE_SSL else 'redis'
@@ -271,10 +273,15 @@ CACHES = {
             },
             'SERIALIZER': 'django_redis.serializers.pickle.PickleSerializer',
             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+            'IGNORE_EXCEPTIONS': REDIS_IGNORE_EXCEPTIONS,
         },
         'TIMEOUT': 7200,
     }
 }
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = os.environ.get('DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS', 'true').lower() == 'true'
+
+COMPANY_CACHE_TTL = int(os.environ.get('COMPANY_CACHE_TTL', 3600))
+REDIS_CACHE_ENABLED = os.environ.get('REDIS_CACHE_ENABLED', 'true').lower() == 'true'
 
 # TAILWIND_APP_NAME = "theme"
 
@@ -472,6 +479,11 @@ LOGGING = {
         'django': {
             'handlers': ['debug_file', 'info_file', 'warning_file', 'error_file'],
             'level': os.getenv('DEFAULT_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django_redis': {
+            'handlers': ['warning_file', 'error_file'],
+            'level': 'WARNING',
             'propagate': False,
         },
     },
