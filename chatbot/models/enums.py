@@ -39,10 +39,18 @@ class LLMProvider(models.TextChoices):
     """
     Lists supported Large Language Model providers.
     Determines which AI backend service is used.
+
+    This selects *how commons calls the model*, not which model vendor answers.
+    AI_SERVICE routes the call through the AI Service gateway instead of calling
+    a provider SDK directly. Which vendor and model the gateway then uses is not
+    a commons setting at all: it comes from AI_SERVICE_PROVIDER and
+    AI_SERVICE_MODEL, deployed alongside the gateway's other credentials (see
+    chatbot/utils/ai_service_client.py). llm_model is ignored for such bots.
     """
     BEDROCK = 'bedrock', _('BEDROCK')
     BEDROCK_CONVERSE = 'bedrock/converse', _('BEDROCK_CONVERSE')
     OPENAI = 'openai', _('OPENAI')
+    AI_SERVICE = 'ai_service', _('AI_SERVICE')
 
 
 class ThemeType(models.TextChoices):

@@ -10,6 +10,7 @@ This documents utility scripts located in the `chatbot/scripts/` directory that 
 - `sync_media_to_vector_db.py`: Synchronizes media assets to a vector database for search capabilities.
 - `qdrant_sanity_check.py`: Performs integrity checks on Qdrant vector database.
 - `theme_extraction.py` and `theme_extraction_in_file.py`: Extract thematic data from input sources.
+- `ai_search/create_ai_search_bot.py`: Seeds the `CompanyBot` row holding the AI search filter prompt and tool schema. Optional — only needed when AI Search is enabled. Idempotent; pass `--force` to overwrite an edited prompt.
 
 ## Usage
 

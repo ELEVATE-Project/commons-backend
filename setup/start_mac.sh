@@ -234,6 +234,15 @@ with transaction.atomic():
 print(f'Done — {created_count} created, {updated_count} updated.')
 PYEOF
 
+# ── 14b. Seed the AI search filter prompt bot ────────────────────────────────
+# A script rather than a JSON fixture on purpose: the prompt and tool schema live
+# in chatbot/services/search/prompts.py, and a copy in setup/ would drift from
+# it. Not a management command because AI Search is optional. Idempotent — an
+# existing prompt is left alone.
+info "Seeding the AI search filter prompt bot..."
+$PYTHON chatbot/scripts/ai_search/create_ai_search_bot.py
+info "AI search filter bot ready"
+
 # ── 15. Create superuser (only if none exists) ───────────────────────────────
 $PYTHON manage.py shell -c "
 from django.contrib.auth import get_user_model

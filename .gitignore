@@ -21,3 +21,10 @@ config/qa-dev-prod-mitra-bucket.json
 .claude/
 .venv/
 client_secret.json
+.DS_Store
+
+docs/.DS_Store
+
+
+.DS_Store
+**/.DS_Store
