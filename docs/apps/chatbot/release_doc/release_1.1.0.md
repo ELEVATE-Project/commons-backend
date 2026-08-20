@@ -1,55 +1,65 @@
-# Release 1.0 — Deployment Checklist
+# Release 1.1.0 — Deployment Guide
 
-AI-powered search: users describe what they want in plain language
-("list all PDFs from the Shikshalokam organization") and the system resolves it
-into Organization and File Type filters plus a clean search query.
+AI Search allows users to describe searches in natural language, for example:
 
-This release adds a dependency on a **new external service** (AI Service), so it
-must be deployed and provisioned *before* Commons is released.
+> "List all PDFs from the Shikshalokam organization."
 
----
+The system extracts organization and file-type filters and performs the search.
 
-## 0. Order of operations
-
-Deploy strictly in this order — each step depends on the one before it.
-
-| # | Where | What |
-|---|-------|------|
-| 1 | AI Service | Deploy, migrate, provision tenant + `commons` service + provider key |
-| 2 | AI Service | Start the server, note the base URL and port |
-| 3 | Commons | Set `AI_SERVICE_*` variables in `.env` |
-| 4 | Commons | `manage.py migrate` |
-| 5 | Commons | `chatbot/scripts/ai_search/create_ai_search_bot.py` |
-| 6 | Commons | Restart the app + Celery workers |
-| 7 | Both | Run the verification steps in §4 |
-
-> The bearer token from step 1 is displayed **once and never again**. Capture it
-> before closing the terminal, or you will have to re-register the service.
+**Important:** Commons now depends on the **AI Service** microservice. Deploy and configure AI Service **before** deploying Commons.
 
 ---
 
-## 1. AI Service setup
+## 1. Deployment Order
 
-**Repository:** <https://github.com/priyanka-TL/AI-Service>
-**Release branch:** `release-1.2.0`
-**Setup reference:** [`docs/local-setup.md`](https://github.com/priyanka-TL/AI-Service/blob/release-1.2.0/docs/local-setup.md) · [`docs/keys-cli.md`](https://github.com/priyanka-TL/AI-Service/blob/release-1.2.0/docs/keys-cli.md)
+Follow this order:
 
-### 1.1 Prerequisites
+| Step | Service    | Action                                            |
+| ---- | ---------- | ------------------------------------------------- |
+| 1    | AI Service | Deploy and run migrations                         |
+| 2    | AI Service | Create `commons` tenant, service and provider key |
+| 3    | AI Service | Start the service and note the URL/port           |
+| 4    | Commons    | Configure `AI_SERVICE_*` variables                |
+| 5    | Commons    | Run database migrations                           |
+| 6    | Commons    | Seed the AI Search Filter Bot                     |
+| 7    | Commons    | Restart application and Celery workers            |
+| 8    | Both       | Run verification                                  |
 
-- [ ] Python 3.10
-- [ ] `uv` installed, `uv sync` run
-- [ ] PostgreSQL reachable, database created
-- [ ] Redis reachable
-- [ ] spaCy model: `uv run python -m spacy download en_core_web_lg`
+**Important:** The AI Service bearer token is shown only once when the service is created. Save it immediately.
 
-### 1.2 Environment
+---
 
-Create `.env` in the AI Service root. **Every variable must be present — the app
-fails fast on any missing config.**
+# 2. AI Service Setup
+
+**Repository:** `https://github.com/priyanka-TL/AI-Service`
+**Branch:** `release-1.2.0`
+
+Refer to:
+
+* `docs/local-setup.md`
+* `docs/keys-cli.md`
+
+### 2.1 Prerequisites
+
+* [ ] Python 3.10
+* [ ] `uv` installed
+* [ ] `uv sync` completed
+* [ ] PostgreSQL available
+* [ ] Redis available
+* [ ] spaCy model installed
+
+```bash
+uv run python -m spacy download en_core_web_lg
+```
+
+### 2.2 Configure `.env`
+
+Create `.env` in the AI Service root:
 
 ```env
 DB_URL=postgresql+asyncpg://<user>:<pass>@<host>:5432/llm_service
 REDIS_URL=redis://<host>:6379
+
 LOG_LEVEL=INFO
 PRICING_STALENESS_DAYS=7
 SECRET_BACKEND=postgres
@@ -59,87 +69,99 @@ GUARDRAILS_LLAMA_GUARD_ENABLED=false
 GUARDRAILS_LLAMA_GUARD_MODEL=none
 GUARDRAILS_LLAMA_GUARD_API_KEY=
 GUARDRAILS_LLAMA_GUARD_API_BASE=
+
 GUARDRAILS_SIZE_CAP_INPUT_CHARS=100000
 GUARDRAILS_SIZE_CAP_OUTPUT_CHARS=50000
 
 CACHE_TTL_SECONDS=0
+
 LLM_RETRY_MAX_ATTEMPTS=3
 LLM_RETRY_BACKOFF_BASE_S=2.0
 BATCH_MAX_SUBMIT_ATTEMPTS=3
 ```
 
-- [ ] `.env` created with production values
-- [ ] Migrations applied: `alembic upgrade head`
+* [ ] Production values configured
+* [ ] Migrations completed
 
-### 1.3 Provision the tenant, the `commons` service, and the provider key
+```bash
+alembic upgrade head
+```
+
+---
+
+## 3. Create Commons Tenant and Credentials
+
+Run:
 
 ```bash
 uv run python scripts/add_tenant_key.py
 ```
 
-Answer the prompts as follows:
+Use the following values:
 
-```
+```text
 Tenant ID: commons
-Tenant display name [commons]: Commons
+Tenant display name: Commons
 
-Grant a calling service access to 'commons'? (y/n): y
-  Service name (press Enter to create new): [press Enter]
-  New service name: commons
+Grant a calling service access to 'commons'? y
+Service name: <press Enter>
+New service name: commons
 
-  !! Save this token now — it will not be shown again:
-     svc_<generated-token>          <-- this becomes AI_SERVICE_TOKEN
-
-Add a provider key for 'commons'? (y/n): y
-  Provider (...): bedrock
-  AWS Access Key ID: <aws-access-key-id>
-  AWS Secret Access Key: <aws-secret-access-key>
-  AWS Region [us-east-1]: us-west-2
-  (remaining prompts: press Enter to skip)
+Add a provider key for 'commons'? y
+Provider: bedrock
+AWS Access Key ID: <aws-access-key-id>
+AWS Secret Access Key: <aws-secret-access-key>
+AWS Region: us-west-2
 ```
 
-- [ ] Tenant `commons` created
-- [ ] Calling service named **`commons`** created and granted access to the tenant
-- [ ] Bearer token captured somewhere safe
-- [ ] **Bedrock** provider key stored (`aws_credentials` format)
+Save the generated service token.
 
-> The key must match the vendor commons asks the gateway for, which is
-> `AI_SERVICE_PROVIDER` in commons' own `.env` (§2) — `bedrock` by default, with
-> `AI_SERVICE_MODEL=us.meta.llama3-3-70b-instruct-v1:0`. If the tenant has no key
-> for that vendor, `/v1/chat` returns **422 `missing_tenant_key`** and search
-> quietly falls back to non-LLM behaviour.
->
-> To use a different vendor, change those two variables (e.g.
-> `AI_SERVICE_PROVIDER=anthropic`) to match the key you registered. This is
-> deliberately *not* a per-bot setting: the model choice belongs to the AI
-> Service deployment. The `/ai_search_filters` bot keeps `provider = ai_service`,
-> which selects *how commons reaches the model*, not which vendor answers, and
-> its `llm_model` column is ignored.
+### Verify
 
-### 1.4 Start
+* [ ] Tenant `commons` exists
+* [ ] Service `commons` exists
+* [ ] Service has access to tenant `commons`
+* [ ] Service bearer token saved securely
+* [ ] Bedrock provider key configured
 
-```bash
-uv run uvicorn main:app --port <port> --host 0.0.0.0
+The provider configured here must match the provider Commons sends to AI Service.
+
+If the tenant does not have a key for that provider, AI Service returns:
+
+```text
+422 missing_tenant_key
 ```
 
-- [ ] Service running, port recorded for §2
-
-> **Port:** do not reuse `8000` if the vectorization service already occupies it
-> on the same host. On **macOS dev machines only**, avoid `7000` — the AirPlay
-> Receiver also binds it and answers with a `403` that looks like an auth
-> failure; use `127.0.0.1` rather than `localhost` there.
+Commons will then fall back to non-LLM search.
 
 ---
 
-## 2. Commons configuration
+## 4. Start AI Service
 
-**Repository:** <https://github.com/ELEVATE-Project/commons-backend>
+```bash
+uv run uvicorn main:app --host 0.0.0.0 --port <port>
+```
 
-Add to the Commons `.env` (see `sample.env` for the full annotated list):
+Record the service URL:
+
+```text
+http://<ai-service-host>:<port>
+```
+
+* [ ] AI Service is running
+* [ ] Host and port recorded
+
+**Note:** Do not use port `8000` if another service already uses it.
+
+---
+
+# 5. Configure Commons
+
+Add the following to the Commons `.env`:
 
 ```env
 AI_SERVICE_BASE_URL=http://<ai-service-host>:<port>
-AI_SERVICE_TOKEN=svc_<token-from-step-1.3>
+AI_SERVICE_TOKEN=svc_<token-from-ai-service>
 AI_SERVICE_TENANT_ID=commons
 AI_SERVICE_PROVIDER=bedrock
 AI_SERVICE_MODEL=us.meta.llama3-3-70b-instruct-v1:0
@@ -148,64 +170,132 @@ AI_SEARCH_LLM_MODE=fallback
 AI_SEARCH_LLM_CONFIDENCE_THRESHOLD=0.5
 ```
 
-- [ ] All five `AI_SERVICE_*` values set — none has a fallback, and a missing one
-      degrades search to non-LLM filters with a `missing_config` log
-- [ ] `AI_SERVICE_TENANT_ID` matches the tenant ID from §1.3 exactly
-- [ ] `AI_SERVICE_PROVIDER` matches the provider key registered in §1.3
-- [ ] Remaining `AI_SEARCH_*` / retry variables left at defaults, or set deliberately
+### Required values
 
-`AI_SERVICE_PROVIDER` and `AI_SERVICE_MODEL` are the only two with no per-bot
-override, by design: which model answers belongs to the AI Service deployment,
-not to a row in commons' database.
+All five `AI_SERVICE_*` values are required:
 
-Optional tuning, all documented in `sample.env`, all overridable per bot via the
-bot's `other_params` without a deploy:
-`AI_SEARCH_LLM_ORG_VOCAB_MODE`, `AI_SEARCH_LLM_ORG_CANDIDATE_LIMIT`,
-`AI_SEARCH_LLM_ORG_FULL_MAX`, `AI_SERVICE_MAX_ATTEMPTS`,
-`AI_SERVICE_BACKOFF_BASE_S`, `AI_SERVICE_MAX_ELAPSED_S`,
-`AI_SERVICE_COOLDOWN_AFTER_FAILURES`, `AI_SERVICE_COOLDOWN_SECONDS`,
-`AI_SERVICE_CONFIG_COOLDOWN_SECONDS`.
+| Variable               | Purpose               |
+| ---------------------- | --------------------- |
+| `AI_SERVICE_BASE_URL`  | AI Service URL        |
+| `AI_SERVICE_TOKEN`     | Commons service token |
+| `AI_SERVICE_TENANT_ID` | AI Service tenant     |
+| `AI_SERVICE_PROVIDER`  | LLM vendor            |
+| `AI_SERVICE_MODEL`     | LLM model             |
+
+There are no code-level defaults for these values.
+
+### Per-bot configuration
+
+The provider and model can also be configured in the AI Search bot:
+
+```text
+other_params.ai_provider
+other_params.ai_model
+```
+
+Resolution order:
+
+```text
+Bot configuration → Environment → Error
+```
+
+The bot's `provider` column should remain:
+
+```text
+ai_service
+```
+
+It identifies **how Commons reaches the model**, not which vendor is used.
+
+The `llm_model` column is not used by the AI Search Filter Bot.
 
 ---
 
-## 3. Commands to run on Commons
+# 6. Run Commons Deployment Steps
+
+From the Commons project root:
+
+### 6.1 Run migrations
 
 ```bash
-# 1. schema
 .venv/bin/python manage.py migrate
-
-# 2. create the AI search prompt bot (idempotent; safe to re-run)
-.venv/bin/python chatbot/scripts/ai_search/create_ai_search_bot.py
-
-# 3. restart the app and Celery workers so the new .env is picked up
 ```
 
-- [ ] `migrate` completed
-- [ ] `create_ai_search_bot` reports **created** (or "already exists" on a re-run)
-- [ ] App and workers restarted
-
-**No new migrations ship with this release** — the prompt lives in an existing
-`CompanyBot` row, so `migrate` is only a safety check.
-
-Bot creation is a script rather than a management command, because AI Search is
-optional — it is not part of the setup the chatbot needs to start. Run it from
-the project root. Useful variants:
+### 6.2 Create/seed the AI Search Filter Bot
 
 ```bash
-# per-company prompt override
-.venv/bin/python chatbot/scripts/ai_search/create_ai_search_bot.py --company <slug>
-# overwrite an edited prompt
+.venv/bin/python chatbot/scripts/ai_search/create_ai_search_bot.py
+```
+
+The bot route is:
+
+```text
+/ai_search_filters
+```
+
+This is the **new AI Search Filter Bot**.
+
+The existing:
+
+```text
+/sg_search_bot
+```
+
+is the older search bot and must not be modified.
+
+### 6.3 Restart Commons
+
+Restart:
+
+* Commons application
+* Celery workers
+
+This is required so the new environment variables are loaded.
+
+---
+
+# 7. Bot Seeding Rules
+
+The seed script is safe to run multiple times.
+
+### Code-managed values
+
+These can be updated with `--force`:
+
+```text
+context
+tool_context
+provider
+```
+
+Run:
+
+```bash
 .venv/bin/python chatbot/scripts/ai_search/create_ai_search_bot.py --force
 ```
 
-Search resolves a company-specific prompt first and falls back to the global
-one, so the single global bot is enough for this release.
+### Admin-managed values
+
+Values in `other_params` are **never overwritten**.
+
+The script only adds missing keys.
+
+This means:
+
+```text
+Existing admin value → keep it
+Missing value → add current effective default
+```
+
+The existing bot name is also never changed.
+
+`AI_SEARCH_BOT_NAME` is used only when creating a new bot.
 
 ---
 
-## 4. Verification
+# 8. Verification
 
-### 4.1 AI Service reachable and the `commons` credentials work
+## 8.1 Verify AI Service
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" \
@@ -214,102 +304,165 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -H "X-Tenant-Id: commons"
 ```
 
-- [ ] Returns **200**
+Expected:
 
-| Code | Meaning |
-|------|---------|
-| `200` | Working |
-| `401` | Bearer token missing, malformed, or unknown |
-| `400` | `X-Tenant-Id` header missing |
-| `403` | Token is valid, but the `commons` service was not granted access to that tenant |
-| `000` / refused | Service not running, or wrong host/port |
-
-There is no unauthenticated health endpoint, so this doubles as a liveness and
-an auth check.
-
-### 4.2 The prompt bot exists
-
-```bash
-.venv/bin/python manage.py shell -c "
-from chatbot.services.search.prompts import get_ai_search_bot
-b = get_ai_search_bot(None)
-print(b.route, b.company.slug, len(b.context), bool(b.tool_context))"
+```text
+200
 ```
 
-- [ ] Prints `/ai_search_filters`, a company slug, a non-zero prompt length, and `True`
+Common failures:
 
-### 4.3 End-to-end search
-
-```bash
-curl -s "http://<commons-host>/ai/documents/search?q=List+all+PDFs+from+the+<org>+organization" \
-  | jq '.count, .search_metadata.filter_resolution'
-```
-
-- [ ] `filter_resolution.llm_used` is `true`
-- [ ] `organizations` contains the organization **slug**, not its display name
-- [ ] `media_types` contains `application/pdf`
-- [ ] `count` is comparable to the same search with filters selected manually
-
-`filter_resolution` is the diagnostic surface for this feature. Useful fields:
-
-| Field | Meaning |
-|---|---|
-| `llm_used` | whether the LLM call actually happened |
-| `llm_decision` | which branch was taken: `mode_off`, `mode_always`, `filters_explicit`, `confidence_met`, `low_confidence`, `no_answer` |
-| `llm_mode` / `llm_confidence_threshold` | the resolved configuration |
-| `fuzzy_confidence` | the deterministic matcher's score, compared against the threshold |
-| `llm_error` / `llm_error_code` | set when the call was attempted and failed |
-| `llm_rejected` | values the model returned that are not in the vocabulary |
-| `organizations_source` / `media_types_source` | `explicit`, `fuzzy`, `llm` or `none` |
-| `llm_latency_ms` | round-trip time for the call |
-
-Read `llm_used` with `llm_decision`: a decision of `mode_always` with
-`llm_used: false` and an `llm_error` means the call was made and failed, not
-that it was skipped.
-
-### 4.4 Graceful degradation (do not skip)
-
-Stop the AI Service and repeat 4.3.
-
-- [ ] Search still returns **HTTP 200** with results
-- [ ] `llm_used` is `false` and `llm_error` is populated
-
-An LLM failure must never fail a search. If this step returns a 5xx, stop the
-release and set `AI_SEARCH_LLM_MODE=off`.
+| Status | Meaning                         |
+| ------ | ------------------------------- |
+| `200`  | Working                         |
+| `401`  | Invalid/missing token           |
+| `400`  | Missing tenant header           |
+| `403`  | Service has no access to tenant |
+| `000`  | Service unavailable/wrong URL   |
 
 ---
 
-## 5. Rollback
+## 8.2 Verify AI Search Bot
 
-No schema changes, so rollback is configuration only:
+```bash
+.venv/bin/python manage.py shell -c "
+from chatbot.services.search.prompts import get_search_bot
+b = get_search_bot()
+print(b.route, b.company.slug, len(b.context), bool(b.tool_context))
+"
+```
+
+Verify:
+
+* [ ] Route is `/ai_search_filters`
+* [ ] `tool_context` is `True`
+* [ ] Prompt length is reasonable
+* [ ] Bot provider is `ai_service`
+
+---
+
+## 8.3 Test End-to-End Search
+
+Run a natural-language search such as:
+
+```text
+List all PDFs from the <organization> organization
+```
+
+Verify:
+
+* [ ] Search returns HTTP `200`
+* [ ] `filter_resolution.llm_used` is `true`
+* [ ] Organization filter contains the correct slug
+* [ ] File type contains `application/pdf`
+* [ ] Results are comparable with manually selected filters
+
+Check:
+
+```text
+filter_resolution
+```
+
+Useful fields:
+
+| Field                      | Purpose                            |
+| -------------------------- | ---------------------------------- |
+| `llm_used`                 | Whether LLM was called             |
+| `llm_decision`             | Why LLM was or wasn't used         |
+| `llm_confidence_threshold` | Active threshold                   |
+| `fuzzy_confidence`         | Deterministic matcher confidence   |
+| `llm_error`                | LLM failure                        |
+| `llm_error_code`           | Error type                         |
+| `organizations_source`     | `explicit`, `fuzzy`, `llm`, `none` |
+| `media_types_source`       | `explicit`, `fuzzy`, `llm`, `none` |
+| `llm_latency_ms`           | LLM request latency                |
+
+---
+
+# 9. Test Graceful Degradation
+
+This test is required.
+
+Stop AI Service and run the same search again.
+
+Expected:
+
+* [ ] Search still returns HTTP `200`
+* [ ] Search still returns results
+* [ ] `llm_used` is `false`
+* [ ] `llm_error` is populated
+
+**An AI Service failure must not make search fail.**
+
+If search returns `5xx`, disable the feature immediately:
 
 ```env
 AI_SEARCH_LLM_MODE=off
 ```
 
-- [ ] Kill switch tested before release
+---
 
-This restores exactly the previous search behaviour without a redeploy or code
-revert. The `/ai_search_filters` bot row can be left in place.
+# 10. Rollback
+
+No database rollback is required.
+
+Disable AI Search LLM processing:
+
+```env
+AI_SEARCH_LLM_MODE=off
+```
+
+Restart Commons.
+
+This restores the previous non-LLM search behaviour.
+
+The `/ai_search_filters` bot can remain in the database. The existing `/sg_search_bot` remains unchanged.
 
 ---
 
-## 6. Known limitations for 1.0
+# 11. Release Checklist
 
-- **Bots are not seeded automatically in production.** `deployment/ansible.yml`
-  runs migrations only, so `create_ai_search_bot` is a deliberate manual step
-  on every environment.
-- **Tool-calling support is model-dependent.** AI Service passes
-  `drop_params=True` to LiteLLM, so a model without tool support has the tool
-  schema dropped silently and answers in prose. The client recovers JSON from
-  the message body, but if extraction looks unreliable, change
-  `AI_SERVICE_MODEL` first.
-- **Organization matching is case-sensitive downstream.** Qdrant matches
-  `metadata.company` exactly while Postgres uses `iexact`, so filter values are
-  normalised to the stored slug. Verify 4.3 against a real organization slug.
-- **One tenant for all organizations.** Every LLM call bills to the single
-  `commons` tenant. Per-organization tenants are supported via the bot's
-  `other_params.ai_tenant_id`, but nothing provisions them automatically.
-- **Large organization lists inflate the prompt.** Above
-  `AI_SEARCH_LLM_ORG_FULL_MAX` (default 50) the vocabulary automatically
-  narrows to fuzzy-matcher candidates to stay under the guardrail input cap.
+### AI Service
+
+* [ ] AI Service deployed
+* [ ] Migrations completed
+* [ ] `commons` tenant created
+* [ ] `commons` service created
+* [ ] Service token saved
+* [ ] Provider key configured
+* [ ] AI Service running
+* [ ] `/v1/providers` returns `200`
+
+### Commons
+
+* [ ] `AI_SERVICE_BASE_URL` configured
+* [ ] `AI_SERVICE_TOKEN` configured
+* [ ] `AI_SERVICE_TENANT_ID=commons`
+* [ ] `AI_SERVICE_PROVIDER` matches AI Service provider key
+* [ ] `AI_SERVICE_MODEL` configured
+* [ ] Commons migrations completed
+* [ ] AI Search Filter Bot seeded
+* [ ] Application restarted
+* [ ] Celery workers restarted
+
+### Verification
+
+* [ ] Natural-language search works
+* [ ] Organization filter is correct
+* [ ] PDF/file-type filter is correct
+* [ ] LLM diagnostic fields are populated
+* [ ] AI Service failure falls back gracefully
+* [ ] `/sg_search_bot` remains unchanged
+
+---
+
+# 12. Important Release Notes
+
+1. **AI Service must be available before Commons.**
+2. **`/ai_search_filters` is the new AI Search Filter Bot.**
+3. **`/sg_search_bot` is the existing legacy search bot and must not be modified.**
+4. **Only the AI Search Filter Bot route is configurable.**
+5. **Existing admin values in `other_params` are never overwritten by the seed script.**
+6. **AI Service provider/model must be configured either at deployment level or per bot.**
+7. **AI Search failures must degrade to normal search rather than fail the search request.**
+8. **The kill switch is `AI_SEARCH_LLM_MODE=off`.**

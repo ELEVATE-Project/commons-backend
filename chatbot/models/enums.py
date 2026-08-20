@@ -45,7 +45,7 @@ class LLMProvider(models.TextChoices):
     a provider SDK directly. Which vendor and model the gateway then uses is not
     a commons setting at all: it comes from AI_SERVICE_PROVIDER and
     AI_SERVICE_MODEL, deployed alongside the gateway's other credentials (see
-    chatbot/utils/ai_service_client.py). llm_model is ignored for such bots.
+    chatbot/utils/ai_service/). llm_model is ignored for such bots.
     """
     BEDROCK = 'bedrock', _('BEDROCK')
     BEDROCK_CONVERSE = 'bedrock/converse', _('BEDROCK_CONVERSE')
