@@ -324,6 +324,9 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
             raw_query, org_vocabulary, type_vocabulary, candidates)},
     ]
 
+    print(f"[extract_search_filters] raw_query: {raw_query!r}")
+    print(f"[extract_search_filters] messages sent to LLM: {messages}")
+
     # Read once — bot_params repairs JSON per call, and three lookups would
     # repeat that per search.
     params = bot_params(bot)
@@ -357,7 +360,10 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
 
     latency_ms = int((time.monotonic() - started) * 1000)
 
+    print(f"[extract_search_filters] raw LLM response: {response}")
+
     arguments = ai_service.extract_tool_arguments(response, tool_name)
+    print(f"[extract_search_filters] extracted tool arguments: {arguments}")
     if arguments is None:
         logger.warning('ai_search: no usable tool call in the AI-Service response')
         return None
@@ -368,7 +374,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     media_types = _validated(
         arguments.get('file_types'), type_vocabulary, 'media_types', rejected)
 
-    return LLMFilterResult(
+    result = LLMFilterResult(
         organizations=organizations,
         media_types=media_types,
         semantic_query=_residual_query(
@@ -378,3 +384,5 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
         bot_route=bot.route,
         latency_ms=latency_ms,
     )
+    print(f"[extract_search_filters] final LLMFilterResult: {result}")
+    return result

@@ -1,4 +1,6 @@
 import json_repair
+import logging
+from dataclasses import dataclass, field
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,6 +21,40 @@ from django.db.models import (
     CharField, IntegerField, Case, When, F
 )
 from django.db.models.functions import Greatest, Coalesce, Lower
+
+logger = logging.getLogger('django')
+
+
+@dataclass
+class FuzzyFilterResult:
+    """
+    What the deterministic (RapidFuzz) resolver returns.
+
+    Shared contract between the deterministic resolver and the LLM step, so the
+    two can land independently. ``None`` for a filter means "no opinion" and
+    leaves the field open for the LLM; ``candidates`` holds the near-misses that
+    were not confident enough to use directly but are still worth showing the
+    model, as ``{field: [value, ...]}``.
+    """
+    organizations: list = None
+    media_types: list = None
+    confidence: float = 0.0
+    candidates: dict = field(default_factory=dict)
+
+
+@dataclass
+class ResolvedFilters:
+    """
+    What the search should actually run with, plus how each part was decided.
+
+    ``diagnostics`` is the debug trail, surfaced to callers as
+    ``search_metadata.filter_resolution``. Named for what it is rather than
+    "metadata", which already means the Qdrant payload elsewhere in search.
+    """
+    query: str
+    organizations: list = field(default_factory=list)
+    media_types: list = field(default_factory=list)
+    diagnostics: dict = field(default_factory=dict)
 
 
 class FetchThemeView(APIView):
@@ -942,6 +978,30 @@ class MediaSearchV2View(APIView):
             other_params = json_repair.repair_json(other_params, return_objects=True)
         detail_filter_score = other_params.get("detail_filter_score", None)
 
+        # Resolve the natural-language query into filters. Explicit filters from
+        # the UI are passed through untouched and always win.
+        # Placeholder until the RapidFuzz resolver lands in this file: swap for
+        # `fuzzy = self._resolve_fuzzy_filters(query)`.
+        fuzzy = None
+        resolved = self._resolve_search_filters(
+            query,
+            fuzzy=fuzzy,
+            explicit_filters={
+                'organizations': organizations,
+                'media_types': media_types,
+            },
+        )
+        # Not `resolved.query or query`: an empty residual is meaningful and
+        # becomes a filters-only listing below.
+        query = resolved.query
+        organizations = resolved.organizations
+        media_types = resolved.media_types
+
+        print(f"[MediaSearchV2View] resolved query: {query!r}")
+        print(f"[MediaSearchV2View] resolved organizations: {organizations}")
+        print(f"[MediaSearchV2View] resolved media_types: {media_types}")
+        print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
+
         # Query vector database
         vector_response = query_database_with_metadata(
             query=query if query else None,
@@ -953,7 +1013,10 @@ class MediaSearchV2View(APIView):
             resource_type=resource_types if resource_types else None,
             file_type=None
         )
-        
+
+        print(f"[MediaSearchV2View] vector_response error: {vector_response.get('error')}")
+        print(f"[MediaSearchV2View] vector_response result count: {len(vector_response.get('results', []))}")
+
         if vector_response.get('error'):
             error_status = vector_response.get('status_code', 500)
             return Response({
@@ -1022,9 +1085,155 @@ class MediaSearchV2View(APIView):
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
-                "search_config": vector_response.get('search_config', {})
+                "search_config": vector_response.get('search_config', {}),
+                # How each filter was decided. Without this it is invisible why
+                # a natural-language search returned what it did — in particular
+                # "the LLM was skipped" and "the LLM found nothing" look
+                # identical from the results alone.
+                "filter_resolution": resolved.diagnostics,
             }
         }, status=status.HTTP_200_OK)
+
+    def _resolve_search_filters(self, raw_query, fuzzy=None, explicit_filters=None):
+        """
+        Resolve the filters and query for one search.
+
+        Decides whether the LLM is needed — from the configured mode, the
+        deterministic resolver's confidence, and the confidence threshold —
+        before calling it. ``_resolve_llm_filters`` does the actual gateway
+        call and is only invoked once that decision says to run it.
+
+        ``fuzzy`` is a FuzzyFilterResult from the deterministic resolver, or None
+        while that work is still landing — the LLM path is designed to run
+        without it. Explicit UI-selected filters are never overridden.
+
+        Never raises on account of the LLM: any failure returns exactly what the
+        search would have used with the LLM turned off.
+        """
+        explicit = explicit_filters or {}
+        explicit_orgs = explicit.get('organizations') or []
+        explicit_types = explicit.get('media_types') or []
+
+        # No fuzzy result means zero confidence.
+        fuzzy = fuzzy or FuzzyFilterResult()
+
+        resolved = ResolvedFilters(
+            query=raw_query,
+            organizations=explicit_orgs or (fuzzy.organizations or []),
+            media_types=explicit_types or (fuzzy.media_types or []),
+            diagnostics={
+                'llm_used': False,
+                # Named for its source: it is the deterministic matcher's score,
+                # and it sits beside the threshold it is compared against.
+                'fuzzy_confidence': fuzzy.confidence,
+                'organizations_source': 'explicit' if explicit_orgs else (
+                    'fuzzy' if fuzzy.organizations else 'none'),
+                'media_types_source': 'explicit' if explicit_types else (
+                    'fuzzy' if fuzzy.media_types else 'none'),
+            },
+        )
+
+        # Everything below is best-effort. The broad except is deliberate: the
+        # LLM path can fail in ways that are not gateway errors at all — a
+        # missing bot row, a malformed tool_context, an unmapped provider, a
+        # cache problem, a bug in the vocabulary builder — and none of them
+        # should turn a search that works today into a 500.
+        try:
+            # Imported here, inside the guard, so a broken import in the
+            # AI-search chain degrades this one search instead of taking the
+            # whole media API down at module load.
+            from chatbot.services.search.config import get_search_llm_setting
+            from chatbot.services.search.prompts import get_search_bot
+
+            bot = get_search_bot()
+            mode = get_search_llm_setting(bot, 'llm_mode')
+            threshold = get_search_llm_setting(bot, 'llm_confidence_threshold')
+            all_explicit = bool(explicit_orgs and explicit_types)
+
+            should_call, reason = self._should_call_llm(
+                mode, fuzzy.confidence, threshold, all_explicit)
+
+            # llm_decision records which branch was taken, for both outcomes. It
+            # is deliberately not called llm_skipped: on failure the reason
+            # survives into the except below, and "skipped: mode_always"
+            # alongside an error would describe the opposite of what happened.
+            resolved.diagnostics.update({
+                'llm_mode': mode,
+                'llm_confidence_threshold': threshold,
+                'llm_decision': reason,
+            })
+
+            if should_call:
+                self._resolve_llm_filters(
+                    raw_query, fuzzy, bot, resolved, explicit_orgs, explicit_types)
+
+        except Exception as exc:
+            logger.exception(
+                'ai_search: LLM filter extraction failed, '
+                'using deterministic filters only')
+            resolved.diagnostics.update({
+                'llm_used': False,
+                'llm_error': type(exc).__name__,
+                'llm_error_code': getattr(exc, 'code', None),
+            })
+
+        return resolved
+
+    def _should_call_llm(self, mode, confidence, threshold, all_explicit):
+        """Return whether LLM should run and why."""
+        from chatbot.services.search.config import MODE_ALWAYS, MODE_OFF
+
+        if mode == MODE_OFF:
+            return False, 'mode_off'
+        if mode == MODE_ALWAYS:
+            return True, 'mode_always'
+        if all_explicit:
+            return False, 'filters_explicit'
+        if confidence >= threshold:
+            return False, 'confidence_met'
+        return True, 'low_confidence'
+
+    def _resolve_llm_filters(
+        self, raw_query, fuzzy, bot, resolved, explicit_orgs, explicit_types,
+    ):
+        """Resolve filters with the LLM and merge the result."""
+        from chatbot.services.search import llm_extractor
+
+        llm = llm_extractor.extract_search_filters(
+            raw_query=raw_query,
+            candidates=fuzzy.candidates,
+            bot=bot,
+        )
+        if llm is None:
+            resolved.diagnostics['llm_decision'] = 'no_answer'
+            cooldown = llm_extractor.cooldown_reason()
+            if cooldown:
+                resolved.diagnostics['llm_cooldown'] = cooldown
+            return
+
+        self._apply_llm_filters(resolved, llm, explicit_orgs, explicit_types)
+
+    def _apply_llm_filters(self, resolved, llm, explicit_orgs, explicit_types):
+        """Merge LLM filters without overriding explicit UI filters."""
+        resolved.diagnostics.update({
+            'llm_used': True,
+            'llm_bot_route': llm.bot_route,
+            'llm_latency_ms': llm.latency_ms,
+        })
+
+        if llm.rejected:
+            resolved.diagnostics['llm_rejected'] = llm.rejected
+
+        if not explicit_orgs and llm.organizations is not None:
+            resolved.organizations = llm.organizations
+            resolved.diagnostics['organizations_source'] = 'llm'
+
+        if not explicit_types and llm.media_types is not None:
+            resolved.media_types = llm.media_types
+            resolved.diagnostics['media_types_source'] = 'llm'
+
+        resolved.query = llm.semantic_query
+        resolved.diagnostics['semantic_query'] = llm.semantic_query
 
     def _get_database_list_response(
         self,

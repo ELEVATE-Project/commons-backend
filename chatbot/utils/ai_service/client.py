@@ -25,6 +25,33 @@ from .exceptions import (
 logger = logging.getLogger('django')
 
 
+def map_provider(provider):
+    """
+    Translate a configured provider name into the one the gateway expects.
+
+    Raises AIServiceConfigError rather than returning None: an unmapped provider
+    is a deployment mistake, and failing here keeps a misconfigured vendor from
+    reaching the gateway as a confusing upstream error.
+    """
+    name = (provider or '').strip().lower()
+
+    if name == 'ai_service':
+        raise AIServiceConfigError(
+            "'ai_service' is not a gateway provider. "
+            "AI_SERVICE_PROVIDER must name the vendor.",
+            code='unmapped_provider',
+        )
+
+    mapped = PROVIDER_MAP.get(name)
+    if not mapped:
+        raise AIServiceConfigError(
+            f"No AI-Service provider mapping for {provider!r}. "
+            f"Known values: {sorted(PROVIDER_MAP)}",
+            code='unmapped_provider',
+        )
+    return mapped
+
+
 def chat(
     *,
     messages,
@@ -47,21 +74,7 @@ def chat(
         tenant_id, provider, model
     )
 
-    provider = (provider or '').strip().lower()
-    if provider == 'ai_service':
-        raise AIServiceConfigError(
-            "'ai_service' is not a gateway provider. "
-            "AI_SERVICE_PROVIDER must name the vendor.",
-            code='unmapped_provider',
-        )
-
-    provider = PROVIDER_MAP.get(provider)
-    if not provider:
-        raise AIServiceConfigError(
-            f"No AI-Service provider mapping for {provider!r}. "
-            f"Known values: {sorted(PROVIDER_MAP)}",
-            code='unmapped_provider',
-        )
+    provider = map_provider(provider)
 
     request_id = request_id or str(uuid.uuid4())
 
