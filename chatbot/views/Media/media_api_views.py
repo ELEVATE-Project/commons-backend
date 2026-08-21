@@ -1002,6 +1002,26 @@ class MediaSearchV2View(APIView):
         print(f"[MediaSearchV2View] resolved media_types: {media_types}")
         print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
 
+        # Nothing left to embed once the LLM reduced the query to filters only,
+        # so serve it from the same PostgreSQL path a filters-only request uses.
+        filters_present = bool(tags or organizations or resource_types or media_types)
+        if not query and filters_present:
+            # Ordering is 'score' here, which is meaningless without a query.
+            db_ordering = ordering_param if ordering_param else '-created_at'
+            db_field, db_reverse = self._parse_ordering(db_ordering)
+            return self._get_database_list_response(
+                request=request,
+                limit=limit,
+                offset=offset,
+                ordering=db_ordering,
+                ordering_field=db_field,
+                ordering_reverse=db_reverse,
+                tags=tags,
+                organizations=organizations,
+                resource_types=resource_types,
+                media_types=media_types,
+            )
+
         # Query vector database
         vector_response = query_database_with_metadata(
             query=query if query else None,
