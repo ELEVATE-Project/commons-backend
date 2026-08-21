@@ -70,7 +70,9 @@ SETTINGS = {
     'llm_confidence_threshold': ('AI_SEARCH_LLM_CONFIDENCE_THRESHOLD', 0.5, _ratio),
     'llm_max_attempts': ('AI_SERVICE_MAX_ATTEMPTS', 2, _positive_int),
     'llm_backoff_base_s': ('AI_SERVICE_BACKOFF_BASE_S', 0.4, _positive_float),
-    'llm_max_elapsed_s': ('AI_SERVICE_MAX_ELAPSED_S', 8.0, _positive_float),
+    # Must exceed llm_max_attempts x CompanyBot.read_timeout plus the backoff,
+    # or the deadline expires before attempt one returns and no retry ever runs.
+    'llm_max_elapsed_s': ('AI_SERVICE_MAX_ELAPSED_S', 35.0, _positive_float),
     'llm_cooldown_after_failures': ('AI_SERVICE_COOLDOWN_AFTER_FAILURES', 3, _positive_int),
     'llm_cooldown_seconds': ('AI_SERVICE_COOLDOWN_SECONDS', 30.0, _positive_float),
     # Longer than the transient cooldown on purpose: a missing gateway config, a

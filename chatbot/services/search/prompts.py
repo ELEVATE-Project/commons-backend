@@ -20,6 +20,7 @@ Nothing here reads or writes it, and the seeding script refuses to target it.
 import json
 import logging
 import os
+from string import Template
 
 from chatbot.models.company_models import CompanyBot
 from chatbot.models.enums import FileTypeChoices
@@ -77,8 +78,8 @@ filters for a document library.
 
 You are given the user's query, the list of organization values that exist in \
 the system, and — when available — candidate matches suggested by a fuzzy \
-matcher. Your job is to decide which filters the user is asking for, and to \
-restate whatever is left of their request as a clean search query.
+matcher. Your job is to decide which filters the user is asking for, and \
+whether anything is left over that is a genuine search topic.
 
 Rules:
 
@@ -93,20 +94,66 @@ did not ask for that filter at all.
 Return an empty list only when the user explicitly asked for no such filter. \
 Omitting a field and returning an empty list mean different things, so be \
 deliberate about which you use.
-4. semantic_query is what remains of the request once the filter words are \
-removed — the topic the user actually wants documents about. Keep it short and \
-faithful to their words. Do not add words they did not use. If removing the \
-filter words leaves nothing meaningful, return their original query unchanged.
-5. Report the result by calling the apply_search_filters function. If function \
+4. Only filter by organization when the user names one. "from all \
+organizations", "from all companies", "across organizations" and similar mean \
+the user wants no organization filter — return an empty list for organizations. \
+Never answer these by listing every organization you were shown.
+5. semantic_query is a subject the user wants documents *about*, and nothing \
+else. Return "" whenever the request is only asking to list or filter \
+documents. These are never a semantic_query, alone or in combination:
+  - requesting words: "get", "get me", "give me", "show", "list", "find", \
+"fetch", "search for", "I want", "I need"
+  - quantity words: "all", "every", "any", "a list of", "the list of"
+  - document words: "file", "files", "document", "documents", "doc", "docs"
+  - file type names: "PDF", "PDFs", "CSV", "spreadsheet", and the other listed \
+types
+  - organization words: "organization", "organizations", "company", \
+"companies", and any organization name
+6. When there is a genuine topic, semantic_query is that topic and nothing \
+more. Keep it short and faithful to the user's words — usually what follows \
+"about", "on", "regarding", or "related to". Do not add words they did not use, \
+and do not carry the words from rule 5 into it.
+7. Report the result by calling the apply_search_filters function. If function \
 calling is not available to you, return the same fields as a single JSON object \
 and nothing else: {"organizations": [...], "file_types": [...], \
 "semantic_query": "..."}. Never answer in prose and never add explanation \
 around the result.
 
-Example — for "list all PDFs from the Shikshalokam organization", where the \
-organization list contains shikshalokam, you would return that organization, \
-the PDF file type, and a semantic_query of "" (nothing is left to search for \
-beyond the filters).\
+Examples, assuming the organization list contains shikshalokam:
+
+  "get list of all PDF files"
+    -> file_types ["application/pdf"], organizations omitted, semantic_query ""
+  "get the PDF from all organizations"
+    -> file_types ["application/pdf"], organizations [], semantic_query ""
+  "get all PDF files across organizations"
+    -> file_types ["application/pdf"], organizations [], semantic_query ""
+  "list all PDFs from the Shikshalokam organization"
+    -> file_types ["application/pdf"], organizations ["shikshalokam"], \
+semantic_query ""
+  "find PDF files about teacher training"
+    -> file_types ["application/pdf"], organizations omitted, semantic_query \
+"teacher training"
+  "find PDFs from Shikshalokam about teacher training"
+    -> file_types ["application/pdf"], organizations ["shikshalokam"], \
+semantic_query "teacher training"\
+"""
+
+
+# The per-request message layout. Seeded into CompanyBot.pre_context and read
+# back from there, so the wording is editable in admin without a deploy; this
+# constant is only the fallback for an empty column.
+#
+# $query, $organizations, $file_types and $candidates are filled in per request.
+# $candidates renders to nothing when the fuzzy matcher suggested nothing.
+USER_MESSAGE_TEMPLATE = """\
+User query: $query
+
+Organization values you may return (value — also known as):
+$organizations
+
+File type values you may return (value — also known as):
+$file_types
+$candidates\
 """
 
 
@@ -143,7 +190,9 @@ def build_tool_schema():
                             'type': 'array',
                             'description': (
                                 'Organization values from the supplied list. '
-                                'Omit if the user did not ask to filter by organization.'
+                                'Omit if the user did not ask to filter by organization. '
+                                'Return an empty list if they asked for all '
+                                'organizations; never list every value instead.'
                             ),
                             'items': {'type': 'string'},
                         },
@@ -161,8 +210,9 @@ def build_tool_schema():
                         'semantic_query': {
                             'type': 'string',
                             'description': (
-                                'What the user wants documents about, once filter '
-                                'words are removed. May be empty.'
+                                'The subject the user wants documents about, once '
+                                'filter words are removed. Empty when the request '
+                                'is only asking to list or filter documents.'
                             ),
                         },
                     },
@@ -179,7 +229,31 @@ def tool_context_json():
     return json.dumps(build_tool_schema(), indent=2)
 
 
-def build_user_message(raw_query, organizations, file_types, candidates=None):
+def _vocabulary_block(vocabulary, empty=''):
+    """Render ``{value: [alias, ...]}`` as indented "value — aliases" lines."""
+    lines = []
+    for value, aliases in (vocabulary or {}).items():
+        known_as = ', '.join(a for a in aliases if a) or value
+        lines.append(f'  {value} — {known_as}')
+    return '\n'.join(lines) or empty
+
+
+def _candidates_block(candidates):
+    """Render the fuzzy matcher's suggestions, or '' when there are none."""
+    lines = [
+        f"  {field}: {', '.join(str(v) for v in values)}"
+        for field, values in (candidates or {}).items() if values
+    ]
+    if not lines:
+        return ''
+    return (
+        '\nSuggestions from the fuzzy matcher (confirm or correct these):\n'
+        + '\n'.join(lines)
+    )
+
+
+def build_user_message(raw_query, organizations, file_types, candidates=None,
+                       template=None):
     """
     Assemble the per-request message: the query, the vocabularies the model may
     choose from, and any fuzzy-matcher suggestions.
@@ -187,28 +261,20 @@ def build_user_message(raw_query, organizations, file_types, candidates=None):
     ``organizations`` maps the value to filter on (the slug) to its aliases;
     the value is what the model must return, the aliases only help it recognise
     what the user meant.
+
+    ``template`` is the bot's own layout (CompanyBot.pre_context), so the wording
+    can be reworded in admin without a deploy — the same way context holds the
+    system prompt. USER_MESSAGE_TEMPLATE is the fallback when the column is
+    empty. Only the prose is editable: the vocabulary blocks are always rendered
+    here, from the data that actually exists.
     """
-    lines = [f'User query: {raw_query}', '']
-
-    lines.append('Organization values you may return (value — also known as):')
-    if organizations:
-        for value, aliases in organizations.items():
-            known_as = ', '.join(a for a in aliases if a) or value
-            lines.append(f'  {value} — {known_as}')
-    else:
-        lines.append('  (none available)')
-    lines.append('')
-
-    lines.append('File type values you may return (value — also known as):')
-    for value, aliases in file_types.items():
-        lines.append(f"  {value} — {', '.join(a for a in aliases if a)}")
-    lines.append('')
-
-    if candidates:
-        lines.append('Suggestions from the fuzzy matcher (confirm or correct these):')
-        for field, values in candidates.items():
-            if values:
-                lines.append(f"  {field}: {', '.join(str(v) for v in values)}")
-        lines.append('')
-
-    return '\n'.join(lines).strip()
+    values = {
+        'query': raw_query,
+        'organizations': _vocabulary_block(organizations, empty='  (none available)'),
+        'file_types': _vocabulary_block(file_types),
+        'candidates': _candidates_block(candidates),
+    }
+    layout = (template or '').strip() or USER_MESSAGE_TEMPLATE
+    # safe_substitute, not substitute: an admin-edited template with a typo'd or
+    # unknown $placeholder must degrade to literal text, never raise mid-search.
+    return Template(layout).safe_substitute(values).strip()

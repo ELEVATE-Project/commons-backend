@@ -269,6 +269,21 @@ def _validated(values, vocabulary, name, rejected):
     return accepted
 
 
+def _drop_blanket_organizations(organizations, vocabulary):
+    """
+    "PDFs from all organizations" is not an organization filter.
+
+    A model answering it by listing every value it was shown would filter on a
+    subset, since the vocabulary sent is capped.
+    """
+    if not organizations or len(vocabulary) < 2:
+        return organizations
+    if set(organizations) >= set(vocabulary):
+        logger.info('ai_search: model returned every organization; treating as no filter')
+        return []
+    return organizations
+
+
 def _residual_query(returned, raw_query, has_filters):
     """
     Sanity-check the model's semantic_query against the original.
@@ -320,8 +335,11 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
 
     messages = [
         {'role': 'system', 'content': bot.context or SYSTEM_PROMPT},
+        # Both halves of the prompt come from the bot row: context holds the
+        # rules, pre_context the per-request layout.
         {'role': 'user', 'content': build_user_message(
-            raw_query, org_vocabulary, type_vocabulary, candidates)},
+            raw_query, org_vocabulary, type_vocabulary, candidates,
+            template=bot.pre_context)},
     ]
 
     print(f"[extract_search_filters] raw_query: {raw_query!r}")
@@ -371,6 +389,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     rejected = {}
     organizations = _validated(
         arguments.get('organizations'), org_vocabulary, 'organizations', rejected)
+    organizations = _drop_blanket_organizations(organizations, org_vocabulary)
     media_types = _validated(
         arguments.get('file_types'), type_vocabulary, 'media_types', rejected)
 

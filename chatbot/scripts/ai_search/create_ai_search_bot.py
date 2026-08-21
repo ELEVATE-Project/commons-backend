@@ -24,6 +24,7 @@ from chatbot.services.search.prompts import (                          # noqa: E
     LEGACY_SEARCH_BOT_ROUTE,
     SEARCH_BOT_ROUTE,
     SYSTEM_PROMPT,
+    USER_MESSAGE_TEMPLATE,
     tool_context_json,
 )
 
@@ -115,6 +116,7 @@ def create_ai_search_bot(owner_slug=DEFAULT_OWNER_SLUG, force=False, log=None):
             company=_owner(owner_slug, log),
             route=SEARCH_BOT_ROUTE,
             context=SYSTEM_PROMPT,
+            pre_context=USER_MESSAGE_TEMPLATE,
             tool_context=tool_context_json(),
             other_params=_seed_params(),
             provider=LLMProvider.AI_SERVICE,
@@ -132,6 +134,12 @@ def create_ai_search_bot(owner_slug=DEFAULT_OWNER_SLUG, force=False, log=None):
         bot.tool_context = tool_context_json()
         bot.provider = LLMProvider.AI_SERVICE
         fields += ['context', 'tool_context', 'provider']
+
+    # Seeded on its own condition so a row created before the template existed
+    # gets one without --force rewriting its prompt as a side effect.
+    if force or not bot.pre_context:
+        bot.pre_context = USER_MESSAGE_TEMPLATE
+        fields.append('pre_context')
 
     # Admin-configured values are preserved; only missing values are added.
     existing = bot_params(bot)
