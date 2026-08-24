@@ -53,12 +53,17 @@ class ResolvedFilters:
 
     The ``exclude_*`` lists are negated conditions ("except Shikshalokam").
     They are a separate axis from the positive lists, not the absence of one.
+
+    ``any_of`` holds FilterBlocks OR'ed with each other and AND'ed with
+    everything above — for an OR that joins two different fields. Empty is the
+    normal case and means the flat fields are the whole filter.
     """
     query: str
     organizations: list = field(default_factory=list)
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
+    any_of: list = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
 
 
@@ -1021,10 +1026,14 @@ class MediaSearchV2View(APIView):
         # so serve it from the same PostgreSQL path a filters-only request uses.
         # Exclusions count too: "all files except PDF" leaves no residual query
         # and is a filter-only listing, not an unfiltered vector search.
+        #
+        # Alternatives are the exception: _apply_database_filters has no notion
+        # of them and would quietly drop them, so those go down the vector path
+        # instead, which already handles a request with no query.
         filters_present = bool(
             tags or organizations or resource_types or media_types
             or exclude_organizations or exclude_media_types)
-        if not query and filters_present:
+        if not query and filters_present and not resolved.any_of:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
             db_field, db_reverse = self._parse_ordering(db_ordering)
@@ -1053,6 +1062,12 @@ class MediaSearchV2View(APIView):
         type_vocabulary = file_type_vocabulary()
         qdrant_file_types = expand_aliases(media_types, type_vocabulary)
         qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
+        # Each alternative needs the same widening; named any_of_blocks because
+        # any_of is already the Q-builder at the top of this module.
+        any_of_blocks = [
+            block.expanded(type_vocabulary).as_payload()
+            for block in resolved.any_of
+        ]
 
         # Query vector database
         vector_response = query_database_with_metadata(
@@ -1065,7 +1080,8 @@ class MediaSearchV2View(APIView):
             resource_type=resource_types if resource_types else None,
             file_type=qdrant_file_types if qdrant_file_types else None,
             exclude_organizations=exclude_organizations if exclude_organizations else None,
-            exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None
+            exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None,
+            any_of=any_of_blocks if any_of_blocks else None
         )
 
         print(f"[MediaSearchV2View] vector_response error: {vector_response.get('error')}")
@@ -1296,6 +1312,14 @@ class MediaSearchV2View(APIView):
             resolved.exclude_organizations = llm.exclude_organizations
         if llm.exclude_media_types is not None:
             resolved.exclude_media_types = llm.exclude_media_types
+
+        # Alternatives need no explicit-UI guard either: they are AND'ed with
+        # the fields above, so an explicit UI selection still applies in full
+        # and can only be narrowed, never overridden.
+        if llm.any_of:
+            resolved.any_of = llm.any_of
+            resolved.diagnostics['any_of'] = [
+                block.as_payload() for block in llm.any_of]
 
         resolved.diagnostics['exclude_organizations'] = resolved.exclude_organizations
         resolved.diagnostics['exclude_media_types'] = resolved.exclude_media_types

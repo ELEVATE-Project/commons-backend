@@ -185,11 +185,16 @@ class LLMFilterResult:
     (falls back to the fuzzy match) vs. an empty list when it explicitly
     answered none — the two are kept distinct through the merge. The
     ``exclude_*`` fields carry the same distinction for negated conditions.
+
+    ``any_of`` holds FilterBlocks OR'ed with each other and AND'ed with the
+    fields above. Empty is the normal case and means "flat behaviour, exactly
+    as before" — only an OR joining two different fields fills it.
     """
     organizations: list = None
     media_types: list = None
     exclude_organizations: list = None
     exclude_media_types: list = None
+    any_of: list = field(default_factory=list)
     semantic_query: str = ''
     rejected: dict = field(default_factory=dict)
     bot_route: str = ''
@@ -296,6 +301,75 @@ def _resolve_field(arguments, include_key, exclude_key, vocabulary, name, reject
     if include and exclude:
         include = [value for value in include if value not in exclude]
     return include, exclude
+
+
+def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected):
+    """
+    Validate the model's alternatives, all or nothing.
+
+    Each entry is validated by the same ``_resolve_field`` the top-level fields
+    use, so a value that would be rejected there is rejected here too — there is
+    no second validation path to keep in step.
+
+    All or nothing, deliberately: dropping one branch of an OR silently changes
+    what the whole filter means, and would leave a narrower search looking like
+    it succeeded. The flat fields resolved alongside remain a correct, broader
+    answer, so discarding the alternatives degrades rather than misleads. It
+    also guarantees we never send the vector service fewer than the two
+    alternatives it requires.
+
+    Returns a list of FilterBlocks, or [] for "no alternatives".
+    """
+    from chatbot.services.search.filter_blocks import FilterBlock
+
+    entries = arguments.get('any_of')
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        logger.info('ai_search: ignoring non-list any_of from the model: %r', entries)
+        rejected['any_of'] = entries
+        return []
+
+    blocks = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            logger.info('ai_search: any_of entry is not an object: %r', entry)
+            rejected['any_of'] = entries
+            return []
+
+        # Per-entry diagnostics, kept out of `rejected` unless the whole set is
+        # discarded — a value dropped here is reported as the any_of failure.
+        entry_rejected = {}
+        organizations, exclude_organizations = _resolve_field(
+            entry, 'organizations', 'exclude_organizations',
+            org_vocabulary, 'organizations', entry_rejected)
+        media_types, exclude_media_types = _resolve_field(
+            entry, 'file_types', 'exclude_file_types',
+            type_vocabulary, 'media_types', entry_rejected)
+
+        block = FilterBlock(
+            organizations=organizations or [],
+            media_types=media_types or [],
+            exclude_organizations=exclude_organizations or [],
+            exclude_media_types=exclude_media_types or [],
+        )
+        if entry_rejected or block.is_empty():
+            logger.info(
+                'ai_search: dropping any_of — entry %r did not survive validation (%r)',
+                entry, entry_rejected)
+            rejected['any_of'] = entries
+            return []
+        blocks.append(block)
+
+    if len(blocks) < 2:
+        # One alternative is not a choice: it is an AND, which the flat fields
+        # already express. Nothing to gain, and the vector service rejects it.
+        if blocks:
+            logger.info('ai_search: ignoring a lone any_of alternative')
+            rejected['any_of'] = entries
+        return []
+
+    return blocks
 
 
 def _drop_blanket_organizations(organizations, vocabulary):
@@ -432,18 +506,22 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     media_types, exclude_media_types = _resolve_field(
         arguments, 'file_types', 'exclude_file_types',
         type_vocabulary, 'media_types', rejected)
+    any_of = _resolve_any_of(
+        arguments, org_vocabulary, type_vocabulary, rejected)
 
     result = LLMFilterResult(
         organizations=organizations,
         media_types=media_types,
         exclude_organizations=exclude_organizations,
         exclude_media_types=exclude_media_types,
+        any_of=any_of,
         semantic_query=_residual_query(
             arguments.get('semantic_query'), raw_query,
             # Exclusions count as filters found: an exclusion-only request has
             # no residual either, and must not fall back to the raw query.
+            # Alternatives count for the same reason.
             bool(organizations or media_types
-                 or exclude_organizations or exclude_media_types)),
+                 or exclude_organizations or exclude_media_types or any_of)),
         rejected=rejected,
         bot_route=bot.route,
         latency_ms=latency_ms,

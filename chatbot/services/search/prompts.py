@@ -98,6 +98,11 @@ deliberate about which you use.
 organizations", "from all companies", "across organizations" and similar mean \
 the user wants no organization filter — return an empty list for organizations. \
 Never answer these by listing every organization you were shown.
+  - Not recognizing an organization in the request at all is rule 3's omit \
+case, not this one — return an empty list only for one of the phrasings \
+above, never merely because you found no match. An organization name can \
+appear with no "from"/"by" before it, directly modifying what follows, e.g. \
+"csf reports" means organization ["csf"], not organizations omitted.
 5. A value the user asks to leave out is an exclusion. Put it in \
 exclude_organizations or exclude_file_types, never in organizations or \
 file_types. Exclusion values come from the same lists and follow rules 1 and 2 \
@@ -129,8 +134,23 @@ and do not carry the words from rule 6 into it.
 calling is not available to you, return the same fields as a single JSON object \
 and nothing else: {"organizations": [...], "file_types": [...], \
 "exclude_organizations": [...], "exclude_file_types": [...], \
-"semantic_query": "..."}. Never answer in prose and never add explanation \
-around the result.
+"any_of": [...], "semantic_query": "..."}. Never answer in prose and never add \
+explanation around the result.
+9. any_of is for one thing only: an "or" that joins conditions on two \
+different fields, like "PDF files from Shikshalokam, or DOC files from CSF". \
+Each entry is a complete filter in its own right — the fields inside one entry \
+are combined with AND, the entries are combined with OR, and nothing is \
+inherited from the top-level fields or from another entry. Whatever you leave \
+in the top-level fields still applies to every entry. Leave any_of out \
+entirely unless the request needs it. In particular:
+  - An "or" between values of the same field is one list, not two entries. \
+"PDF or DOC files from Shikshalokam or CSF" is file_types with two values and \
+organizations with two values, and no any_of.
+  - Anything that is an exclusion under rule 5 stays an exclusion, however \
+compound the sentence sounds. "all documents except PDF files from companies \
+other than Shikshalokam" means every company except Shikshalokam, and nothing \
+that is a PDF: exclude_organizations ["shikshalokam"] and exclude_file_types \
+["application/pdf"], with no any_of.
 
 Examples, assuming the organization list contains shikshalokam and csf:
 
@@ -142,6 +162,10 @@ Examples, assuming the organization list contains shikshalokam and csf:
     -> file_types ["application/pdf"], organizations [], semantic_query ""
   "list all PDFs from the Shikshalokam organization"
     -> file_types ["application/pdf"], organizations ["shikshalokam"], \
+semantic_query ""
+  "csf reports that are not xlsx"
+    -> organizations ["csf"], exclude_file_types \
+["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], \
 semantic_query ""
   "find PDF files about teacher training"
     -> file_types ["application/pdf"], organizations omitted, semantic_query \
@@ -157,7 +181,17 @@ exclude_organizations ["shikshalokam"], semantic_query ""
 semantic_query ""
   "find PDF files about teacher training except files from CSF"
     -> file_types ["application/pdf"], exclude_organizations ["csf"], \
-semantic_query "teacher training"\
+semantic_query "teacher training"
+  "all documents except PDF files from companies other than Shikshalokam"
+    -> exclude_organizations ["shikshalokam"], exclude_file_types \
+["application/pdf"], no any_of, semantic_query ""
+  "get PDF files from Shikshalokam, or DOC files from CSF"
+    -> any_of [{"file_types": ["application/pdf"], "organizations": \
+["shikshalokam"]}, {"file_types": ["application/msword"], "organizations": \
+["csf"]}], semantic_query ""
+  "get PDF or DOC files from Shikshalokam or CSF"
+    -> file_types ["application/pdf", "application/msword"], organizations \
+["shikshalokam", "csf"], no any_of, semantic_query ""\
 """
 
 
@@ -214,7 +248,11 @@ def build_tool_schema():
                                 'Organization values from the supplied list. '
                                 'Omit if the user did not ask to filter by organization. '
                                 'Return an empty list if they asked for all '
-                                'organizations; never list every value instead.'
+                                'organizations; never list every value instead. '
+                                'Not recognizing an organization in the request is the '
+                                'omit case, not the empty-list case — an organization '
+                                'name can appear with no "from"/"by" before it, directly '
+                                'modifying what follows.'
                             ),
                             'items': {'type': 'string'},
                         },
@@ -248,6 +286,49 @@ def build_tool_schema():
                             'items': {
                                 'type': 'string',
                                 'enum': [choice.value for choice in FileTypeChoices],
+                            },
+                        },
+                        'any_of': {
+                            'type': 'array',
+                            'description': (
+                                'Alternatives, at least one of which must match. Use '
+                                'ONLY for an "or" joining conditions on two different '
+                                'fields ("PDFs from shikshalokam, or DOC files from '
+                                'csf"). Each entry is complete on its own: its fields '
+                                'are ANDed, entries are ORed, and nothing is inherited '
+                                'from the fields above or from another entry — which '
+                                'still apply to every entry. Omit it for an "or" '
+                                'between values of one field (use a longer list) and '
+                                'for anything excluded (use exclude_organizations / '
+                                'exclude_file_types), however compound the request '
+                                'sounds.'
+                            ),
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'organizations': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'},
+                                    },
+                                    'file_types': {
+                                        'type': 'array',
+                                        'items': {
+                                            'type': 'string',
+                                            'enum': [choice.value for choice in FileTypeChoices],
+                                        },
+                                    },
+                                    'exclude_organizations': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'},
+                                    },
+                                    'exclude_file_types': {
+                                        'type': 'array',
+                                        'items': {
+                                            'type': 'string',
+                                            'enum': [choice.value for choice in FileTypeChoices],
+                                        },
+                                    },
+                                },
                             },
                         },
                         'semantic_query': {
