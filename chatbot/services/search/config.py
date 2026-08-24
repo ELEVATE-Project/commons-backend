@@ -45,6 +45,23 @@ def _vocab_mode(value):
     return value if value in VALID_VOCAB_MODES else None
 
 
+def _boolean(value):
+    """
+    Accept the usual truthy/falsy spellings from .env and JSONField alike.
+
+    An unrecognised value returns None so the resolver falls back and logs,
+    the same way _mode and _vocab_mode behave.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'off'):
+        return False
+    return None
+
+
 def _ratio(value):
     """A float clamped to [0, 1]. Out-of-range is clamped, not rejected."""
     return min(1.0, max(0.0, float(value)))
@@ -82,6 +99,10 @@ SETTINGS = {
     'llm_org_vocab_mode': ('AI_SEARCH_LLM_ORG_VOCAB_MODE', VOCAB_AUTO, _vocab_mode),
     'llm_org_candidate_limit': ('AI_SEARCH_LLM_ORG_CANDIDATE_LIMIT', 10, _positive_int),
     'llm_org_full_max': ('AI_SEARCH_LLM_ORG_FULL_MAX', 50, _positive_int),
+    # Off by default: narrowing makes the fuzzy matcher's recall the ceiling for
+    # organization filtering, so it is opted into once that matcher is trusted.
+    'llm_org_use_fuzzy_candidates': (
+        'AI_SEARCH_LLM_ORG_USE_FUZZY_CANDIDATES', False, _boolean),
 }
 
 

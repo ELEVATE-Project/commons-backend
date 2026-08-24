@@ -21,6 +21,7 @@ from chatbot.services.search.prompts import (
     build_user_message,
     get_search_bot,
 )
+from chatbot.services.search import vocabularies
 from chatbot.services.search.vocabularies import (
     canonicalise_all,
     file_type_vocabulary,
@@ -40,6 +41,11 @@ logger = logging.getLogger('django')
 
 FAILURE_STREAK_KEY = 'ai_search:llm_failure_streak'
 COOLDOWN_KEY = 'ai_search:llm_cooldown'
+
+# Filter extraction returns a few short fields, not prose — reasoning tokens
+# only add latency here, never quality. AI-Service ignores this for any
+# provider other than openrouter, so it is safe to send unconditionally.
+NO_REASONING = {'reasoning': {'max_tokens': 0}}
 
 # Configuration failures, not load — retrying won't fix them, so cool down on
 # the first occurrence instead of waiting for a streak.
@@ -177,10 +183,13 @@ class LLMFilterResult:
 
     ``organizations``/``media_types`` are None when the model gave no opinion
     (falls back to the fuzzy match) vs. an empty list when it explicitly
-    answered none — the two are kept distinct through the merge.
+    answered none — the two are kept distinct through the merge. The
+    ``exclude_*`` fields carry the same distinction for negated conditions.
     """
     organizations: list = None
     media_types: list = None
+    exclude_organizations: list = None
+    exclude_media_types: list = None
     semantic_query: str = ''
     rejected: dict = field(default_factory=dict)
     bot_route: str = ''
@@ -269,12 +278,35 @@ def _validated(values, vocabulary, name, rejected):
     return accepted
 
 
+def _resolve_field(arguments, include_key, exclude_key, vocabulary, name, rejected):
+    """
+    Validate one field's positive and negated values against its vocabulary.
+
+    Returns ``(include, exclude)``, each None when the model gave no opinion.
+    Exclusions are subtracted from the positives so a self-contradictory answer
+    ("PDFs, except PDFs") cannot reach a query as an unsatisfiable filter.
+
+    Generic over the field: the caller supplies the two argument names, the
+    vocabulary to validate against, and the diagnostics label.
+    """
+    include = _validated(arguments.get(include_key), vocabulary, name, rejected)
+    exclude = _validated(
+        arguments.get(exclude_key), vocabulary, f'exclude_{name}', rejected)
+
+    if include and exclude:
+        include = [value for value in include if value not in exclude]
+    return include, exclude
+
+
 def _drop_blanket_organizations(organizations, vocabulary):
     """
     "PDFs from all organizations" is not an organization filter.
 
-    A model answering it by listing every value it was shown would filter on a
-    subset, since the vocabulary sent is capped.
+    ``vocabulary`` must be every organization that exists, not the subset the
+    model was shown: when the prompt is narrowed to a few fuzzy candidates,
+    returning all of them is a legitimate filter rather than a blanket. The
+    "all organizations" phrasing is handled by rule 4 of the prompt, which asks
+    for an empty list.
     """
     if not organizations or len(vocabulary) < 2:
         return organizations
@@ -319,7 +351,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
             cooldown_reason())
         return None
 
-    # Missing tool schema isn't fatal — the prompt (rule 5) also specifies a
+    # Missing tool schema isn't fatal — the prompt (rule 8) also specifies a
     # plain JSON shape, so the bot still works, just without schema-constrained
     # decoding.
     tools, tool_choice, tool_name = _tool_context(bot)
@@ -367,6 +399,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
             tenant_id=params.get('ai_tenant_id'),
             provider=params.get('ai_provider'),
             model=params.get('ai_model'),
+            provider_options=NO_REASONING,
         )
     except CONFIG_ERRORS as exc:
         record_config_failure(bot, exc)
@@ -387,18 +420,30 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
         return None
 
     rejected = {}
-    organizations = _validated(
-        arguments.get('organizations'), org_vocabulary, 'organizations', rejected)
-    organizations = _drop_blanket_organizations(organizations, org_vocabulary)
-    media_types = _validated(
-        arguments.get('file_types'), type_vocabulary, 'media_types', rejected)
+    organizations, exclude_organizations = _resolve_field(
+        arguments, 'organizations', 'exclude_organizations',
+        org_vocabulary, 'organizations', rejected)
+    # Only the positives can be a blanket: "exclude every org" is a coherent
+    # answer, not the "all organizations" phrasing that means no filter.
+    # Tested against every org that exists, not the (possibly narrowed) prompt
+    # vocabulary. Reached through the module so one patch point covers both uses.
+    organizations = _drop_blanket_organizations(
+        organizations, vocabularies.organization_vocabulary())
+    media_types, exclude_media_types = _resolve_field(
+        arguments, 'file_types', 'exclude_file_types',
+        type_vocabulary, 'media_types', rejected)
 
     result = LLMFilterResult(
         organizations=organizations,
         media_types=media_types,
+        exclude_organizations=exclude_organizations,
+        exclude_media_types=exclude_media_types,
         semantic_query=_residual_query(
             arguments.get('semantic_query'), raw_query,
-            bool(organizations or media_types)),
+            # Exclusions count as filters found: an exclusion-only request has
+            # no residual either, and must not fall back to the raw query.
+            bool(organizations or media_types
+                 or exclude_organizations or exclude_media_types)),
         rejected=rejected,
         bot_route=bot.route,
         latency_ms=latency_ms,

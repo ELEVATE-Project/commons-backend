@@ -68,6 +68,7 @@ def chat(
     provider=None,
     model=None,
     request_id=None,
+    provider_options=None,
 ):
     """POST /v1/chat and return the parsed response."""
     base_url, token, tenant, provider, model = resolve_config(
@@ -96,6 +97,8 @@ def chat(
         payload['params']['temperature'] = temperature
     if max_tokens is not None:
         payload['params']['max_tokens'] = max_tokens
+    if provider_options:
+        payload['provider_options'] = provider_options
 
     headers = {
         'Content-Type': 'application/json',

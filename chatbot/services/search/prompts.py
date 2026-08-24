@@ -30,7 +30,7 @@ logger = logging.getLogger('django')
 # Seeds the schema below, and is the fallback the extractor matches on when a
 # bot has no usable tool_context. A bot that renames the function in its own
 # tool_context is honoured — llm_extractor reads the name back out of the row —
-# but rule 5 of SYSTEM_PROMPT names the function literally, so a rename means
+# but rule 8 of SYSTEM_PROMPT names the function literally, so a rename means
 # editing that bot's context to match.
 TOOL_NAME = 'apply_search_filters'
 
@@ -98,7 +98,17 @@ deliberate about which you use.
 organizations", "from all companies", "across organizations" and similar mean \
 the user wants no organization filter — return an empty list for organizations. \
 Never answer these by listing every organization you were shown.
-5. semantic_query is a subject the user wants documents *about*, and nothing \
+5. A value the user asks to leave out is an exclusion. Put it in \
+exclude_organizations or exclude_file_types, never in organizations or \
+file_types. Exclusion values come from the same lists and follow rules 1 and 2 \
+just like positive ones. Words that signal an exclusion: "except", "excluding", \
+"other than", "apart from", "besides", "not from", "without".
+  - "all organizations except X" is still not an organization filter: return an \
+empty list for organizations and put X in exclude_organizations. Never answer \
+it by listing every other organization.
+  - A field can have positives and exclusions at once, and a request may be \
+exclusions only.
+6. semantic_query is a subject the user wants documents *about*, and nothing \
 else. Return "" whenever the request is only asking to list or filter \
 documents. These are never a semantic_query, alone or in combination:
   - requesting words: "get", "get me", "give me", "show", "list", "find", \
@@ -109,17 +119,20 @@ documents. These are never a semantic_query, alone or in combination:
 types
   - organization words: "organization", "organizations", "company", \
 "companies", and any organization name
-6. When there is a genuine topic, semantic_query is that topic and nothing \
+  - exclusion words: "except", "excluding", "other than", "apart from", \
+"besides", "not from", "without", and whatever is being excluded
+7. When there is a genuine topic, semantic_query is that topic and nothing \
 more. Keep it short and faithful to the user's words — usually what follows \
 "about", "on", "regarding", or "related to". Do not add words they did not use, \
-and do not carry the words from rule 5 into it.
-7. Report the result by calling the apply_search_filters function. If function \
+and do not carry the words from rule 6 into it.
+8. Report the result by calling the apply_search_filters function. If function \
 calling is not available to you, return the same fields as a single JSON object \
 and nothing else: {"organizations": [...], "file_types": [...], \
+"exclude_organizations": [...], "exclude_file_types": [...], \
 "semantic_query": "..."}. Never answer in prose and never add explanation \
 around the result.
 
-Examples, assuming the organization list contains shikshalokam:
+Examples, assuming the organization list contains shikshalokam and csf:
 
   "get list of all PDF files"
     -> file_types ["application/pdf"], organizations omitted, semantic_query ""
@@ -135,6 +148,15 @@ semantic_query ""
 "teacher training"
   "find PDFs from Shikshalokam about teacher training"
     -> file_types ["application/pdf"], organizations ["shikshalokam"], \
+semantic_query "teacher training"
+  "get all PDF files from all organizations except Shikshalokam"
+    -> file_types ["application/pdf"], organizations [], \
+exclude_organizations ["shikshalokam"], semantic_query ""
+  "give me all doc/files except PDF"
+    -> exclude_file_types ["application/pdf"], organizations omitted, \
+semantic_query ""
+  "find PDF files about teacher training except files from CSF"
+    -> file_types ["application/pdf"], exclude_organizations ["csf"], \
 semantic_query "teacher training"\
 """
 
@@ -170,7 +192,7 @@ def build_tool_schema():
     The schema is a best effort, not a guarantee. AI Service calls LiteLLM with
     drop_params=True, so for a model without tool support both `tools` and
     `tool_choice` are dropped silently and the answer arrives as content — which
-    is why rule 5 of SYSTEM_PROMPT also spells out the plain JSON shape, and why
+    is why rule 8 of SYSTEM_PROMPT also spells out the plain JSON shape, and why
     the client falls back to parsing it. Correctness comes from post-validation
     against the vocabulary either way; this only improves adherence.
     """
@@ -201,6 +223,27 @@ def build_tool_schema():
                             'description': (
                                 'File type values from the supplied list. '
                                 'Omit if the user did not ask to filter by file type.'
+                            ),
+                            'items': {
+                                'type': 'string',
+                                'enum': [choice.value for choice in FileTypeChoices],
+                            },
+                        },
+                        'exclude_organizations': {
+                            'type': 'array',
+                            'description': (
+                                'Organization values from the supplied list that the '
+                                'user asked to leave out ("except X", "not from X"). '
+                                'Omit if they excluded no organization.'
+                            ),
+                            'items': {'type': 'string'},
+                        },
+                        'exclude_file_types': {
+                            'type': 'array',
+                            'description': (
+                                'File type values from the supplied list that the user '
+                                'asked to leave out ("except PDF"). Omit if they '
+                                'excluded no file type.'
                             ),
                             'items': {
                                 'type': 'string',

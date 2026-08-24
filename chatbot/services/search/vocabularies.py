@@ -70,6 +70,9 @@ def select_organization_vocabulary(bot, candidates=None, scope=None):
 
     ``candidates`` = fuzzy matcher's top-N, ``full`` = every active org,
     ``auto`` = full while the list is small, candidates once it isn't.
+
+    ``llm_org_use_fuzzy_candidates`` overrides all of that: when it is on and
+    the matcher proposed something usable, only its result is sent.
     """
     full = organization_vocabulary(scope=scope)
     mode = get_search_llm_setting(bot, 'llm_org_vocab_mode')
@@ -77,6 +80,14 @@ def select_organization_vocabulary(bot, candidates=None, scope=None):
     ceiling = get_search_llm_setting(bot, 'llm_org_full_max')
 
     known = [c for c in (candidates or []) if c in full]
+
+    # Opt-in switch: send the fuzzy matcher's result instead of the whole list,
+    # unpadded. Falls through when it proposed nothing this vocabulary knows.
+    if known and get_search_llm_setting(bot, 'llm_org_use_fuzzy_candidates'):
+        logger.info(
+            'ai_search: sending %s fuzzy org candidate(s) instead of all %s',
+            len(known[:limit]), len(full))
+        return {slug: full[slug] for slug in known[:limit]}
 
     if mode == VOCAB_AUTO:
         mode = VOCAB_FULL if len(full) <= ceiling else VOCAB_CANDIDATES
@@ -104,6 +115,24 @@ def select_organization_vocabulary(bot, candidates=None, scope=None):
             break
         selected.setdefault(slug, aliases)
     return selected
+
+
+def expand_aliases(values, vocabulary):
+    """
+    Each canonical value plus its aliases, de-duplicated, order preserved.
+
+    Field-agnostic: any ``{value: [alias, ...]}`` vocabulary works. Needed
+    because one logical value can be stored under several spellings — Qdrant's
+    ``metadata.type`` holds both ``application/pdf`` and a bare ``pdf`` — so a
+    value sent to the vector service has to be widened to all of them. A value
+    that is not in the vocabulary is passed through untouched.
+    """
+    expanded = []
+    for value in values or []:
+        for candidate in [value] + list((vocabulary or {}).get(value) or []):
+            if candidate and candidate not in expanded:
+                expanded.append(candidate)
+    return expanded
 
 
 def canonicalise(value, vocabulary):

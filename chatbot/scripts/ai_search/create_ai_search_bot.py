@@ -121,9 +121,13 @@ def create_ai_search_bot(owner_slug=DEFAULT_OWNER_SLUG, force=False, log=None):
             other_params=_seed_params(),
             provider=LLMProvider.AI_SERVICE,
             bot_temperature=0.0,
-            max_token=1024,
+            # Filter extraction emits ~20 tokens; a large ceiling buys nothing
+            # and some gateways reject a max_tokens their quota cannot cover.
+            max_token=256,
             connect_timeout=5.0,
-            read_timeout=10.0,
+            # Wide enough to absorb a slow gateway; a hung one is cut off by
+            # llm_max_elapsed_s and then by the failure cooldown.
+            read_timeout=15.0,
         ), CREATED
 
     fields = []

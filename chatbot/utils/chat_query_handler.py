@@ -123,10 +123,15 @@ def query_database_with_metadata(
     categories: List[str] = None,
     organizations: List[str] = None,
     resource_type: List[str] = None,
-    file_type: List[str] = None
+    file_type: List[str] = None,
+    exclude_organizations: List[str] = None,
+    exclude_file_type: List[str] = None
 ):
     """
     Query vector database with metadata filters for media search v2.
+
+    The exclude_* filters become Qdrant must_not clauses. An older vector
+    service ignores them rather than failing, so callers stay compatible.
     """
     url = f"{base_url}/api/documents/search"
     print(f"[query_database_with_metadata] URL: {url}")
@@ -156,6 +161,10 @@ def query_database_with_metadata(
         data["resource_type"] = resource_type
     if file_type:
         data["file_type"] = file_type
+    if exclude_organizations:
+        data["exclude_organizations"] = exclude_organizations
+    if exclude_file_type:
+        data["exclude_file_type"] = exclude_file_type
 
     print(f"[query_database_with_metadata] Request Data: {data}")
     
