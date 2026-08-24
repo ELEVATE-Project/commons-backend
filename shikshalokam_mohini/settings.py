@@ -30,7 +30,6 @@ def load_secrets():
         '/home/ubuntu/shikshalokam-mohini-service/config/secrets.json',
         os.path.join(CODE_BASE_DIR, "config/secrets.json"),
         os.path.join(os.getcwd(), "config/secrets.json"),
-        '/Users/vishwanathbadiger/Desktop/secrets.json',
     ]
 
     for path in paths_to_try:
