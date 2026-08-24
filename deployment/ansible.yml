@@ -156,6 +156,8 @@
     - name: Kill existing Uvicorn tmux session (if any)
       shell: tmux kill-session -t {{ uvicorn_tmux_session }} || true
       changed_when: false
+      environment:
+        TERM: xterm
 
     - name: Pause to let old Uvicorn process release the port
       pause:
@@ -173,6 +175,8 @@
       args:
         chdir: "{{ current_path }}"
         executable: /bin/bash
+      environment:
+        TERM: xterm
 
     - name: Wait for Uvicorn to come up
       pause:
