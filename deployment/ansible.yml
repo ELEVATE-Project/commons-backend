@@ -107,14 +107,6 @@
         state: directory
         mode: "0755"
 
-    - name: Wait for DB host to resolve
-      command: getent hosts autoscaling-testing.cle48a6imkp7.ap-south-1.rds.amazonaws.com
-      register: dns_check
-      retries: 10
-      delay: 5
-      until: dns_check.rc == 0
-      changed_when: false
-
     - name: Run Django migrations
       shell: |
         export $(cat .env | xargs)
