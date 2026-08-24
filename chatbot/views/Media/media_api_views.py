@@ -15,6 +15,12 @@ from chatbot.serializer.media_serializer import (
 )
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
+from chatbot.utils.search_filter_resolver import (
+    build_qdrant_filter,
+    included_values,
+    resolve_query_exact,
+    to_response_dict,
+)
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db.models import (
     Count, Q, Value, FloatField, OuterRef, Subquery, TextField,
@@ -853,6 +859,7 @@ class MediaSearchV2View(APIView):
     
     def get(self, request, format=None):
         query = request.query_params.get('q', '').strip()
+        vector_search_requested = bool(query)
         
         try:
             # Change default from 1 billion to a safe number like 100
@@ -924,13 +931,31 @@ class MediaSearchV2View(APIView):
                 request.query_params.get('file_type', '')
             )
         media_types = self._normalize_media_types(media_types)
+
+        qdrant_filter = None
+        resolved_filters = resolve_query_exact(query) if query else None
+        if resolved_filters:
+            print(
+                "[MediaSearchV2View] Resolved search filters:",
+                to_response_dict(query, resolved_filters),
+            )
+            qdrant_filter = build_qdrant_filter(resolved_filters)
+            if not tags:
+                tags = included_values(resolved_filters.theme)
+            if not organizations:
+                organizations = included_values(resolved_filters.organization, use_slug=True)
+            if not resource_types:
+                resource_types = included_values(resolved_filters.resource_type)
+            if not media_types:
+                media_types = included_values(resolved_filters.file_type, use_slug=True)
+            query = resolved_filters.search_text
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
             'ordering', ''
         ).strip()
         
-        if query:
+        if vector_search_requested or query or qdrant_filter:
             # Use score-based ordering for search queries
             ordering = 'score'
         else:
@@ -939,7 +964,7 @@ class MediaSearchV2View(APIView):
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
 
-        if query:
+        if vector_search_requested or query or qdrant_filter:
             return self._get_vector_search_response(
                 request=request,
                 query=query,
@@ -951,6 +976,7 @@ class MediaSearchV2View(APIView):
                 organizations=organizations,
                 resource_types=resource_types,
                 media_types=media_types,
+                qdrant_filter=qdrant_filter,
             )
 
         # Normalize score ordering (only valid for search) to created_at for database queries
@@ -984,6 +1010,7 @@ class MediaSearchV2View(APIView):
         organizations,
         resource_types,
         media_types,
+        qdrant_filter=None,
     ):
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
@@ -1079,6 +1106,7 @@ class MediaSearchV2View(APIView):
             file_type=qdrant_file_types if qdrant_file_types else None,
             exclude_organizations=exclude_organizations if exclude_organizations else None,
             exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None,
+            qdrant_filter=qdrant_filter if qdrant_filter else None,
             any_of=any_of_blocks if any_of_blocks else None
         )
 

@@ -126,7 +126,8 @@ def query_database_with_metadata(
     file_type: List[str] = None,
     exclude_organizations: List[str] = None,
     exclude_file_type: List[str] = None,
-    any_of: List[Dict[str, Any]] = None
+    any_of: List[Dict[str, Any]] = None,
+    qdrant_filter: Optional[Dict[str, Any]] = None,
 ):
     """
     Query vector database with metadata filters for media search v2.
@@ -152,6 +153,8 @@ def query_database_with_metadata(
         "filter_score": filter_score,
         "detail_filter_score": detail_filter_score
     }
+    if qdrant_filter:
+        data["qdrant_filter"] = qdrant_filter
     
     # Add query only if provided
     if query:
