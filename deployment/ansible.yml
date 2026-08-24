@@ -171,10 +171,25 @@
       command: systemctl is-active sg-commons-uvicorn
       register: uvicorn_status
       changed_when: false
-      failed_when: uvicorn_status.stdout != "active"
+      retries: 6
+      delay: 5
+      until: uvicorn_status.stdout == "active"
+      failed_when: false
+
+    - name: Dump recent Uvicorn logs if not active
+      command: journalctl -u sg-commons-uvicorn -n 50 --no-pager
+      register: uvicorn_logs
+      changed_when: false
+      when: uvicorn_status.stdout != "active"
 
     - debug:
-        var: uvicorn_status.stdout
+        var: uvicorn_logs.stdout_lines
+      when: uvicorn_status.stdout != "active"
+
+    - name: Fail if Uvicorn did not become active
+      fail:
+        msg: "sg-commons-uvicorn did not reach 'active' state (last status: {{ uvicorn_status.stdout }}). See journalctl output above."
+      when: uvicorn_status.stdout != "active"
 
     - name: Verify Uvicorn is listening on the port
       wait_for:
