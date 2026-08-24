@@ -55,11 +55,11 @@ def sync_company_cache(company):
     cache.delete(ALL_COMPANIES_KEY)
 
 
-def evict_company_cache(company):
+def evict_company_cache(company_id, slug):
     if not CACHE_ENABLED:
         return
-    cache.delete(COMPANY_BY_ID_KEY.format(company.pk))
-    cache.delete(COMPANY_BY_SLUG_KEY.format(company.slug))
+    cache.delete(COMPANY_BY_ID_KEY.format(company_id))
+    cache.delete(COMPANY_BY_SLUG_KEY.format(slug))
     cache.delete(ALL_COMPANIES_KEY)
 
 
