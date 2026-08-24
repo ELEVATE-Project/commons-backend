@@ -1,15 +1,12 @@
 ---
 - hosts: elevate
   become: yes
-  environment:
-    TERM: xterm
 
   vars:
     project_path: /opt/deployment
     current_path: /opt/deployment/commons-backend
     uvicorn_port: 9000
     uvicorn_workers: 4
-    uvicorn_tmux_session: sg-commons-uvicorn
 
   tasks:
     - name: Read Vault token
@@ -150,41 +147,34 @@
     - debug:
         var: celery_status.stdout
 
-    - name: Ensure tmux is installed
-      package:
-        name: tmux
-        state: present
+    - name: Install Uvicorn service
+      template:
+        src: templates/sg-commons-uvicorn.service.j2
+        dest: /etc/systemd/system/sg-commons-uvicorn.service
+        mode: "0644"
+      notify:
+        - Reload systemd
 
-    - name: Kill existing Uvicorn tmux session (if any)
-      shell: tmux kill-session -t {{ uvicorn_tmux_session }} || true
-      changed_when: false
+    - meta: flush_handlers
 
-    - name: Pause to let old Uvicorn process release the port
-      pause:
-        seconds: 2
+    - name: Enable Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        enabled: yes
 
-    - name: Start Uvicorn in tmux session
-      shell: >
-        tmux new-session -d -s {{ uvicorn_tmux_session }}
-        "bash -c 'export \$(cat {{ current_path }}/.env | xargs) &&
-        exec {{ current_path }}/.venv/bin/uvicorn
-        shikshalokam_mohini.asgi:application
-        --host 0.0.0.0
-        --port {{ uvicorn_port }}
-        2>&1 | tee -a {{ current_path }}/logs/commons.log'"
-      args:
-        chdir: "{{ current_path }}"
-        executable: /bin/bash
+    - name: Restart Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        state: restarted
 
-    - name: Wait for Uvicorn to come up
-      pause:
-        seconds: 3
-
-    - name: Verify Uvicorn tmux session is running
-      shell: tmux has-session -t {{ uvicorn_tmux_session }}
+    - name: Verify Uvicorn
+      command: systemctl is-active sg-commons-uvicorn
       register: uvicorn_status
       changed_when: false
-      failed_when: uvicorn_status.rc != 0
+      failed_when: uvicorn_status.stdout != "active"
+
+    - debug:
+        var: uvicorn_status.stdout
 
     - name: Verify Uvicorn is listening on the port
       wait_for:
@@ -192,9 +182,6 @@
         port: "{{ uvicorn_port }}"
         timeout: 15
       register: uvicorn_port_check
-
-    - debug:
-        msg: "Uvicorn is running in tmux session '{{ uvicorn_tmux_session }}'"
 
   handlers:
     - name: Reload systemd
