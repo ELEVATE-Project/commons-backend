@@ -126,6 +126,8 @@ types
 "companies", and any organization name
   - exclusion words: "except", "excluding", "other than", "apart from", \
 "besides", "not from", "without", and whatever is being excluded
+  - connector words: "or", "either", "and" — these join filter conditions, \
+they never describe a topic
 7. When there is a genuine topic, semantic_query is that topic and nothing \
 more. Keep it short and faithful to the user's words — usually what follows \
 "about", "on", "regarding", or "related to". Do not add words they did not use, \
@@ -151,8 +153,17 @@ compound the sentence sounds. "all documents except PDF files from companies \
 other than Shikshalokam" means every company except Shikshalokam, and nothing \
 that is a PDF: exclude_organizations ["shikshalokam"] and exclude_file_types \
 ["application/pdf"], with no any_of.
+  - An entry does not need every field — it may filter on a single field \
+only, and the two entries need not match each other's shape. "documents from \
+Shikshalokam, or any DOCX file" is two one-field entries: one with only \
+organizations, one with only file_types. Do not force both fields into a \
+single entry just because the example above happens to show two.
+  - Once any_of (or the fields above it) fully captures the request, \
+semantic_query is "" — never repeat any part of the sentence there as a \
+hedge in case the filters do not fully capture it. The "or" itself is a \
+connector under rule 6, not a topic.
 
-Examples, assuming the organization list contains shikshalokam and csf:
+Examples, assuming the organization list contains shikshalokam, csf and involve:
 
   "get list of all PDF files"
     -> file_types ["application/pdf"], organizations omitted, semantic_query ""
@@ -189,6 +200,16 @@ semantic_query "teacher training"
     -> any_of [{"file_types": ["application/pdf"], "organizations": \
 ["shikshalokam"]}, {"file_types": ["application/msword"], "organizations": \
 ["csf"]}], semantic_query ""
+  "documents from Involve, or any CSV file"
+    -> any_of [{"organizations": ["involve"]}, {"file_types": \
+["text/csv"]}], semantic_query "" \
+(each entry has only the one field it needs — do not merge them into one \
+entry with both fields)
+  "documents about budget planning from Involve, or any CSV file"
+    -> any_of [{"organizations": ["involve"]}, {"file_types": \
+["text/csv"]}], semantic_query "budget planning" \
+(a genuine topic does not change how any_of is built — still two \
+single-field entries, not one merged entry)
   "get PDF or DOC files from Shikshalokam or CSF"
     -> file_types ["application/pdf", "application/msword"], organizations \
 ["shikshalokam", "csf"], no any_of, semantic_query ""\
@@ -297,9 +318,14 @@ def build_tool_schema():
                                 'csf"). Each entry is complete on its own: its fields '
                                 'are ANDed, entries are ORed, and nothing is inherited '
                                 'from the fields above or from another entry — which '
-                                'still apply to every entry. Omit it for an "or" '
-                                'between values of one field (use a longer list) and '
-                                'for anything excluded (use exclude_organizations / '
+                                'still apply to every entry. An entry may filter on a '
+                                'single field only ("shikshalokam, or any DOCX file" is '
+                                'two one-field entries) — the OR still spans two '
+                                'different fields. Once any_of captures the request, '
+                                'semantic_query is "" — never duplicate the sentence '
+                                'there as a hedge. Omit any_of for an "or" between '
+                                'values of one field (use a longer list) and for '
+                                'anything excluded (use exclude_organizations / '
                                 'exclude_file_types), however compound the request '
                                 'sounds.'
                             ),
