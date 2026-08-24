@@ -103,6 +103,15 @@ case, not this one — return an empty list only for one of the phrasings \
 above, never merely because you found no match. An organization name can \
 appear with no "from"/"by" before it, directly modifying what follows, e.g. \
 "csf reports" means organization ["csf"], not organizations omitted.
+  - Before settling on an answer for organizations, check the organization \
+list you were given one entry at a time against the query: does this value, \
+its display name, or any of its aliases appear anywhere in the text — a \
+bare mention, part of a longer clause, at the start of the sentence with no \
+"from"/"by" before it, or a word that could also be read another way? If it \
+does, it belongs in organizations or exclude_organizations; do not leave it \
+out because the rest of the sentence was hard to parse or because the word \
+had another possible reading. Do this for every organization in the list, \
+not only the one that stands out at a glance.
 5. A value the user asks to leave out is an exclusion. Put it in \
 exclude_organizations or exclude_file_types, never in organizations or \
 file_types. Exclusion values come from the same lists and follow rules 1 and 2 \
@@ -273,7 +282,10 @@ def build_tool_schema():
                                 'Not recognizing an organization in the request is the '
                                 'omit case, not the empty-list case — an organization '
                                 'name can appear with no "from"/"by" before it, directly '
-                                'modifying what follows.'
+                                'modifying what follows. Check every listed organization '
+                                'against the query one at a time before answering — do not '
+                                'skip one just because it is not in the most obvious spot '
+                                'or its name could also be read another way.'
                             ),
                             'items': {'type': 'string'},
                         },
