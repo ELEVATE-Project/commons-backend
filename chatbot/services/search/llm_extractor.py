@@ -425,7 +425,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
             cooldown_reason())
         return None
 
-    # Missing tool schema isn't fatal — the prompt (rule 8) also specifies a
+    # Missing tool schema isn't fatal — the prompt (rule 7) also specifies a
     # plain JSON shape, so the bot still works, just without schema-constrained
     # decoding.
     tools, tool_choice, tool_name = _tool_context(bot)
