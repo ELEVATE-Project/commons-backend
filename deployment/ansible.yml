@@ -7,6 +7,7 @@
     current_path: /opt/deployment/commons-backend
     uvicorn_port: 9000
     uvicorn_workers: 4
+    uvicorn_tmux_session: sg-commons-uvicorn
 
   tasks:
     - name: Read Vault token
@@ -106,6 +107,14 @@
         state: directory
         mode: "0755"
 
+    - name: Wait for DB host to resolve
+      command: getent hosts autoscaling-testing.cle48a6imkp7.ap-south-1.rds.amazonaws.com
+      register: dns_check
+      retries: 10
+      delay: 5
+      until: dns_check.rc == 0
+      changed_when: false
+
     - name: Run Django migrations
       shell: |
         export $(cat .env | xargs)
@@ -113,6 +122,10 @@
       args:
         executable: /bin/bash
         chdir: "{{ current_path }}"
+      register: migrate_result
+      retries: 5
+      delay: 10
+      until: migrate_result.rc == 0
 
     - name: Install Celery service
       template:
@@ -143,28 +156,27 @@
     - debug:
         var: celery_status.stdout
 
-    - name: Disable legacy Uvicorn systemd service (migration cleanup)
-      systemd:
-        name: sg-commons-uvicorn
-        state: stopped
-        enabled: no
-      ignore_errors: yes
+    - name: Ensure tmux is installed
+      package:
+        name: tmux
+        state: present
 
-    - name: Stop any running Uvicorn process
-      shell: pkill -f "uvicorn shikshalokam_mohini.asgi:application" || true
+    - name: Kill existing Uvicorn tmux session (if any)
+      shell: tmux kill-session -t {{ uvicorn_tmux_session }} || true
       changed_when: false
 
     - name: Pause to let old Uvicorn process release the port
       pause:
         seconds: 2
 
-    - name: Start Uvicorn via setsid
+    - name: Start Uvicorn in tmux session
       shell: >
-        setsid {{ current_path }}/.venv/bin/uvicorn
+        tmux new-session -d -s {{ uvicorn_tmux_session }}
+        "{{ current_path }}/.venv/bin/uvicorn
         shikshalokam_mohini.asgi:application
         --host 0.0.0.0
         --port {{ uvicorn_port }}
-        > {{ current_path }}/logs/commons.log 2>&1 < /dev/null &
+        2>&1 | tee -a {{ current_path }}/logs/commons.log"
       args:
         chdir: "{{ current_path }}"
         executable: /bin/bash
@@ -173,8 +185,8 @@
       pause:
         seconds: 3
 
-    - name: Verify Uvicorn process is running
-      shell: pgrep -f "uvicorn shikshalokam_mohini.asgi:application"
+    - name: Verify Uvicorn tmux session is running
+      shell: tmux has-session -t {{ uvicorn_tmux_session }}
       register: uvicorn_status
       changed_when: false
       failed_when: uvicorn_status.rc != 0
@@ -187,7 +199,7 @@
       register: uvicorn_port_check
 
     - debug:
-        msg: "Uvicorn is running with PID(s): {{ uvicorn_status.stdout_lines }}"
+        msg: "Uvicorn is running in tmux session '{{ uvicorn_tmux_session }}'"
 
   handlers:
     - name: Reload systemd
