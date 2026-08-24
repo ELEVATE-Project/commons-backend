@@ -172,11 +172,12 @@
     - name: Start Uvicorn in tmux session
       shell: >
         tmux new-session -d -s {{ uvicorn_tmux_session }}
-        "{{ current_path }}/.venv/bin/uvicorn
+        "bash -c 'export \$(cat {{ current_path }}/.env | xargs) &&
+        exec {{ current_path }}/.venv/bin/uvicorn
         shikshalokam_mohini.asgi:application
         --host 0.0.0.0
         --port {{ uvicorn_port }}
-        2>&1 | tee -a {{ current_path }}/logs/commons.log"
+        2>&1 | tee -a {{ current_path }}/logs/commons.log'"
       args:
         chdir: "{{ current_path }}"
         executable: /bin/bash
