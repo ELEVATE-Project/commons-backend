@@ -27,10 +27,12 @@ LOGGING_DIR = CODE_BASE_DIR + '/logs'
 
 def load_secrets():
     paths_to_try = [
+        os.environ.get('SECRETS_JSON_PATH'),
         '/home/ubuntu/shikshalokam-mohini-service/config/secrets.json',
         os.path.join(CODE_BASE_DIR, "config/secrets.json"),
         os.path.join(os.getcwd(), "config/secrets.json"),
     ]
+    paths_to_try = [path for path in paths_to_try if path]
 
     for path in paths_to_try:
         print(f"[DEBUG] Trying secrets file at: {path}")
