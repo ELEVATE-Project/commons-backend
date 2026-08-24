@@ -112,11 +112,45 @@ does, it belongs in organizations or exclude_organizations; do not leave it \
 out because the rest of the sentence was hard to parse or because the word \
 had another possible reading. Do this for every organization in the list, \
 not only the one that stands out at a glance.
+  - That check runs in one direction only: it finds the listed entries the \
+query names, and never turns a name the query contains into an entry it does \
+not. So for each entry you are about to return — in organizations or in \
+exclude_organizations, the test is the same — point at the words in the query \
+that spell its value, its display name or one of its aliases, allowing \
+differences of case, spacing, punctuation and obvious typos. Can you point at \
+them? Return it, in whichever of the two lists rule 5 calls for. Cannot? Leave \
+it out of both. A display name made of ordinary words is still that \
+organization's name when the query spells it out. Match it as a whole phrase, \
+however many words long it is and even where the value you return shares no \
+letters with it: a display name that reads like a topic or a field of study is \
+still that organization when the query spells its words out in order.
+  - Generic words are not evidence: "Corporation", "Corp", "Company", \
+"Foundation", "Trust", "Institute", "Org" and "Ltd" belong to no organization \
+in particular, so a listed name ending in one is not matched by any other name \
+ending in the same word. Neither are shared initials, a shared first letter or \
+a shared opening syllable — two names can begin alike and be different \
+companies. What has to be present is the distinctive part of the listed name, \
+whole.
+  - A query may name a company that is not listed here, and that needs no \
+answer from you: the name stays in semantic_query, no organization filter is \
+set, and the search still finds documents mentioning it. Never reach for the \
+nearest entry, the only entry left, or any entry at all merely because the \
+query clearly names some company — a wrong organization is worse than none, \
+because it silently hides everything the user did want. Names are answered \
+one at a time: matching one is no reason to match another, and failing to \
+match one is no reason to drop the one you did match.
 5. A value the user asks to leave out is an exclusion. Put it in \
 exclude_organizations or exclude_file_types, never in organizations or \
 file_types. Exclusion values come from the same lists and follow rules 1 and 2 \
 just like positive ones. Words that signal an exclusion: "except", "excluding", \
-"other than", "apart from", "besides", "not from", "without".
+"other than", "apart from", "besides", "not from", "without", "no", "not", \
+"but not", "none of", "leave out", "omit".
+  - A short "no X" or "not X" clause after a comma is an exclusion of X, not a \
+second thing being asked for. Before putting any value in file_types or \
+organizations, look at the word just before it: if that word is one of the \
+signals above, the value belongs in the matching exclude_ field. A request may \
+carry more than one exclusion, on different fields — finding one is no reason \
+to stop looking for the next.
   - "all organizations except X" is still not an organization filter: return an \
 empty list for organizations and put X in exclude_organizations. Never answer \
 it by listing every other organization.
@@ -127,20 +161,34 @@ else. Return "" whenever the request is only asking to list or filter \
 documents. These are never a semantic_query, alone or in combination:
   - requesting words: "get", "get me", "give me", "show", "list", "find", \
 "fetch", "search for", "I want", "I need"
-  - quantity words: "all", "every", "any", "a list of", "the list of"
-  - document words: "file", "files", "document", "documents", "doc", "docs"
-  - file type names: "PDF", "PDFs", "CSV", "spreadsheet", and the other listed \
-types
+  - quantity words: "all", "every", "any", "a list of", "the list of", and the \
+same words standing in for a noun: "everything", "anything", "something", \
+"everything else", "all of them"
+  - document words: "file", "files", "document", "documents", "doc", "docs", \
+and other words meaning documents in general: "resource", "resources", \
+"material", "materials", "content", "records", "items", "data"
+  - file type names used to say what format of document to return: "PDF \
+files", "the PDFs", a bare "pdf", and the same for the other listed types. A \
+format word that is part of the subject instead stays in semantic_query — see \
+rule 10
   - organization words: "organization", "organizations", "company", \
 "companies", and any organization name
   - exclusion words: "except", "excluding", "other than", "apart from", \
 "besides", "not from", "without", and whatever is being excluded
   - connector words: "or", "either", "and" — these join filter conditions, \
 they never describe a topic
+  - A phrase built only out of the words above is filler too: joining two of \
+them does not make a topic. Ask of whatever you are about to keep: could a \
+document be *about* this? If not, semantic_query is "".
 7. When there is a genuine topic, semantic_query is that topic and nothing \
 more. Keep it short and faithful to the user's words — usually what follows \
-"about", "on", "regarding", or "related to". Do not add words they did not use, \
-and do not carry the words from rule 6 into it.
+"about", "on", "regarding", or "related to". Whatever follows one of those \
+markers is the topic, copied verbatim — take the user at their word even when \
+the phrase reads as vague, and let rule 6 empty semantic_query only where the \
+query has no such marker. Do not add words they did not use, \
+and do not carry the words from rule 6 into it. A word naming a format is one \
+of rule 6's words only when rule 10 says it is a filter; otherwise it stays in \
+semantic_query exactly as the user wrote it.
 8. Report the result by calling the apply_search_filters function. If function \
 calling is not available to you, return the same fields as a single JSON object \
 and nothing else: {"organizations": [...], "file_types": [...], \
@@ -157,11 +205,25 @@ entirely unless the request needs it. In particular:
   - An "or" between values of the same field is one list, not two entries. \
 "PDF or DOC files from Shikshalokam or CSF" is file_types with two values and \
 organizations with two values, and no any_of.
+  - A value that sits inside an entry goes there and nowhere else. Do not also \
+copy it into the top-level organizations or file_types: those are ANDed with \
+the alternatives, so they may hold only conditions that are true of every \
+entry alike. Repeating an entry's values above narrows the search to their \
+intersection and defeats the "or" you just built. When the alternatives carry \
+the whole request, organizations and file_types are left empty.
   - Anything that is an exclusion under rule 5 stays an exclusion, however \
 compound the sentence sounds. "all documents except PDF files from companies \
 other than Shikshalokam" means every company except Shikshalokam, and nothing \
 that is a PDF: exclude_organizations ["shikshalokam"] and exclude_file_types \
 ["application/pdf"], with no any_of.
+  - Where an exclusion goes depends on what it applies to. One that narrows \
+the whole request is a top-level exclude_ field, as above. But when the \
+request already has alternatives and a "not"/"no"/"except" qualifies only one \
+of them, it belongs inside that entry: at the top level it would drop the very \
+documents the other alternative asked for. "documents from CSF that are not \
+TXT, or anything from Involve" is two entries — {organizations ["csf"], \
+exclude_file_types ["text/plain"]} and {organizations ["involve"]} — because \
+Involve's text files were plainly asked for.
   - An entry does not need every field — it may filter on a single field \
 only, and the two entries need not match each other's shape. "documents from \
 Shikshalokam, or any DOCX file" is two one-field entries: one with only \
@@ -171,6 +233,40 @@ single entry just because the example above happens to show two.
 semantic_query is "" — never repeat any part of the sentence there as a \
 hedge in case the filters do not fully capture it. The "or" itself is a \
 connector under rule 6, not a topic.
+10. A file type name is a filter only when it says what format the returned \
+documents should be in. The same word can instead name part of the subject, and \
+then it is not a filter at all — decide which before filling in file_types. \
+This applies to every listed type equally, PDF included: no format word is a \
+filter by default, however often it is used as one.
+  - It is a filter when it is the whole request, when it stands alone as the \
+thing being asked for, when it directly modifies a document word ("PDF files", \
+"docx documents", "the PDFs", "in PDF format", "as a spreadsheet"), or when it \
+is what rule 5 excludes.
+  - It is part of the topic when it modifies some other noun — something that \
+is not the documents being requested, as in "CSV parsing", "spreadsheet \
+modelling", "XLSX accessibility", "PDF encryption" — or when it sits inside \
+what follows "about", "on", "regarding", "related to" or "covering".
+  - A format word is also topical when it is what the subject is *about* \
+rather than a description of the documents — the thing being converted, \
+migrated, compared, opened or generated, as in "migrating from xls to xlsx" or \
+"converting docx to pdf". Two format words joined by "to", "into", "versus" or \
+"vs" are a subject, never two filters.
+  - Deletion test: take out the format word together with the noun it \
+modifies. If what is left still says which documents to return, the word was \
+topical — leave it in semantic_query and set no file type filter. If taking it \
+out leaves nothing to return, it was a format request — filter on it.
+  - Subject test: could the phrase name something a document could be *about*? \
+"CSV parsing" is such a subject; "CSV files" is not.
+  - Both can happen in one query: filter on the occurrence that names the \
+format and keep the other in semantic_query.
+  - When it is genuinely unclear which one is meant, leave the word in \
+semantic_query and omit the filter. A filter the user did not ask for hides \
+documents they wanted; a slightly broader topic still finds them.
+  - The file type list is closed, exactly as the organization list is. A format \
+word the query names but that list does not contain — an unfamiliar extension, \
+an invented one, or a short run of letters that merely resembles a listed value \
+— gets no filter and stays in semantic_query. Never answer it with the listed \
+type it looks most like; sharing letters or length identifies nothing.
 
 Examples, assuming the organization list contains shikshalokam, csf and involve:
 
@@ -193,6 +289,38 @@ semantic_query ""
   "find PDFs from Shikshalokam about teacher training"
     -> file_types ["application/pdf"], organizations ["shikshalokam"], \
 semantic_query "teacher training"
+  "notes on PDF encryption"
+    -> file_types omitted, organizations omitted, semantic_query "PDF \
+encryption" \
+(a format word is topical or not on its own merits — being the most commonly \
+requested format does not make this one a filter)
+  "documents about CSV parsing"
+    -> file_types omitted, organizations omitted, semantic_query "CSV parsing" \
+(the format word modifies "parsing", not the documents being asked for)
+  "guidelines on spreadsheet modelling"
+    -> file_types omitted, organizations omitted, semantic_query "spreadsheet \
+modelling"
+  "PDF files about CSV parsing"
+    -> file_types ["application/pdf"], semantic_query "CSV parsing" \
+(one occurrence names the format, the other is part of the subject)
+  "reports on XLSX accessibility from CSF"
+    -> organizations ["csf"], file_types omitted, semantic_query "XLSX \
+accessibility"
+  "documents from Involute Systems" (not listed; only "involve" is)
+    -> organizations omitted, semantic_query "Involute Systems" \
+(beginning like a listed name is not being that name)
+  "files from Redwood Foundation" (not listed)
+    -> organizations omitted, semantic_query "Redwood Foundation" \
+(a listed name also ending in "Foundation" is a different organization)
+  "files from Involve and Northwind Corporation" (only Involve is listed)
+    -> organizations ["involve"], semantic_query "Northwind Corporation" \
+(each name is answered on its own: the listed one is a filter, the unlisted \
+one is not turned into the nearest entry)
+  "files from Northwind Corporation" (no such organization is listed)
+    -> organizations omitted, file_types omitted, semantic_query "Northwind \
+Corporation" \
+(sharing the word "Corporation" with a listed name identifies nothing; an \
+unlisted company means no organization filter, never the closest entry)
   "get all PDF files from all organizations except Shikshalokam"
     -> file_types ["application/pdf"], organizations [], \
 exclude_organizations ["shikshalokam"], semantic_query ""
@@ -236,6 +364,11 @@ User query: $query
 
 Organization values you may return (value — also known as):
 $organizations
+
+Return one of these organization values only if the query spells out that \
+value, its display name or one of its aliases. The query may name a company \
+that is not on this list: return no organization for that name, and leave it \
+in semantic_query. Do not answer it with the closest entry on the list.
 
 File type values you may return (value — also known as):
 $file_types
@@ -293,7 +426,15 @@ def build_tool_schema():
                             'type': 'array',
                             'description': (
                                 'File type values from the supplied list. '
-                                'Omit if the user did not ask to filter by file type.'
+                                'Omit if the user did not ask to filter by file type. '
+                                'Only fill this in when the user is asking for '
+                                'documents in that format — the word stands alone, or '
+                                'modifies a document word ("PDF files", "the PDFs"). A '
+                                'format word that modifies something other than the '
+                                'documents themselves ("CSV parsing", "spreadsheet '
+                                'modelling") is part of the subject: omit this field '
+                                'and leave the word in semantic_query. When it is '
+                                'unclear which is meant, omit.'
                             ),
                             'items': {
                                 'type': 'string',
@@ -330,7 +471,10 @@ def build_tool_schema():
                                 'csf"). Each entry is complete on its own: its fields '
                                 'are ANDed, entries are ORed, and nothing is inherited '
                                 'from the fields above or from another entry — which '
-                                'still apply to every entry. An entry may filter on a '
+                                'still apply to every entry, so a value placed in an '
+                                'entry must NOT also be repeated in the top-level '
+                                'organizations/file_types (that would AND it across '
+                                'every alternative). An entry may filter on a '
                                 'single field only ("shikshalokam, or any DOCX file" is '
                                 'two one-field entries) — the OR still spans two '
                                 'different fields. Once any_of captures the request, '
@@ -374,7 +518,9 @@ def build_tool_schema():
                             'description': (
                                 'The subject the user wants documents about, once '
                                 'filter words are removed. Empty when the request '
-                                'is only asking to list or filter documents.'
+                                'is only asking to list or filter documents. A format '
+                                'word that names part of the subject belongs here, not '
+                                'in file_types.'
                             ),
                         },
                     },
