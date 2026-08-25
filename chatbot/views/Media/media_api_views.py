@@ -1032,8 +1032,8 @@ class MediaSearchV2View(APIView):
         # instead, which already handles a request with no query.
         filters_present = bool(
             tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types)
-        if not query and filters_present and not resolved.any_of:
+            or exclude_organizations or exclude_media_types or resolved.any_of)
+        if not query and filters_present:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
             db_field, db_reverse = self._parse_ordering(db_ordering)
@@ -1050,6 +1050,8 @@ class MediaSearchV2View(APIView):
                 media_types=media_types,
                 exclude_organizations=exclude_organizations,
                 exclude_media_types=exclude_media_types,
+                any_of_blocks=resolved.any_of,
+                diagnostics=resolved.diagnostics,
             )
 
         # Imported locally, like the AI-search chain elsewhere in this view, so a
@@ -1204,6 +1206,8 @@ class MediaSearchV2View(APIView):
                     'fuzzy' if fuzzy.organizations else 'none'),
                 'media_types_source': 'explicit' if explicit_types else (
                     'fuzzy' if fuzzy.media_types else 'none'),
+                'organizations': explicit_orgs or (fuzzy.organizations or []),
+                'media_types': explicit_types or (fuzzy.media_types or []),
             },
         )
 
@@ -1301,10 +1305,12 @@ class MediaSearchV2View(APIView):
         if not explicit_orgs and llm.organizations is not None:
             resolved.organizations = llm.organizations
             resolved.diagnostics['organizations_source'] = 'llm'
+            resolved.diagnostics['organizations'] = llm.organizations
 
         if not explicit_types and llm.media_types is not None:
             resolved.media_types = llm.media_types
             resolved.diagnostics['media_types_source'] = 'llm'
+            resolved.diagnostics['media_types'] = llm.media_types
 
         # Exclusions have no explicit-UI counterpart, so there is nothing to
         # outrank them; None still means the model gave no opinion.
@@ -1341,6 +1347,8 @@ class MediaSearchV2View(APIView):
         media_types,
         exclude_organizations=None,
         exclude_media_types=None,
+        any_of_blocks=None,
+        diagnostics=None,
     ):
         queryset = self._build_database_queryset()
         queryset = self._apply_database_filters(
@@ -1351,6 +1359,7 @@ class MediaSearchV2View(APIView):
             media_types=media_types,
             exclude_organizations=exclude_organizations,
             exclude_media_types=exclude_media_types,
+            any_of_blocks=any_of_blocks,
         )
 
         total_results = queryset.count()
@@ -1390,6 +1399,7 @@ class MediaSearchV2View(APIView):
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
+                "filter_resolution": diagnostics or {},
             }
         }, status=status.HTTP_200_OK)
 
@@ -1456,6 +1466,7 @@ class MediaSearchV2View(APIView):
         media_types,
         exclude_organizations=None,
         exclude_media_types=None,
+        any_of_blocks=None,
     ):
         if tags:
             tag_conditions = Q()
@@ -1489,6 +1500,30 @@ class MediaSearchV2View(APIView):
 
         if exclude_media_types:
             queryset = queryset.exclude(overridden_media_type__in=exclude_media_types)
+
+        if any_of_blocks:
+            any_of_conditions = Q()
+            for block in any_of_blocks:
+                block_conditions = Q()
+                
+                if block.organizations:
+                    org_q = Q()
+                    for org in block.organizations:
+                        org_q |= Q(organization__slug__iexact=org)
+                    block_conditions &= org_q
+                
+                if block.media_types:
+                    block_conditions &= Q(overridden_media_type__in=block.media_types)
+                
+                if block.exclude_organizations:
+                    block_conditions &= ~any_of('organization__slug__iexact', block.exclude_organizations)
+                
+                if block.exclude_media_types:
+                    block_conditions &= ~Q(overridden_media_type__in=block.exclude_media_types)
+                
+                any_of_conditions |= block_conditions
+            
+            queryset = queryset.filter(any_of_conditions)
 
         return queryset.distinct()
 
