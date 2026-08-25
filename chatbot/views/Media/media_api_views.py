@@ -1,5 +1,6 @@
 import json_repair
 import logging
+import re
 from dataclasses import dataclass, field
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -16,7 +17,6 @@ from chatbot.serializer.media_serializer import (
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
-    build_qdrant_filter,
     included_values,
     resolve_query_exact,
     to_response_dict,
@@ -932,30 +932,44 @@ class MediaSearchV2View(APIView):
             )
         media_types = self._normalize_media_types(media_types)
 
-        qdrant_filter = None
+        exclude_organizations = []
+        exclude_media_types = []
+        any_of = []
         resolved_filters = resolve_query_exact(query) if query else None
         if resolved_filters:
             print(
                 "[MediaSearchV2View] Resolved search filters:",
                 to_response_dict(query, resolved_filters),
             )
-            qdrant_filter = build_qdrant_filter(resolved_filters)
-            if not tags:
-                tags = included_values(resolved_filters.theme)
-            if not organizations:
-                organizations = included_values(resolved_filters.organization, use_slug=True)
-            if not resource_types:
-                resource_types = included_values(resolved_filters.resource_type)
-            if not media_types:
-                media_types = included_values(resolved_filters.file_type, use_slug=True)
-            query = resolved_filters.search_text
+            any_of = self._build_any_of_filters(query)
+            if not any_of:
+                if not tags:
+                    tags = included_values(resolved_filters.theme)
+                if not organizations:
+                    organizations = included_values(resolved_filters.organization, use_slug=True)
+                if not resource_types:
+                    resource_types = included_values(resolved_filters.resource_type)
+                if not media_types:
+                    media_types = self._included_file_type_values(
+                        resolved_filters.file_type
+                    )
+                exclude_organizations = self._excluded_values(
+                    resolved_filters.organization, use_slug=True
+                )
+                exclude_media_types = self._excluded_file_type_values(
+                    resolved_filters.file_type
+                )
+            query = self._clean_filter_search_text(
+                self._search_text_from_any_of_clauses(query)
+                if any_of else resolved_filters.search_text
+            )
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
             'ordering', ''
         ).strip()
         
-        if vector_search_requested or query or qdrant_filter:
+        if vector_search_requested or query:
             # Use score-based ordering for search queries
             ordering = 'score'
         else:
@@ -964,7 +978,7 @@ class MediaSearchV2View(APIView):
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
 
-        if vector_search_requested or query or qdrant_filter:
+        if vector_search_requested or query:
             return self._get_vector_search_response(
                 request=request,
                 query=query,
@@ -976,7 +990,9 @@ class MediaSearchV2View(APIView):
                 organizations=organizations,
                 resource_types=resource_types,
                 media_types=media_types,
-                qdrant_filter=qdrant_filter,
+                exclude_organizations=exclude_organizations,
+                exclude_media_types=exclude_media_types,
+                any_of=any_of,
             )
 
         # Normalize score ordering (only valid for search) to created_at for database queries
@@ -1010,7 +1026,9 @@ class MediaSearchV2View(APIView):
         organizations,
         resource_types,
         media_types,
-        qdrant_filter=None,
+        exclude_organizations=None,
+        exclude_media_types=None,
+        any_of=None,
     ):
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
@@ -1106,7 +1124,6 @@ class MediaSearchV2View(APIView):
             file_type=qdrant_file_types if qdrant_file_types else None,
             exclude_organizations=exclude_organizations if exclude_organizations else None,
             exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None,
-            qdrant_filter=qdrant_filter if qdrant_filter else None,
             any_of=any_of_blocks if any_of_blocks else None
         )
 
@@ -1763,6 +1780,120 @@ class MediaSearchV2View(APIView):
             item.strip() for item in param_value.split(',')
             if item.strip()
         ]
+
+    def _excluded_values(self, matches, use_slug=False):
+        values = []
+        for match in matches:
+            if not match.negated:
+                continue
+            values.append(match.slug if use_slug and match.slug else match.display_value)
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _included_file_type_values(self, matches):
+        values = []
+        for match in matches:
+            if match.negated:
+                continue
+            values.append(self._file_type_payload_value(match))
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _excluded_file_type_values(self, matches):
+        values = []
+        for match in matches:
+            if not match.negated:
+                continue
+            values.extend(self._file_type_payload_variants(match))
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _file_type_payload_variants(self, match):
+        display_value = match.display_value or ""
+        slug = match.slug or ""
+        variants = [
+            slug,
+            display_value,
+            display_value.lower(),
+        ]
+
+        extension = FileTypeChoices.get_extension_mapping().get(slug)
+        if not extension and "/" in slug:
+            extension = f".{slug.rsplit('/', 1)[-1]}"
+        if extension:
+            variants.extend([extension, extension.lstrip(".")])
+
+        return variants
+
+    def _build_any_of_filters(self, query):
+        clauses = [
+            clause.strip()
+            for clause in re.split(r"\bOR\b", query, flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+        if len(clauses) < 2:
+            return []
+
+        blocks = []
+        for clause in clauses:
+            resolved = resolve_query_exact(clause)
+            block = self._any_of_block_from_resolved_filters(resolved)
+            if block:
+                blocks.append(block)
+        return blocks
+
+    def _search_text_from_any_of_clauses(self, query):
+        clauses = [
+            clause.strip()
+            for clause in re.split(r"\bOR\b", query, flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+        search_texts = []
+        for clause in clauses:
+            search_text = resolve_query_exact(clause).search_text
+            if search_text and search_text not in search_texts:
+                search_texts.append(search_text)
+        if not search_texts:
+            return ""
+        if len(search_texts) == 1:
+            return search_texts[0]
+        return " ".join(search_texts)
+
+    def _any_of_block_from_resolved_filters(self, resolved_filters):
+        block = {}
+        organizations = included_values(
+            resolved_filters.organization, use_slug=True
+        )
+        file_types = self._included_file_type_values(
+            resolved_filters.file_type
+        )
+        exclude_organizations = self._excluded_values(
+            resolved_filters.organization, use_slug=True
+        )
+        exclude_file_types = self._excluded_file_type_values(
+            resolved_filters.file_type
+        )
+
+        if organizations:
+            block["organizations"] = organizations
+        if file_types:
+            block["file_type"] = file_types
+        if exclude_organizations:
+            block["exclude_organizations"] = exclude_organizations
+        if exclude_file_types:
+            block["exclude_file_type"] = exclude_file_types
+
+        return block
+
+    def _file_type_payload_value(self, match):
+        matched_text = match.matched_span.strip().lower().lstrip(".")
+        if matched_text == "docx":
+            return "application/docx"
+        return match.slug
+
+    def _clean_filter_search_text(self, search_text):
+        cleaned = re.sub(r"[^\w\s]", " ", search_text or "").strip().lower()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        if cleaned in {"everything", "all", "anything"}:
+            return ""
+        return cleaned
 
     def _normalize_media_types(self, media_types):
         normalized = []

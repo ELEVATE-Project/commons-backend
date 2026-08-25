@@ -290,40 +290,7 @@ def included_values(matches: Iterable[MatchResult], use_slug: bool = False) -> L
     return list(dict.fromkeys(values))
 
 
-def build_qdrant_filter(resolved: ResolvedFilters, min_confidence: str = "low") -> Dict[str, List[Dict]]:
-    field_mapping = {
-        "organization": ("metadata.company", True),
-        "theme": ("tag", False),
-        "resource_type": ("metadata.DOCUMENT_TYPE", False),
-        "file_type": ("metadata.type", True),
-    }
-    confidence_order = {"low": 0, "medium": 1, "high": 2}
-    min_rank = confidence_order.get(min_confidence, 0)
-
-    qdrant_filter = {"must": [], "must_not": []}
-    for field_name, (payload_key, use_slug) in field_mapping.items():
-        matches = getattr(resolved, field_name)
-        included = []
-        excluded = []
-
-        for match in matches:
-            if confidence_order.get(match.confidence, 0) < min_rank:
-                continue
-
-            value = match.slug if use_slug and match.slug else match.display_value
-            if match.negated:
-                excluded.append(value)
-            else:
-                included.append(value)
-
-        _append_qdrant_match(qdrant_filter["must"], payload_key, included)
-        _append_qdrant_match(qdrant_filter["must_not"], payload_key, excluded)
-
-    return {key: value for key, value in qdrant_filter.items() if value}
-
-
 def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
-    qdrant_filter = build_qdrant_filter(resolved)
     return {
         "query": query,
         "resolved": {
@@ -333,7 +300,6 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
             "file_type": [_match_to_dict(match) for match in resolved.file_type],
         },
         "search_text": resolved.search_text,
-        "qdrant_filter": qdrant_filter,
     }
 
 
@@ -588,15 +554,6 @@ def _int_env(env_name: str, default_value: int, min_value: Optional[int] = None,
     if max_value is not None:
         value = min(max_value, value)
     return value
-
-
-def _append_qdrant_match(filters: List[Dict], key: str, values: List[str]) -> None:
-    values = list(dict.fromkeys(value for value in values if value))
-    if not values:
-        return
-
-    match = {"value": values[0]} if len(values) == 1 else {"any": values}
-    filters.append({"key": key, "match": match})
 
 
 def _match_to_dict(match: MatchResult) -> Dict:
