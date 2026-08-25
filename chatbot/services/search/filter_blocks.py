@@ -1,19 +1,18 @@
 """
-One alternative in an ``any_of`` search filter.
+One branch of an ``any_of`` (OR) search filter.
 
-A search normally resolves to a single set of filters — organizations AND media
-types AND exclusions — which covers everything except an OR that joins two
-*different* fields: "PDFs from Shikshalokam, or DOCX from CSF". That needs
-alternatives, and a FilterBlock is one of them.
+Normal search: all conditions must match (AND across fields).
+``any_of`` is for cross-field ORs like:
+    "PDFs from Shikshalokam OR DOCX from CSF"
 
-The alternatives are OR'ed with each other and AND'ed with the flat fields
-resolved alongside them, which keep their meaning and are never ignored:
+Each FilterBlock is one branch of that OR. Branches are OR'd together,
+then AND'd with the regular flat filters:
 
-    keep if  FLAT FIELDS  AND  (block0 OR block1 OR ...)
+    keep if  (flat filters)  AND  (block0 OR block1 OR ...)
 
-Its own module because llm_extractor builds these and must not import from
-media_api_views. Both the alias widening and the translation to the vector
-service's field names live here, so callers stay one line long.
+Extracted into its own module so llm_extractor can build these without
+importing media_api_views. Alias widening and field-name translation live
+here — callers stay one-liners.
 """
 
 from dataclasses import dataclass, field

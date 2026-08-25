@@ -1,20 +1,17 @@
 """
-One resolution rule for every AI-search LLM setting.
+All AI-search LLM settings use the same lookup order:
+bot settings first, then environment variables, then hard-coded defaults.
 
-Precedence is always ``CompanyBot.other_params`` -> environment -> default, the
-same way ``filter_score`` and ``detail_filter_score`` already come off the bot
-row. Keeping it in one helper means a new knob costs a table entry rather than
-new plumbing, and no setting can drift onto its own precedence rule.
+Adding a new setting only needs a database column — no extra code.
 
-Nothing here raises. These values come from a DB column and a .env file, neither
-of which is type-checked, and a typo in either must not be able to take search
-down — a bad value is logged and the default is used.
+Nothing here throws errors. If someone typos a config value, we log it and fall
+back to the default. We can't trust the database or .env file to be correct.
 
-What is deliberately absent: the vendor and the model. Those are not per-bot
-settings — they belong to the AI Service deployment and are resolved from
-AI_SERVICE_PROVIDER / AI_SERVICE_MODEL inside chatbot/utils/ai_service/.
-Everything here is behavioural tuning: when to call the LLM, how hard to retry,
-how much vocabulary to send.
+Vendor and model name are NOT handled here. Those come from the AI Service
+deployment config, not per-bot settings.
+
+These settings control behaviour: when to call the LLM, retry rules, how much
+context to send.
 """
 
 import logging
