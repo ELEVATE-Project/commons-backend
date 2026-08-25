@@ -1065,7 +1065,7 @@ class MediaSearchV2View(APIView):
         # Each alternative needs the same widening; named any_of_blocks because
         # any_of is already the Q-builder at the top of this module.
         any_of_blocks = [
-            block.expanded(type_vocabulary).as_payload()
+            block.with_expanded_media_types(type_vocabulary).as_payload()
             for block in resolved.any_of
         ]
 

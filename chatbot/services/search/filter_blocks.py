@@ -44,7 +44,7 @@ class FilterBlock:
         return not (self.organizations or self.media_types
                     or self.exclude_organizations or self.exclude_media_types)
 
-    def expanded(self, type_vocabulary):
+    def with_expanded_media_types(self, type_vocabulary):
         """
         The same block with its media types widened to every stored spelling.
 
