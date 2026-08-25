@@ -153,9 +153,7 @@ def query_database_with_metadata(
         "filter_score": filter_score,
         "detail_filter_score": detail_filter_score
     }
-    if qdrant_filter:
-        data["qdrant_filter"] = qdrant_filter
-    
+
     # Add query only if provided
     if query:
         data["query"] = query
@@ -175,6 +173,8 @@ def query_database_with_metadata(
         data["exclude_file_type"] = exclude_file_type
     if any_of:
         data["any_of"] = any_of
+    if qdrant_filter:
+        data["qdrant_filter"] = qdrant_filter
 
     print(f"[query_database_with_metadata] Request Data: {data}")
     
