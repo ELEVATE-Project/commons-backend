@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from django.core.cache import cache
 from json_repair import repair_json
 
-from chatbot.services.search.config import bot_params, get_search_llm_setting
+from chatbot.services.search.config import get_search_llm_setting
 from chatbot.services.search.prompts import (
     SYSTEM_PROMPT,
     TOOL_NAME,
@@ -451,10 +451,6 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     print(f"[extract_search_filters] raw_query: {raw_query!r}")
     print(f"[extract_search_filters] messages sent to LLM: {messages}")
 
-    # Read once — bot_params repairs JSON per call, and three lookups would
-    # repeat that per search.
-    params = bot_params(bot)
-
     started = time.monotonic()
     try:
         response = ai_service.chat(
@@ -468,11 +464,8 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
             max_attempts=get_search_llm_setting(bot, 'llm_max_attempts'),
             backoff_base_s=get_search_llm_setting(bot, 'llm_backoff_base_s'),
             max_elapsed_s=get_search_llm_setting(bot, 'llm_max_elapsed_s'),
-            # Gateway config: row-level values pin the vendor/model for this
-            # bot, falling back to the AI_SERVICE_* env default.
-            tenant_id=params.get('ai_tenant_id'),
-            provider=params.get('ai_provider'),
-            model=params.get('ai_model'),
+            # No tenant/provider/model here on purpose: the gateway target is
+            # deployment config, so resolve_config reads AI_SERVICE_* from .env.
             provider_options=NO_REASONING,
         )
     except CONFIG_ERRORS as exc:
