@@ -1024,12 +1024,8 @@ class MediaSearchV2View(APIView):
 
         # Nothing left to embed once the LLM reduced the query to filters only,
         # so serve it from the same PostgreSQL path a filters-only request uses.
-        # Exclusions count too: "all files except PDF" leaves no residual query
-        # and is a filter-only listing, not an unfiltered vector search.
-        #
-        # Alternatives are the exception: _apply_database_filters has no notion
-        # of them and would quietly drop them, so those go down the vector path
-        # instead, which already handles a request with no query.
+        # Exclusions and alternatives count too: "all files except PDF" leaves no
+        # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
             tags or organizations or resource_types or media_types
             or exclude_organizations or exclude_media_types or resolved.any_of)
@@ -1134,15 +1130,10 @@ class MediaSearchV2View(APIView):
         
         next_url, previous_url = self._build_pagination_urls(
             request=request,
-            query=query,
             limit=limit,
             offset=offset,
             total_results=total_results,
             ordering=ordering_param if ordering_param else '',
-            tags=tags,
-            organizations=organizations,
-            resource_types=resource_types,
-            media_types=media_types,
         )
 
         return Response({
@@ -1362,6 +1353,19 @@ class MediaSearchV2View(APIView):
             any_of_blocks=any_of_blocks,
         )
 
+        # The PostgreSQL counterpart of query_database_with_metadata's payload
+        # log: which filter got which values on this request.
+        print("[MediaSearchV2View] database filters: " + str({
+            'tags': list(tags or []),
+            'organizations': list(organizations or []),
+            'resource_types': list(resource_types or []),
+            'media_types': [str(value) for value in media_types or []],
+            'exclude_organizations': list(exclude_organizations or []),
+            'exclude_media_types': [
+                str(value) for value in exclude_media_types or []],
+            'any_of': [block.as_payload() for block in any_of_blocks or []],
+        }))
+
         total_results = queryset.count()
 
         if ordering_field:
@@ -1373,19 +1377,17 @@ class MediaSearchV2View(APIView):
 
         paginated_results = queryset[offset:offset + limit]
 
+        print(f"[MediaSearchV2View] database page: ordering={ordering} "
+              f"limit={limit} offset={offset} count={total_results}")
+
         serializer = MediaListSerializer(paginated_results, many=True, context={'request': request})
 
         next_url, previous_url = self._build_pagination_urls(
             request=request,
-            query='',
             limit=limit,
             offset=offset,
             total_results=total_results,
             ordering=ordering,
-            tags=tags,
-            organizations=organizations,
-            resource_types=resource_types,
-            media_types=media_types,
         )
 
         return Response({
@@ -1544,20 +1546,49 @@ class MediaSearchV2View(APIView):
         return queryset.order_by(f'{prefix}{ordering_field}', f'{prefix}id')
 
     def _build_pagination_urls(
-        self,
-        request,
-        query,
-        limit,
-        offset,
-        total_results,
-        ordering='',
-        tags=None,
-        organizations=None,
-        resource_types=None,
-        media_types=None,
+        self, request, limit, offset, total_results, ordering='',
     ):
-        base_url = request.build_absolute_uri(request.path)       
+        """
+        Next/previous for this request, in exactly the parameters it arrived in.
 
+        The filters are re-read from the request rather than taken from the
+        view's locals: by the time these are built the AI flow has replaced
+        those with the filters it resolved, and a page-two URL carrying them
+        would drop the query it rewrote and hand the resolved filters back as
+        explicit UI ones. Parsed the same way get() parses them, aliases and all.
+        """
+        base_url = request.build_absolute_uri(request.path)
+
+        query = request.query_params.get('q', '').strip()
+
+        tags = self._parse_list_param(
+            request.query_params.get('tags', '')
+        )
+        if not tags:
+            tags = self._parse_list_param(
+                request.query_params.get('categories', '')
+            )
+
+        organizations = self._parse_list_param(
+            request.query_params.get('organizations', '')
+        )
+
+        resource_types = self._parse_list_param(
+            request.query_params.get('resource_types', '')
+        )
+        if not resource_types:
+            resource_types = self._parse_list_param(
+                request.query_params.get('resource_type', '')
+            )
+
+        media_types = self._parse_list_param(
+            request.query_params.get('media_types', '')
+        )
+        if not media_types:
+            media_types = self._parse_list_param(
+                request.query_params.get('file_type', '')
+            )
+        media_types = self._normalize_media_types(media_types)
 
         # Initialize a dictionary instead of a list
         query_params = {

@@ -2,6 +2,9 @@
 All AI-search LLM settings use the same lookup order:
 bot settings first, then environment variables, then hard-coded defaults.
 
+The exception is ENV_ONLY, which skips the bot layer: those are deployment-wide
+switches and a stale bot row must never override .env.
+
 Adding a new setting only needs a database column — no extra code.
 
 Nothing here throws errors. If someone typos a config value, we log it and fall
@@ -102,6 +105,10 @@ SETTINGS = {
         'AI_SEARCH_LLM_ORG_USE_FUZZY_CANDIDATES', False, _boolean),
 }
 
+# Deployment-wide, never per bot: whether the LLM runs at all must not differ
+# between bot rows, and a stale row must not override .env.
+ENV_ONLY = frozenset({'llm_mode'})
+
 
 def bot_params(bot):
     """
@@ -120,13 +127,20 @@ def bot_params(bot):
 
 
 def get_search_llm_setting(bot, key):
-    """Resolve one setting: bot other_params -> environment -> default."""
+    """Resolve one setting: bot other_params -> environment -> default.
+
+    An ENV_ONLY key skips the bot layer entirely and reads the environment.
+    """
     try:
         env_var, default, parse = SETTINGS[key]
     except KeyError:
         raise KeyError(f'Unknown AI-search setting {key!r}. Known: {sorted(SETTINGS)}')
 
-    for source, raw in (('bot', bot_params(bot).get(key)), ('env', os.getenv(env_var))):
+    env_source = ('env', os.getenv(env_var))
+    sources = (env_source,) if key in ENV_ONLY else (
+        ('bot', bot_params(bot).get(key)), env_source)
+
+    for source, raw in sources:
         if raw is None or raw == '':
             continue
         try:

@@ -16,6 +16,7 @@ if __name__ == '__main__' and not os.environ.get('DJANGO_SETTINGS_MODULE'):
 from chatbot.models.company_models import Company, CompanyBot          # noqa: E402
 from chatbot.models.enums import EntityStatus, LLMProvider             # noqa: E402
 from chatbot.services.search.config import (                           # noqa: E402
+    ENV_ONLY,
     SETTINGS,
     bot_params,
     get_search_llm_setting,
@@ -26,13 +27,6 @@ from chatbot.services.search.prompts import (                          # noqa: E
     SYSTEM_PROMPT,
     USER_MESSAGE_TEMPLATE,
     tool_context_json,
-)
-
-# Gateway config is seeded from the environment; existing admin values win.
-GATEWAY_KEYS = (
-    ('ai_provider', 'AI_SERVICE_PROVIDER'),
-    ('ai_model', 'AI_SERVICE_MODEL'),
-    ('ai_tenant_id', 'AI_SERVICE_TENANT_ID'),
 )
 
 DEFAULT_OWNER_SLUG = 'shikshalokamstaging'
@@ -69,16 +63,17 @@ def _name(log):
 
 
 def _seed_params():
-    """Return search settings using their currently effective values."""
-    params = {
+    """
+    Return search settings using their currently effective values.
+
+    ENV_ONLY keys are left out: writing one here would put a deployment-wide
+    switch on a row that can no longer override it anyway.
+    """
+    return {
         key: get_search_llm_setting(None, key)
         for key in SETTINGS
+        if key not in ENV_ONLY
     }
-
-    for key, env_var in GATEWAY_KEYS:
-        params[key] = (os.getenv(env_var) or '').strip()
-
-    return params
 
 
 def _merge_params(existing):
