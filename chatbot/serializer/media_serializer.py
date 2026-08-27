@@ -168,6 +168,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
 
         file_size = None
         organization_url = None
+        organization_slug = None
         org_logo = None
         key_entities = None
         display_mode = None
@@ -189,7 +190,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
                     'subdocuments',
                     'subdocuments__key_values'
                 ).only(
-                    'id', 'file', 'media_type', 'organization__url', 'organization__logo', 'display_mode',
+                    'id', 'file', 'media_type', 'organization__url', 'organization__slug', 'organization__name', 'organization__logo', 'display_mode',
                     'description', 'thumbnail', 'priority', 'source_provider'
                 ).get(id=media_id)
 
@@ -215,6 +216,8 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
 
                 if media_obj.organization:
                     organization_url = media_obj.organization.url
+                    company = media_obj.organization.name
+                    organization_slug = media_obj.organization.slug
 
                     if media_obj.organization.logo:
                         org_logo = media_obj.organization.get_public_url()
@@ -274,6 +277,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
             'tag_names': tags,
             'title': title,
             'organization': company,
+            'organization_slug': organization_slug,
             'document_type': document_type,
             'key_entities': key_entities,
             'file_size': file_size,
@@ -393,6 +397,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
     display_mode_display = serializers.CharField(source='get_display_mode_display', read_only=True)
     title = serializers.SerializerMethodField()
     organization = serializers.SerializerMethodField()
+    organization_slug = serializers.SerializerMethodField()
     organization_url = serializers.SerializerMethodField()
     org_logo = serializers.SerializerMethodField()
     document_type = serializers.SerializerMethodField()
@@ -411,7 +416,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         fields = [
             'id', 'name', 'description', 'priority', 'priority_display',
             'media_type', 'media_type_display', 'source_provider', 'created_at', 'updated_at',
-            's3_url', 'file', 'tag_names', 'title', 'organization',
+            's3_url', 'file', 'tag_names', 'title', 'organization', 'organization_slug',
             'document_type', 'key_entities', 'file_size', 'organization_url', 'org_logo',
             'display_mode', 'display_mode_display',
             'view_count', 'download_count',
@@ -467,6 +472,11 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
     def get_organization(self, obj):
         if obj.organization:
             return obj.organization.name
+        return None
+
+    def get_organization_slug(self, obj):
+        if obj.organization:
+            return obj.organization.slug
         return None
 
     def get_organization_url(self, obj):

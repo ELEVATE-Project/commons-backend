@@ -20,6 +20,7 @@ nav:
   - Applications:
        - Chatbot:
           - Overview: apps/chatbot/overview.md
+          - "Release 1.1 Checklist": apps/chatbot/release_doc/release_1.1.0.md
           - Authentication: apps/chatbot/chatbot_auth.md
           - Admin: apps/chatbot/chatbot_admin.md
           - Form: apps/chatbot/chatbot_form.md
