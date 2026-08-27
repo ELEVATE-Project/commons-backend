@@ -943,12 +943,8 @@ class MediaSearchV2View(APIView):
             )
             any_of = self._build_any_of_filters(query)
             if not any_of:
-                if not tags:
-                    tags = included_values(resolved_filters.theme)
                 if not organizations:
                     organizations = included_values(resolved_filters.organization, use_slug=True)
-                if not resource_types:
-                    resource_types = included_values(resolved_filters.resource_type)
                 if not media_types:
                     media_types = self._included_file_type_values(
                         resolved_filters.file_type
@@ -1059,8 +1055,14 @@ class MediaSearchV2View(APIView):
         query = resolved.query
         organizations = resolved.organizations
         media_types = resolved.media_types
-        exclude_organizations = resolved.exclude_organizations
-        exclude_media_types = resolved.exclude_media_types
+        exclude_organizations = list(dict.fromkeys(
+            (exclude_organizations or []) + resolved.exclude_organizations
+        ))
+        exclude_media_types = list(dict.fromkeys(
+            (exclude_media_types or []) + resolved.exclude_media_types
+        ))
+        resolved_any_of = list(resolved.any_of or [])
+        deterministic_any_of = list(any_of or [])
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
@@ -1073,7 +1075,8 @@ class MediaSearchV2View(APIView):
         # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
             tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types or resolved.any_of)
+            or exclude_organizations or exclude_media_types
+            or resolved_any_of or deterministic_any_of)
         if not query and filters_present:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
@@ -1091,7 +1094,7 @@ class MediaSearchV2View(APIView):
                 media_types=media_types,
                 exclude_organizations=exclude_organizations,
                 exclude_media_types=exclude_media_types,
-                any_of_blocks=resolved.any_of,
+                any_of_blocks=resolved_any_of or deterministic_any_of,
                 diagnostics=resolved.diagnostics,
             )
 
@@ -1109,8 +1112,18 @@ class MediaSearchV2View(APIView):
         # any_of is already the Q-builder at the top of this module.
         any_of_blocks = [
             block.with_expanded_media_types(type_vocabulary).as_payload()
-            for block in resolved.any_of
+            for block in resolved_any_of
         ]
+        for block in deterministic_any_of:
+            if not isinstance(block, dict):
+                continue
+            expanded_block = dict(block)
+            file_types = expanded_block.get("file_type")
+            if file_types:
+                expanded_block["file_type"] = expand_aliases(
+                    file_types, type_vocabulary
+                )
+            any_of_blocks.append(expanded_block)
 
         # Query vector database
         vector_response = query_database_with_metadata(
@@ -1552,21 +1565,44 @@ class MediaSearchV2View(APIView):
             any_of_conditions = Q()
             for block in any_of_blocks:
                 block_conditions = Q()
+                if isinstance(block, dict):
+                    block_organizations = block.get('organizations') or []
+                    block_media_types = (
+                        block.get('media_types') or block.get('file_type') or []
+                    )
+                    block_exclude_organizations = (
+                        block.get('exclude_organizations') or []
+                    )
+                    block_exclude_media_types = (
+                        block.get('exclude_media_types')
+                        or block.get('exclude_file_type')
+                        or []
+                    )
+                else:
+                    block_organizations = block.organizations
+                    block_media_types = block.media_types
+                    block_exclude_organizations = block.exclude_organizations
+                    block_exclude_media_types = block.exclude_media_types
                 
-                if block.organizations:
+                if block_organizations:
                     org_q = Q()
-                    for org in block.organizations:
+                    for org in block_organizations:
                         org_q |= Q(organization__slug__iexact=org)
                     block_conditions &= org_q
                 
-                if block.media_types:
-                    block_conditions &= Q(overridden_media_type__in=block.media_types)
+                if block_media_types:
+                    block_conditions &= Q(overridden_media_type__in=block_media_types)
                 
-                if block.exclude_organizations:
-                    block_conditions &= ~any_of('organization__slug__iexact', block.exclude_organizations)
+                if block_exclude_organizations:
+                    block_conditions &= ~any_of(
+                        'organization__slug__iexact',
+                        block_exclude_organizations,
+                    )
                 
-                if block.exclude_media_types:
-                    block_conditions &= ~Q(overridden_media_type__in=block.exclude_media_types)
+                if block_exclude_media_types:
+                    block_conditions &= ~Q(
+                        overridden_media_type__in=block_exclude_media_types
+                    )
                 
                 any_of_conditions |= block_conditions
             

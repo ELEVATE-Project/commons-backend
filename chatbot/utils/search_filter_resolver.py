@@ -16,7 +16,6 @@ class MatchResult:
     slug: Optional[str]
     method: str
     score: int
-    confidence: str
     matched_span: str
     negated: bool = False
     alternates: List[str] = field(default_factory=list)
@@ -25,8 +24,6 @@ class MatchResult:
 @dataclass
 class ResolvedFilters:
     organization: List[MatchResult] = field(default_factory=list)
-    theme: List[MatchResult] = field(default_factory=list)
-    resource_type: List[MatchResult] = field(default_factory=list)
     file_type: List[MatchResult] = field(default_factory=list)
     search_text: str = ""
 
@@ -142,7 +139,6 @@ class CategoryMatcher:
                 slug=slug,
                 method="fuzzy",
                 score=score,
-                confidence="high",
                 matched_span=candidate,
                 negated=_is_negated(query.lower(), span_start) if span_start != -1 else False,
                 alternates=alternates,
@@ -226,7 +222,6 @@ class CategoryMatcher:
                     slug=slug,
                     method="gazetteer_exact",
                     score=100,
-                    confidence="high",
                     matched_span=query[start:end],
                     negated=_is_negated(lowered, start),
                 )))
@@ -241,8 +236,6 @@ def resolve_query_exact(query: str) -> ResolvedFilters:
     remaining = query or ""
     results = {
         "organization": [],
-        "theme": [],
-        "resource_type": [],
         "file_type": [],
     }  # type: Dict[str, List[MatchResult]]
     matchers = _build_matchers()
@@ -274,8 +267,6 @@ def resolve_query_exact(query: str) -> ResolvedFilters:
 
     return ResolvedFilters(
         organization=results["organization"],
-        theme=results["theme"],
-        resource_type=results["resource_type"],
         file_type=results["file_type"],
         search_text=clean_search_text(remaining),
     )
@@ -295,8 +286,6 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
         "query": query,
         "resolved": {
             "organization": [_match_to_dict(match) for match in resolved.organization],
-            "theme": [_match_to_dict(match) for match in resolved.theme],
-            "resource_type": [_match_to_dict(match) for match in resolved.resource_type],
             "file_type": [_match_to_dict(match) for match in resolved.file_type],
         },
         "search_text": resolved.search_text,
@@ -419,8 +408,6 @@ def _clean_fuzzy_candidate(candidate: str) -> str:
 def _build_matchers() -> Dict[str, CategoryMatcher]:
     return {
         "organization": CategoryMatcher(_organization_entries_from_env(), has_slug=True, auto_alias=True, auto_alias_leading_word=True),
-        "theme": CategoryMatcher(_theme_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
-        "resource_type": CategoryMatcher(_resource_type_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
         "file_type": CategoryMatcher(_file_type_entries_from_env(), has_slug=True, auto_alias=False),
     }
 
@@ -431,14 +418,6 @@ def _organization_entries_from_env() -> List[OrgEntry]:
 
 def _file_type_entries_from_env() -> List[OrgEntry]:
     return _load_env_entries("SEARCH_FILTER_FILE_TYPES", expected_length=3)
-
-
-def _resource_type_entries_from_env() -> List[SimpleEntry]:
-    return _load_env_entries("SEARCH_FILTER_RESOURCE_TYPES", expected_length=2)
-
-
-def _theme_entries_from_env() -> List[SimpleEntry]:
-    return _load_env_entries("SEARCH_FILTER_THEMES", expected_length=2)
 
 
 def _organization_confidence_threshold() -> int:
@@ -562,7 +541,6 @@ def _match_to_dict(match: MatchResult) -> Dict:
         "slug": match.slug,
         "method": match.method,
         "score": match.score,
-        "confidence": match.confidence,
         "matched_span": match.matched_span,
         "negated": match.negated,
         "alternates": match.alternates,

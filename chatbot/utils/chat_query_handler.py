@@ -120,9 +120,7 @@ def query_database_with_metadata(
     top_k: int = 20,
     filter_score: int = 0,
     detail_filter_score: Optional[Dict[str, Any]] = None,
-    categories: List[str] = None,
     organizations: List[str] = None,
-    resource_type: List[str] = None,
     file_type: List[str] = None,
     exclude_organizations: List[str] = None,
     exclude_file_type: List[str] = None,
@@ -158,12 +156,8 @@ def query_database_with_metadata(
         data["query"] = query
     
     # Add optional filters if provided
-    if categories:
-        data["categories"] = categories
     if organizations:
         data["organizations"] = organizations
-    if resource_type:
-        data["resource_type"] = resource_type
     if file_type:
         data["file_type"] = file_type
     if exclude_organizations:
