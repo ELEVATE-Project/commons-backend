@@ -17,6 +17,7 @@ from chatbot.serializer.media_serializer import (
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
+    clean_search_text,
     included_values,
     resolve_query_exact,
     to_response_dict,
@@ -44,6 +45,9 @@ class FuzzyFilterResult:
     """
     organizations: list = None
     media_types: list = None
+    exclude_organizations: list = None
+    exclude_media_types: list = None
+    query: str = None
     confidence: float = 0.0
     candidates: dict = field(default_factory=dict)
 
@@ -53,9 +57,8 @@ class ResolvedFilters:
     """
     What the search should actually run with, plus how each part was decided.
 
-    ``diagnostics`` is the debug trail, surfaced to callers as
-    ``search_metadata.filter_resolution``. Named for what it is rather than
-    "metadata", which already means the Qdrant payload elsewhere in search.
+    ``diagnostics`` is the internal debug trail. Named for what it is rather
+    than "metadata", which already means the Qdrant payload elsewhere in search.
 
     The ``exclude_*`` lists are negated conditions ("except Shikshalokam").
     They are a separate axis from the positive lists, not the absence of one.
@@ -932,10 +935,9 @@ class MediaSearchV2View(APIView):
             )
         media_types = self._normalize_media_types(media_types)
 
-        exclude_organizations = []
-        exclude_media_types = []
+        fuzzy = None
         any_of = []
-        resolved_filters = resolve_query_exact(query) if query else None
+        resolved_filters = self._resolve_query_filters(query) if query else None
         if resolved_filters:
             print(
                 "[MediaSearchV2View] Resolved search filters:",
@@ -943,21 +945,20 @@ class MediaSearchV2View(APIView):
             )
             any_of = self._build_any_of_filters(query)
             if not any_of:
-                if not organizations:
-                    organizations = included_values(resolved_filters.organization, use_slug=True)
-                if not media_types:
-                    media_types = self._included_file_type_values(
-                        resolved_filters.file_type
+                if not tags:
+                    tags = included_values(resolved_filters.theme)
+                if not resource_types:
+                    resource_types = included_values(
+                        resolved_filters.resource_type
                     )
-                exclude_organizations = self._excluded_values(
-                    resolved_filters.organization, use_slug=True
-                )
-                exclude_media_types = self._excluded_file_type_values(
-                    resolved_filters.file_type
-                )
-            query = self._clean_filter_search_text(
-                self._search_text_from_any_of_clauses(query)
-                if any_of else resolved_filters.search_text
+            fuzzy = self._fuzzy_result_from_resolved_filters(
+                resolved_filters,
+                include_flat_filters=not any_of,
+                raw_query=query,
+                semantic_query=(
+                    self._search_text_from_any_of_clauses(query)
+                    if any_of else resolved_filters.search_text
+                ),
             )
         
         # Determine ordering: score for search, user choice otherwise
@@ -986,8 +987,7 @@ class MediaSearchV2View(APIView):
                 organizations=organizations,
                 resource_types=resource_types,
                 media_types=media_types,
-                exclude_organizations=exclude_organizations,
-                exclude_media_types=exclude_media_types,
+                fuzzy=fuzzy,
                 any_of=any_of,
             )
 
@@ -1022,8 +1022,7 @@ class MediaSearchV2View(APIView):
         organizations,
         resource_types,
         media_types,
-        exclude_organizations=None,
-        exclude_media_types=None,
+        fuzzy=None,
         any_of=None,
     ):
         # Fetch large batch for proper sorting and pagination
@@ -1032,16 +1031,14 @@ class MediaSearchV2View(APIView):
         company_bot = CompanyBot.objects.filter(route='/sg_search_bot').first()
         filter_score = company_bot.filter_score if company_bot else 0
 
-        other_params = company_bot.other_params if company_bot.other_params else {}
+        other_params = (
+            company_bot.other_params
+            if company_bot and company_bot.other_params else {}
+        )
         if other_params and isinstance(other_params, str):
             other_params = json_repair.repair_json(other_params, return_objects=True)
         detail_filter_score = other_params.get("detail_filter_score", None)
 
-        # Resolve the natural-language query into filters. Explicit filters from
-        # the UI are passed through untouched and always win.
-        # Placeholder until the RapidFuzz resolver lands in this file: swap for
-        # `fuzzy = self._resolve_fuzzy_filters(query)`.
-        fuzzy = None
         resolved = self._resolve_search_filters(
             query,
             fuzzy=fuzzy,
@@ -1053,50 +1050,20 @@ class MediaSearchV2View(APIView):
         # Not `resolved.query or query`: an empty residual is meaningful and
         # becomes a filters-only listing below.
         query = resolved.query
+        if not query:
+            ordering = ordering_param if ordering_param else '-created_at'
         organizations = resolved.organizations
         media_types = resolved.media_types
-        exclude_organizations = list(dict.fromkeys(
-            (exclude_organizations or []) + resolved.exclude_organizations
-        ))
-        exclude_media_types = list(dict.fromkeys(
-            (exclude_media_types or []) + resolved.exclude_media_types
-        ))
+        exclude_organizations = list(resolved.exclude_organizations)
+        exclude_media_types = list(resolved.exclude_media_types)
         resolved_any_of = list(resolved.any_of or [])
         deterministic_any_of = list(any_of or [])
+        combined_any_of = resolved_any_of + deterministic_any_of
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
         print(f"[MediaSearchV2View] resolved media_types: {media_types}")
         print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
-
-        # Nothing left to embed once the LLM reduced the query to filters only,
-        # so serve it from the same PostgreSQL path a filters-only request uses.
-        # Exclusions and alternatives count too: "all files except PDF" leaves no
-        # residual query, and is a filter-only listing, not an unfiltered search.
-        filters_present = bool(
-            tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types
-            or resolved_any_of or deterministic_any_of)
-        if not query and filters_present:
-            # Ordering is 'score' here, which is meaningless without a query.
-            db_ordering = ordering_param if ordering_param else '-created_at'
-            db_field, db_reverse = self._parse_ordering(db_ordering)
-            return self._get_database_list_response(
-                request=request,
-                limit=limit,
-                offset=offset,
-                ordering=db_ordering,
-                ordering_field=db_field,
-                ordering_reverse=db_reverse,
-                tags=tags,
-                organizations=organizations,
-                resource_types=resource_types,
-                media_types=media_types,
-                exclude_organizations=exclude_organizations,
-                exclude_media_types=exclude_media_types,
-                any_of_blocks=resolved_any_of or deterministic_any_of,
-                diagnostics=resolved.diagnostics,
-            )
 
         # Imported locally, like the AI-search chain elsewhere in this view, so a
         # broken import degrades one search instead of the whole media API.
@@ -1122,6 +1089,11 @@ class MediaSearchV2View(APIView):
             if file_types:
                 expanded_block["file_type"] = expand_aliases(
                     file_types, type_vocabulary
+                )
+            exclude_file_types = expanded_block.get("exclude_file_type")
+            if exclude_file_types:
+                expanded_block["exclude_file_type"] = expand_aliases(
+                    exclude_file_types, type_vocabulary
                 )
             any_of_blocks.append(expanded_block)
 
@@ -1153,10 +1125,6 @@ class MediaSearchV2View(APIView):
                 "next": None,
                 "previous": None,
                 "results": [],
-                "search_metadata": {
-                    "query": query,
-                    "vector_db_error": True
-                }
             }, status=error_status)
 
         all_results = vector_response.get('results', [])
@@ -1199,20 +1167,6 @@ class MediaSearchV2View(APIView):
             "next": next_url,
             "previous": previous_url,
             "results": serializer.data,
-            "search_metadata": {
-                "query": query,
-                "top_k": top_k,
-                "offset": offset,
-                "limit": limit,
-                "ordering": ordering,
-                "returned_results": len(serializer.data),
-                "search_config": vector_response.get('search_config', {}),
-                # How each filter was decided. Without this it is invisible why
-                # a natural-language search returned what it did — in particular
-                # "the LLM was skipped" and "the LLM found nothing" look
-                # identical from the results alone.
-                "filter_resolution": resolved.diagnostics,
-            }
         }, status=status.HTTP_200_OK)
 
     def _resolve_search_filters(self, raw_query, fuzzy=None, explicit_filters=None):
@@ -1241,7 +1195,7 @@ class MediaSearchV2View(APIView):
         # getattr, not attribute access: the deterministic resolver may not carry
         # exclusions yet, and an absent field must read as "found none".
         resolved = ResolvedFilters(
-            query=raw_query,
+            query=getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
             organizations=explicit_orgs or (fuzzy.organizations or []),
             media_types=explicit_types or (fuzzy.media_types or []),
             exclude_organizations=getattr(fuzzy, 'exclude_organizations', None) or [],
@@ -1257,6 +1211,10 @@ class MediaSearchV2View(APIView):
                     'fuzzy' if fuzzy.media_types else 'none'),
                 'organizations': explicit_orgs or (fuzzy.organizations or []),
                 'media_types': explicit_types or (fuzzy.media_types or []),
+                'exclude_organizations': getattr(fuzzy, 'exclude_organizations', None) or [],
+                'exclude_media_types': getattr(fuzzy, 'exclude_media_types', None) or [],
+                'semantic_query': getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
+                'candidates': fuzzy.candidates,
             },
         )
 
@@ -1379,8 +1337,8 @@ class MediaSearchV2View(APIView):
         resolved.diagnostics['exclude_organizations'] = resolved.exclude_organizations
         resolved.diagnostics['exclude_media_types'] = resolved.exclude_media_types
 
-        resolved.query = llm.semantic_query
-        resolved.diagnostics['semantic_query'] = llm.semantic_query
+        resolved.query = self._clean_filter_search_text(llm.semantic_query)
+        resolved.diagnostics['semantic_query'] = resolved.query
 
     def _get_database_list_response(
         self,
@@ -1421,7 +1379,10 @@ class MediaSearchV2View(APIView):
             'exclude_organizations': list(exclude_organizations or []),
             'exclude_media_types': [
                 str(value) for value in exclude_media_types or []],
-            'any_of': [block.as_payload() for block in any_of_blocks or []],
+            'any_of': [
+                self._filter_block_payload(block)
+                for block in any_of_blocks or []
+            ],
         }))
 
         total_results = queryset.count()
@@ -1453,14 +1414,6 @@ class MediaSearchV2View(APIView):
             "next": next_url,
             "previous": previous_url,
             "results": serializer.data,
-            "search_metadata": {
-                "query": '',
-                "offset": offset,
-                "limit": limit,
-                "ordering": ordering,
-                "returned_results": len(serializer.data),
-                "filter_resolution": diagnostics or {},
-            }
         }, status=status.HTTP_200_OK)
 
     def _build_database_queryset(self):
@@ -1817,6 +1770,80 @@ class MediaSearchV2View(APIView):
             if item.strip()
         ]
 
+    def _resolve_query_filters(self, query):
+        from chatbot.services.search.vocabularies import (
+            file_type_vocabulary,
+            organization_vocabulary,
+        )
+        return resolve_query_exact(
+            query,
+            organization_vocabulary=organization_vocabulary(),
+            file_type_vocabulary=file_type_vocabulary(),
+        )
+
+    def _fuzzy_result_from_resolved_filters(
+        self,
+        resolved_filters,
+        include_flat_filters=True,
+        raw_query=None,
+        semantic_query=None,
+    ):
+        semantic_query = self._clean_filter_search_text(
+            resolved_filters.search_text if semantic_query is None
+            else semantic_query
+        )
+        if not semantic_query and raw_query:
+            semantic_query = self._semantic_query_without_filter_spans(
+                raw_query, resolved_filters
+            )
+        return FuzzyFilterResult(
+            organizations=included_values(
+                resolved_filters.organization, use_slug=True
+            ) if include_flat_filters else [],
+            media_types=self._included_file_type_values(
+                resolved_filters.file_type
+            ) if include_flat_filters else [],
+            exclude_organizations=self._excluded_values(
+                resolved_filters.organization, use_slug=True
+            ) if include_flat_filters else [],
+            exclude_media_types=self._excluded_file_type_values(
+                resolved_filters.file_type
+            ) if include_flat_filters else [],
+            query=semantic_query,
+            confidence=resolved_filters.confidence,
+            candidates={
+                "organizations": resolved_filters.candidates.get(
+                    "organization", []
+                ),
+                "media_types": resolved_filters.candidates.get(
+                    "file_type", []
+                ),
+            },
+        )
+
+    def _semantic_query_without_filter_spans(self, raw_query, resolved_filters):
+        remaining = raw_query or ""
+        for match in (
+            list(resolved_filters.organization)
+            + list(resolved_filters.file_type)
+        ):
+            span = getattr(match, "matched_span", "")
+            if not span:
+                continue
+            remaining = re.sub(
+                re.escape(span),
+                " ",
+                remaining,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return self._clean_filter_search_text(clean_search_text(remaining))
+
+    def _filter_block_payload(self, block):
+        if isinstance(block, dict):
+            return block
+        return block.as_payload()
+
     def _excluded_values(self, matches, use_slug=False):
         values = []
         for match in matches:
@@ -1869,7 +1896,7 @@ class MediaSearchV2View(APIView):
 
         blocks = []
         for clause in clauses:
-            resolved = resolve_query_exact(clause)
+            resolved = self._resolve_query_filters(clause)
             block = self._any_of_block_from_resolved_filters(resolved)
             if block:
                 blocks.append(block)
@@ -1883,7 +1910,7 @@ class MediaSearchV2View(APIView):
         ]
         search_texts = []
         for clause in clauses:
-            search_text = resolve_query_exact(clause).search_text
+            search_text = self._resolve_query_filters(clause).search_text
             if search_text and search_text not in search_texts:
                 search_texts.append(search_text)
         if not search_texts:
@@ -1927,7 +1954,7 @@ class MediaSearchV2View(APIView):
     def _clean_filter_search_text(self, search_text):
         cleaned = re.sub(r"[^\w\s]", " ", search_text or "").strip().lower()
         cleaned = re.sub(r"\s+", " ", cleaned)
-        if cleaned in {"everything", "all", "anything"}:
+        if cleaned in {"everything", "all", "anything", "and", "or"}:
             return ""
         return cleaned
 

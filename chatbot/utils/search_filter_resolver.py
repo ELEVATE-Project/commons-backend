@@ -20,12 +20,24 @@ class MatchResult:
     negated: bool = False
     alternates: List[str] = field(default_factory=list)
 
+    @property
+    def confidence(self) -> str:
+        if self.score >= 90:
+            return "high"
+        if self.score >= 75:
+            return "medium"
+        return "low"
+
 
 @dataclass
 class ResolvedFilters:
     organization: List[MatchResult] = field(default_factory=list)
+    theme: List[MatchResult] = field(default_factory=list)
+    resource_type: List[MatchResult] = field(default_factory=list)
     file_type: List[MatchResult] = field(default_factory=list)
     search_text: str = ""
+    confidence: float = 0.0
+    candidates: Dict[str, List[str]] = field(default_factory=dict)
 
 
 class CategoryMatcher:
@@ -232,43 +244,77 @@ class CategoryMatcher:
         return [result for _, result in hits]
 
 
-def resolve_query_exact(query: str) -> ResolvedFilters:
+def resolve_query_exact(
+    query: str,
+    organization_vocabulary: Optional[Dict[str, List[str]]] = None,
+    file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
+) -> ResolvedFilters:
     remaining = query or ""
     results = {
         "organization": [],
+        "theme": [],
+        "resource_type": [],
         "file_type": [],
     }  # type: Dict[str, List[MatchResult]]
-    matchers = _build_matchers()
+    matchers = _build_matchers(
+        organization_vocabulary=organization_vocabulary,
+        file_type_vocabulary=file_type_vocabulary,
+    )
 
-    for field_name in ("organization", "file_type"):
+    for field_name in ("organization", "theme", "resource_type", "file_type"):
         matcher = matchers[field_name]
         matches = matcher.find_all_exact(remaining)
         results[field_name] = matches
         if matches:
             remaining = _strip_all(remaining, matches)
 
-    org_threshold = _organization_confidence_threshold()
-    org_matches = results.get("organization", [])
-    org_score = max((match.score for match in org_matches), default=0)
-    if org_score < org_threshold:
-        fuzzy_matches = matchers["organization"].find_all_fuzzy(remaining, org_threshold)
-        if fuzzy_matches:
-            results["organization"] = fuzzy_matches
-            remaining = _strip_all(remaining, fuzzy_matches)
-    else:
-        fuzzy_matches = matchers["organization"].find_all_fuzzy(
+    candidates = {}
+    for field_name in ("organization", "theme", "resource_type", "file_type"):
+        existing_matches = results.get(field_name, [])
+        threshold = _confidence_threshold(field_name)
+        fuzzy_matches = matchers[field_name].find_all_fuzzy(
             remaining,
-            org_threshold,
-            exclude_display_values=[match.display_value for match in org_matches],
+            threshold,
+            exclude_display_values=[
+                match.display_value for match in existing_matches
+            ],
         )
         if fuzzy_matches:
-            results["organization"].extend(fuzzy_matches)
+            results[field_name].extend(fuzzy_matches)
+            candidates[field_name] = [
+                match.slug if match.slug else match.display_value
+                for match in fuzzy_matches[:_candidate_limit()]
+            ]
             remaining = _strip_all(remaining, fuzzy_matches)
+        else:
+            near_matches = matchers[field_name].find_all_fuzzy(
+                remaining,
+                _candidate_threshold(field_name),
+                exclude_display_values=[
+                    match.display_value for match in existing_matches
+                ],
+            )
+            if near_matches:
+                candidates[field_name] = [
+                    match.slug if match.slug else match.display_value
+                    for match in near_matches[:_candidate_limit()]
+                ]
+
+    scores = [
+        match.score
+        for matches in results.values()
+        for match in matches
+    ]
+    confidence = (min(scores) / 100.0) if scores else 0.0
 
     return ResolvedFilters(
         organization=results["organization"],
+        theme=results["theme"],
+        resource_type=results["resource_type"],
         file_type=results["file_type"],
         search_text=clean_search_text(remaining),
+        confidence=confidence,
+        candidates=candidates,
     )
 
 
@@ -286,9 +332,13 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
         "query": query,
         "resolved": {
             "organization": [_match_to_dict(match) for match in resolved.organization],
+            "theme": [_match_to_dict(match) for match in resolved.theme],
+            "resource_type": [_match_to_dict(match) for match in resolved.resource_type],
             "file_type": [_match_to_dict(match) for match in resolved.file_type],
         },
         "search_text": resolved.search_text,
+        "confidence": resolved.confidence,
+        "candidates": resolved.candidates,
     }
 
 
@@ -304,7 +354,7 @@ def clean_search_text(text: str) -> str:
             working = working.replace(phrase, " ")
 
     words = working.split()
-    removable_words = _noise_words() | _negation_words()
+    removable_words = _noise_words() | _negation_words() | _stopwords()
     return " ".join(word for word in words if word not in removable_words).strip()
 
 
@@ -405,11 +455,67 @@ def _clean_fuzzy_candidate(candidate: str) -> str:
     return " ".join(words).strip()
 
 
-def _build_matchers() -> Dict[str, CategoryMatcher]:
+def _build_matchers(
+    organization_vocabulary: Optional[Dict[str, List[str]]] = None,
+    file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, CategoryMatcher]:
     return {
-        "organization": CategoryMatcher(_organization_entries_from_env(), has_slug=True, auto_alias=True, auto_alias_leading_word=True),
-        "file_type": CategoryMatcher(_file_type_entries_from_env(), has_slug=True, auto_alias=False),
+        "organization": CategoryMatcher(
+            _organization_entries(organization_vocabulary),
+            has_slug=True,
+            auto_alias=True,
+            auto_alias_leading_word=False,
+        ),
+        "theme": CategoryMatcher(_theme_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
+        "resource_type": CategoryMatcher(_resource_type_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
+        "file_type": CategoryMatcher(
+            _file_type_entries(file_type_vocabulary),
+            has_slug=True,
+            auto_alias=False,
+        ),
     }
+
+
+def _organization_entries(vocabulary) -> List[OrgEntry]:
+    if not vocabulary:
+        return _organization_entries_from_env()
+    return _entries_from_vocabulary(vocabulary)
+
+
+def _file_type_entries(vocabulary) -> List[OrgEntry]:
+    if not vocabulary:
+        return _file_type_entries_from_env()
+    return _merge_env_aliases(
+        _entries_from_vocabulary(vocabulary),
+        _file_type_entries_from_env(),
+    )
+
+
+def _entries_from_vocabulary(vocabulary) -> List[OrgEntry]:
+    entries = []
+    for slug, aliases in (vocabulary or {}).items():
+        aliases = [str(alias) for alias in aliases or [] if alias]
+        display_name = aliases[0] if aliases else str(slug)
+        extra_aliases = list(dict.fromkeys(aliases + [str(slug)]))
+        entries.append((display_name, str(slug), extra_aliases))
+    return entries
+
+
+def _merge_env_aliases(entries: List[OrgEntry], env_entries: List[OrgEntry]) -> List[OrgEntry]:
+    by_slug = {
+        slug: (display_name, slug, list(aliases))
+        for display_name, slug, aliases in entries
+    }
+    for display_name, slug, aliases in env_entries:
+        existing = by_slug.get(slug)
+        if existing is None:
+            by_slug[slug] = (display_name, slug, list(aliases))
+            continue
+
+        existing_display, _, existing_aliases = existing
+        merged_aliases = list(dict.fromkeys(existing_aliases + list(aliases)))
+        by_slug[slug] = (existing_display or display_name, slug, merged_aliases)
+    return list(by_slug.values())
 
 
 def _organization_entries_from_env() -> List[OrgEntry]:
@@ -420,8 +526,35 @@ def _file_type_entries_from_env() -> List[OrgEntry]:
     return _load_env_entries("SEARCH_FILTER_FILE_TYPES", expected_length=3)
 
 
+def _resource_type_entries_from_env() -> List[SimpleEntry]:
+    return _load_env_entries("SEARCH_FILTER_RESOURCE_TYPES", expected_length=2)
+
+
+def _theme_entries_from_env() -> List[SimpleEntry]:
+    return _load_env_entries("SEARCH_FILTER_THEMES", expected_length=2)
+
+
 def _organization_confidence_threshold() -> int:
     return _int_env("SEARCH_FILTER_ORGANIZATION_CONFIDENCE_THRESHOLD", default_value=70, min_value=0, max_value=100)
+
+
+def _confidence_threshold(field_name: str) -> int:
+    if field_name == "organization":
+        return _organization_confidence_threshold()
+    return _int_env(
+        f"SEARCH_FILTER_{field_name.upper()}_CONFIDENCE_THRESHOLD",
+        default_value=85,
+        min_value=0,
+        max_value=100,
+    )
+
+
+def _candidate_threshold(field_name: str) -> int:
+    return max(50, _confidence_threshold(field_name) - 15)
+
+
+def _candidate_limit() -> int:
+    return _int_env("SEARCH_FILTER_CANDIDATE_LIMIT", default_value=5, min_value=1)
 
 
 def _load_env_entries(env_name: str, expected_length: int) -> List[OrgEntry]:
@@ -555,6 +688,22 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
     window_size = _negation_window_words()
     if window_size <= 0:
         return False
+
+    last_negation = max(
+        (lowered_query.rfind(cue, 0, match_start) for cue in _negation_words()),
+        default=-1,
+    )
+    if last_negation == -1:
+        return False
+
+    scope_breakers = ("about", "regarding", "related to", "covering", "from", "on")
+    last_breaker = max(
+        (lowered_query.rfind(breaker, 0, match_start) for breaker in scope_breakers),
+        default=-1,
+    )
+    if last_breaker > last_negation:
+        return False
+
     window_words = words[-window_size:]
     window_text = " ".join(window_words)
     for cue in _negation_words():
