@@ -126,7 +126,7 @@ def query_database_with_metadata(
     file_type: List[str] = None,
     exclude_organizations: List[str] = None,
     exclude_file_type: List[str] = None,
-    any_of: List[Dict[str, Any]] = None,
+    any_of: List[Dict[str, Any]] = None
 ):
     """
     Query vector database with metadata filters for media search v2.
@@ -152,7 +152,7 @@ def query_database_with_metadata(
         "filter_score": filter_score,
         "detail_filter_score": detail_filter_score
     }
-
+    
     # Add query only if provided
     if query:
         data["query"] = query
