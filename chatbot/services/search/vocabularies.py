@@ -11,6 +11,9 @@ case-insensitive matching decide *whether* a value is valid, but
 
 import logging
 
+from django.core.cache import cache
+
+from chatbot.models.company_models import Company
 from chatbot.models.enums import EntityStatus, FileTypeChoices
 from chatbot.services.search.config import (
     VOCAB_AUTO,
@@ -18,50 +21,46 @@ from chatbot.services.search.config import (
     VOCAB_FULL,
     get_search_llm_setting,
 )
-from chatbot.utils.company_cache import get_all_companies
 
 logger = logging.getLogger('django')
+
+CACHE_TTL_SECONDS = 300
+ORG_CACHE_KEY = 'ai_search:org_vocab:{scope}'
 
 
 def organization_vocabulary(scope=None):
     """
-    ``{slug: [display name]}`` for every active organization.
+    ``{slug: [display name]}`` for every active organization, cached per scope.
 
-    The organization list comes from Vishwa's Redis-backed company cache
-    (`get_all_companies`) instead of SEARCH_FILTER_ORGANIZATIONS. When the Redis
-    cache is cold, that helper hydrates it from the database.
+    ``scope`` is unused today (search is global) but keeps the cache key ready
+    for tenant-scoped search, so an unscoped cache can't leak across tenants later.
     """
-    return {
-        company.slug: [company.name]
-        for company in get_all_companies()
-        if (
-            company.slug
-            and company.status == EntityStatus.ACTIVE
-        )
-    }
+    key = ORG_CACHE_KEY.format(scope=scope or 'global')
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    rows = (
+        Company.objects
+        .filter(status=EntityStatus.ACTIVE)
+        .exclude(slug__isnull=True).exclude(slug='')
+        .values_list('slug', 'name')
+    )
+    # Skip inactive orgs: suggesting one would offer a filter that matches nothing.
+    vocabulary = {slug: [name] for slug, name in rows if slug}
+
+    cache.set(key, vocabulary, CACHE_TTL_SECONDS)
+    return vocabulary
 
 
 def file_type_vocabulary():
     """``{mime: [label, ext, .ext]}`` from the static FileTypeChoices enum."""
-    vector_type_aliases = {
-        FileTypeChoices.CSV.value: ["project_task"],
-        FileTypeChoices.XLS.value: ["xlsx_rag_optimized"],
-        FileTypeChoices.XLSX.value: ["xlsx_rag_optimized"],
-        FileTypeChoices.TXT.value: ["text", "markdown"],
-    }
     extensions = FileTypeChoices.get_extension_mapping()
     vocabulary = {}
     for choice in FileTypeChoices:
         dotted = extensions.get(choice, '')
         bare = dotted.lstrip('.')
-        label = str(choice.label)
-        aliases = [label, bare, dotted]
-        aliases.extend(vector_type_aliases.get(choice.value, []))
-        if label:
-            aliases.append(f"{label}s")
-        if bare:
-            aliases.append(f"{bare}s")
-        vocabulary[choice.value] = list(dict.fromkeys(aliases))
+        vocabulary[choice.value] = [str(choice.label), bare, dotted]
     return vocabulary
 
 
