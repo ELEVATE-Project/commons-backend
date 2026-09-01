@@ -940,7 +940,7 @@ class MediaSearchV2View(APIView):
         resolved_filters = self._resolve_query_filters(query) if query else None
         if resolved_filters:
             print(
-                "[MediaSearchV2View] Resolved search filters:",
+                "[MediaSearchV2View] Resolved search filters:::::::::::::",
                 to_response_dict(query, resolved_filters),
             )
             any_of = self._build_any_of_filters(query)
@@ -1064,6 +1064,34 @@ class MediaSearchV2View(APIView):
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
         print(f"[MediaSearchV2View] resolved media_types: {media_types}")
         print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
+
+        # Nothing left to embed once the query reduced to filters only, so serve
+        # it from the same PostgreSQL path a filters-only request uses.
+        # Exclusions and alternatives count too: "all files except PDF" leaves no
+        # residual query, and is a filter-only listing, not an unfiltered search.
+        filters_present = bool(
+            tags or organizations or resource_types or media_types
+            or exclude_organizations or exclude_media_types or combined_any_of)
+        if not query and filters_present:
+            # Ordering is 'score' here, which is meaningless without a query.
+            db_ordering = ordering_param if ordering_param else '-created_at'
+            db_field, db_reverse = self._parse_ordering(db_ordering)
+            return self._get_database_list_response(
+                request=request,
+                limit=limit,
+                offset=offset,
+                ordering=db_ordering,
+                ordering_field=db_field,
+                ordering_reverse=db_reverse,
+                tags=tags,
+                organizations=organizations,
+                resource_types=resource_types,
+                media_types=media_types,
+                exclude_organizations=exclude_organizations,
+                exclude_media_types=exclude_media_types,
+                any_of_blocks=combined_any_of,
+                diagnostics=resolved.diagnostics,
+            )
 
         # Imported locally, like the AI-search chain elsewhere in this view, so a
         # broken import degrades one search instead of the whole media API.
@@ -1946,9 +1974,9 @@ class MediaSearchV2View(APIView):
         return block
 
     def _file_type_payload_value(self, match):
-        matched_text = match.matched_span.strip().lower().lstrip(".")
-        if matched_text == "docx":
-            return "application/docx"
+        # The slug is the FileTypeChoices value, which is what both stores hold:
+        # Postgres in Media.media_type, and Qdrant in metadata.type via
+        # prepare_vector_db_data. Nothing writes a short 'application/docx'.
         return match.slug
 
     def _clean_filter_search_text(self, search_text):
