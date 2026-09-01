@@ -1058,7 +1058,11 @@ class MediaSearchV2View(APIView):
         exclude_media_types = list(resolved.exclude_media_types)
         resolved_any_of = list(resolved.any_of or [])
         deterministic_any_of = list(any_of or [])
-        combined_any_of = resolved_any_of + deterministic_any_of
+        # One source, never both: the splitter resolves each clause in isolation
+        # and so misses a qualifier stated once before the OR, and OR'ing its
+        # looser branch in would swallow the correct one. The model's answer
+        # wins; the splitter is the fallback for when there is no answer.
+        combined_any_of = resolved_any_of or deterministic_any_of
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
@@ -1104,25 +1108,16 @@ class MediaSearchV2View(APIView):
         qdrant_file_types = expand_aliases(media_types, type_vocabulary)
         qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
         # Each alternative needs the same widening; named any_of_blocks because
-        # any_of is already the Q-builder at the top of this module.
-        any_of_blocks = [
-            block.with_expanded_media_types(type_vocabulary).as_payload()
-            for block in resolved_any_of
-        ]
-        for block in deterministic_any_of:
-            if not isinstance(block, dict):
-                continue
-            expanded_block = dict(block)
-            file_types = expanded_block.get("file_type")
-            if file_types:
-                expanded_block["file_type"] = expand_aliases(
-                    file_types, type_vocabulary
-                )
-            exclude_file_types = expanded_block.get("exclude_file_type")
-            if exclude_file_types:
-                expanded_block["exclude_file_type"] = expand_aliases(
-                    exclude_file_types, type_vocabulary
-                )
+        # any_of is already the Q-builder at the top of this module. Driven off
+        # the same combined_any_of the PostgreSQL branch uses, so the two
+        # backends can never be handed a different set of alternatives.
+        any_of_blocks = []
+        for block in combined_any_of:
+            expanded_block = dict(self._filter_block_payload(block))
+            for key in ("file_type", "exclude_file_type"):
+                values = expanded_block.get(key)
+                if values:
+                    expanded_block[key] = expand_aliases(values, type_vocabulary)
             any_of_blocks.append(expanded_block)
 
         # Query vector database
@@ -1584,7 +1579,12 @@ class MediaSearchV2View(APIView):
                     block_conditions &= ~Q(
                         overridden_media_type__in=block_exclude_media_types
                     )
-                
+
+                # A block that recognised nothing is an empty Q(), which matches
+                # every row and would cancel the whole alternative set.
+                if not block_conditions:
+                    continue
+
                 any_of_conditions |= block_conditions
             
             queryset = queryset.filter(any_of_conditions)
@@ -1928,7 +1928,36 @@ class MediaSearchV2View(APIView):
             block = self._any_of_block_from_resolved_filters(resolved)
             if block:
                 blocks.append(block)
-        return blocks
+
+        # Fewer than two alternatives is an AND, which the flat fields already
+        # express, and the vector service rejects a one-entry any_of outright.
+        # Mirrors llm_extractor._resolve_any_of.
+        if len(blocks) < 2:
+            return []
+
+        return self._distribute_shared_file_types(blocks)
+
+    def _distribute_shared_file_types(self, blocks):
+        """
+        Carry a file type stated once into the bare organization branches after it.
+
+        "pdf from A or B" resolves its second clause to an organization alone,
+        matching every file B has and swallowing the narrowed branch beside it.
+        Only such a branch inherits — one naming its own format, or format-only,
+        means what it says — and only the positive type travels, never exclusions.
+        """
+        distributed = []
+        for block in blocks:
+            if set(block) == {'organizations'}:
+                inherited = next(
+                    (earlier['file_type']
+                     for earlier in distributed if earlier.get('file_type')),
+                    None,
+                )
+                if inherited:
+                    block = dict(block, file_type=list(inherited))
+            distributed.append(block)
+        return distributed
 
     def _search_text_from_any_of_clauses(self, query):
         clauses = [
