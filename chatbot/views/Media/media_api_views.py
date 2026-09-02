@@ -1341,6 +1341,16 @@ class MediaSearchV2View(APIView):
             resolved.media_types = llm.media_types
             resolved.diagnostics['media_types_source'] = 'llm'
             resolved.diagnostics['media_types'] = llm.media_types
+        elif not explicit_types and resolved.media_types:
+            # The model saw these guesses and named none of them, so drop them.
+            # Only fuzzy guesses reach candidates, so exact matches are safe.
+            fuzzy_guessed_media_types = set(
+                (resolved.diagnostics.get('candidates') or {}).get('media_types') or [])
+            if (fuzzy_guessed_media_types
+                    and set(resolved.media_types) <= fuzzy_guessed_media_types):
+                resolved.media_types = []
+                resolved.diagnostics['media_types_source'] = 'fuzzy_unconfirmed'
+                resolved.diagnostics['media_types'] = []
 
         # Exclusions have no explicit-UI counterpart, so there is nothing to
         # outrank them; None still means the model gave no opinion.
