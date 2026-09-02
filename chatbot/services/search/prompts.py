@@ -290,10 +290,17 @@ For level D remove:
 - matched filter occurrences, exclusion syntax/values, and filter-only connectors such as from, by, in, as, format, published by, uploaded by;
 - generic organization scope wording such as all organizations, all companies, any organization, anyone, other companies.
 
+FILTER-CONSUMPTION INVARIANT FOR LEVEL D
+When an occurrence in the user query is successfully consumed as an organization, file-type, organization exclusion, or file-type exclusion, that SAME occurrence MUST NOT remain in semantic_query.
+A consumed filter occurrence cannot serve both as structured filter data and as residual semantic intent.
+After removing all consumed filter occurrences plus request/document/filter scaffolding, semantic_query contains only independent subject intent.
+If no independent subject remains, semantic_query = "".
+Exception: an occurrence explicitly PROTECTED as topic text by phase 2 remains semantic according to the protected-topic rules, even when the same wording resembles an organization or file type.
+
 FILLER INVARIANT FOR LEVEL D ONLY
-If the residual is only generic document/collection filler, semantic_query = "".
+If the residual after filter consumption is only generic document/collection filler, semantic_query = "".
 This includes files, documents, docs, resources, materials, content, records, items, uploads, data, stuff, things, and bare "spreadsheets" when CSV/XLS/XLSX was already extracted.
-If filters/exclusions/any_of fully express the request and no genuine subject remains, semantic_query = "".
+If filters/exclusions/any_of fully express the request and no genuine independent subject remains, semantic_query = "".
 
 E. NO NARROWING FILTER SURVIVES
 If no level A-D condition applies -> semantic_query is the original query text handed to you, unmodified.
@@ -328,9 +335,10 @@ E. Branch-local values and exclusions are absent from top-level fields. any_of a
 F. Invalid branch-specific filter OR is all-or-nothing: no partial branch filters survive.
 G. Branch-local exclusion scope was preserved before normalization and was not hoisted incorrectly.
 H. Protected topic wording remains semantic, except for the explicitly allowed leading possessive-organization extraction.
-I. semantic_query follows exactly one priority level A-E. Level-D filler cleanup is never applied at level E.
+I. semantic_query follows exactly one priority level A-E. Level-D filter-consumption/filler cleanup is never applied at level E.
 J. Meta-instruction text never reaches semantic_query.
 K. If any_of normalization leaves one branch, promote it; if exact equivalence allows flattening, flatten; otherwise keep any_of.
+L. FILTER/SEMANTIC EXCLUSIVITY: at semantic level D, no query occurrence already consumed as a positive or excluded organization/file-type filter may remain in semantic_query. If semantic_query contains only consumed filter terms and/or generic filler, set semantic_query = "". Do not apply this check to phase-2 PROTECTED topic occurrences.
 
 Return only the tool call or required JSON. Never answer the document search itself.
 """
@@ -484,10 +492,13 @@ def build_tool_schema():
                         'semantic_query': {
                             'type': 'string',
                             'description': (
-                                'Residual document subject according to semantic priority levels A-E. '
-                                'Protected topic text stays semantic. Otherwise remove filter/request '
-                                'scaffolding only when a real narrowing filter survives; filler-only '
-                                'residual becomes empty only at level D.'
+                                'Independent residual document subject according to semantic priority '
+                                'levels A-E. Protected topic text stays semantic. At level D, remove '
+                                'every query occurrence already consumed as an organization, file type, '
+                                'organization exclusion, or file-type exclusion. A consumed filter '
+                                'occurrence must never also appear in semantic_query. After removing '
+                                'consumed filters and request/document/filter scaffolding, return only '
+                                'independent subject intent; if none remains, return an empty string.'
                             ),
                         },
                     },
