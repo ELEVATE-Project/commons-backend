@@ -1148,6 +1148,12 @@ class MediaSearchV2View(APIView):
                 "next": None,
                 "previous": None,
                 "results": [],
+                # Tells "vector service is down" apart from "filter matched
+                # nothing" — both return zero results.
+                "search_metadata": {
+                    "query": query,
+                    "vector_db_error": True,
+                },
             }, status=error_status)
 
         all_results = vector_response.get('results', [])
@@ -1190,6 +1196,31 @@ class MediaSearchV2View(APIView):
             "next": next_url,
             "previous": previous_url,
             "results": serializer.data,
+            "search_metadata": {
+                "query": query,
+                # Vector path only — the test scripts detect the backend by
+                # whether this key exists. Never add it to the DB response.
+                "top_k": top_k,
+                "offset": offset,
+                "limit": limit,
+                "ordering": ordering,
+                "returned_results": len(serializer.data),
+                "search_config": vector_response.get('search_config', {}),
+                # How each filter was decided. Without it, "LLM was skipped" and
+                # "LLM found nothing" look identical from the results alone.
+                "filter_resolution": resolved.diagnostics,
+                # What was actually sent to Qdrant, after alias expansion.
+                # Differs from filter_resolution when expansion changed a value.
+                "applied_filters": self.get_applied_search_filters(
+                    tags=tags,
+                    organizations=organizations,
+                    resource_types=resource_types,
+                    file_types=qdrant_file_types,
+                    exclude_organizations=exclude_organizations,
+                    exclude_file_types=qdrant_exclude_file_types,
+                    any_of_blocks=any_of_blocks,
+                ),
+            },
         }, status=status.HTTP_200_OK)
 
     def _resolve_search_filters(self, raw_query, fuzzy=None, explicit_filters=None):
@@ -1421,21 +1452,17 @@ class MediaSearchV2View(APIView):
             any_of_blocks=any_of_blocks,
         )
 
-        # The PostgreSQL counterpart of query_database_with_metadata's payload
-        # log: which filter got which values on this request.
-        print("[MediaSearchV2View] database filters: " + str({
-            'tags': list(tags or []),
-            'organizations': list(organizations or []),
-            'resource_types': list(resource_types or []),
-            'media_types': [str(value) for value in media_types or []],
-            'exclude_organizations': list(exclude_organizations or []),
-            'exclude_media_types': [
-                str(value) for value in exclude_media_types or []],
-            'any_of': [
-                self._filter_block_payload(block)
-                for block in any_of_blocks or []
-            ],
-        }))
+        # Built once, then logged and returned, so the two can never disagree.
+        applied_filters = self.get_applied_search_filters(
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            file_types=media_types,
+            exclude_organizations=exclude_organizations,
+            exclude_file_types=exclude_media_types,
+            any_of_blocks=any_of_blocks,
+        )
+        print("[MediaSearchV2View] database filters: " + str(applied_filters))
 
         total_results = queryset.count()
 
@@ -1466,6 +1493,18 @@ class MediaSearchV2View(APIView):
             "next": next_url,
             "previous": previous_url,
             "results": serializer.data,
+            "search_metadata": {
+                # Always empty: this path only runs when nothing is left to
+                # embed. No top_k either — its absence marks the DB backend.
+                "query": '',
+                "offset": offset,
+                "limit": limit,
+                "ordering": ordering,
+                "returned_results": len(serializer.data),
+                # Empty for a plain listing, which resolves no filters at all.
+                "filter_resolution": diagnostics or {},
+                "applied_filters": applied_filters,
+            },
         }, status=status.HTTP_200_OK)
 
     def _build_database_queryset(self):
@@ -1895,6 +1934,36 @@ class MediaSearchV2View(APIView):
                 flags=re.IGNORECASE,
             )
         return self._clean_filter_search_text(clean_search_text(remaining))
+
+    def get_applied_search_filters(
+        self,
+        tags=None,
+        organizations=None,
+        resource_types=None,
+        file_types=None,
+        exclude_organizations=None,
+        exclude_file_types=None,
+        any_of_blocks=None,
+    ):
+        """
+        Report the filters actually applied, for the log and search_metadata.
+
+        Unlike filter_resolution (how filters were *decided*), this is what was
+        applied after alias expansion. str() keeps enum media types serialisable.
+        """
+        return {
+            'tags': list(tags or []),
+            'organizations': list(organizations or []),
+            'resource_types': list(resource_types or []),
+            'media_types': [str(value) for value in file_types or []],
+            'exclude_organizations': list(exclude_organizations or []),
+            'exclude_media_types': [
+                str(value) for value in exclude_file_types or []],
+            'any_of': [
+                self._filter_block_payload(block)
+                for block in any_of_blocks or []
+            ],
+        }
 
     def _filter_block_payload(self, block):
         if isinstance(block, dict):
