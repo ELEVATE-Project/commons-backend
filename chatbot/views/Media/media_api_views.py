@@ -1321,6 +1321,29 @@ class MediaSearchV2View(APIView):
 
         self._apply_llm_filters(resolved, llm, explicit_orgs, explicit_types)
 
+    def _remove_unconfirmed_fuzzy_values(self, resolved, field_name):
+        """
+        Drop the fuzzy guesses the model was shown and chose not to confirm.
+
+        Only fuzzy matches become candidates, so an exact match is never
+        dropped. Values are subtracted rather than cleared, so a query that
+        mixes an exact match with a bad guess keeps the exact one.
+        """
+        resolved_values = getattr(resolved, field_name) or []
+        fuzzy_candidate_values = set(
+            (resolved.diagnostics.get('candidates') or {}).get(field_name) or [])
+        if not resolved_values or not fuzzy_candidate_values:
+            return resolved_values
+
+        confirmed_values = [
+            value for value in resolved_values
+            if value not in fuzzy_candidate_values
+        ]
+        if len(confirmed_values) != len(resolved_values):
+            resolved.diagnostics[f'{field_name}_source'] = 'fuzzy_unconfirmed'
+            resolved.diagnostics[field_name] = confirmed_values
+        return confirmed_values
+
     def _apply_llm_filters(self, resolved, llm, explicit_orgs, explicit_types):
         """Merge LLM filters without overriding explicit UI filters."""
         resolved.diagnostics.update({
@@ -1336,11 +1359,17 @@ class MediaSearchV2View(APIView):
             resolved.organizations = llm.organizations
             resolved.diagnostics['organizations_source'] = 'llm'
             resolved.diagnostics['organizations'] = llm.organizations
+        elif not explicit_orgs:
+            resolved.organizations = self._remove_unconfirmed_fuzzy_values(
+                resolved, 'organizations')
 
         if not explicit_types and llm.media_types is not None:
             resolved.media_types = llm.media_types
             resolved.diagnostics['media_types_source'] = 'llm'
             resolved.diagnostics['media_types'] = llm.media_types
+        elif not explicit_types:
+            resolved.media_types = self._remove_unconfirmed_fuzzy_values(
+                resolved, 'media_types')
 
         # Exclusions have no explicit-UI counterpart, so there is nothing to
         # outrank them; None still means the model gave no opinion.
