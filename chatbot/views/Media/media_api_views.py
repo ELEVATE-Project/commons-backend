@@ -1148,9 +1148,8 @@ class MediaSearchV2View(APIView):
                 "next": None,
                 "previous": None,
                 "results": [],
-                # An empty result set from a broken vector service and an empty
-                # result set from an over-tight filter are indistinguishable
-                # otherwise.
+                # Tells "vector service is down" apart from "filter matched
+                # nothing" — both return zero results.
                 "search_metadata": {
                     "query": query,
                     "vector_db_error": True,
@@ -1199,22 +1198,19 @@ class MediaSearchV2View(APIView):
             "results": serializer.data,
             "search_metadata": {
                 "query": query,
-                # Vector path only. Both filter harnesses tell the two backends
-                # apart by whether this key exists, so it must never appear on
-                # the PostgreSQL response.
+                # Vector path only — the test scripts detect the backend by
+                # whether this key exists. Never add it to the DB response.
                 "top_k": top_k,
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
                 "search_config": vector_response.get('search_config', {}),
-                # How each filter was decided. Without this it is invisible why
-                # a natural-language search returned what it did — in particular
-                # "the LLM was skipped" and "the LLM found nothing" look
-                # identical from the results alone.
+                # How each filter was decided. Without it, "LLM was skipped" and
+                # "LLM found nothing" look identical from the results alone.
                 "filter_resolution": resolved.diagnostics,
-                # What was decided vs. what was sent: these are the
-                # alias-expanded values Qdrant actually matched on.
+                # What was actually sent to Qdrant, after alias expansion.
+                # Differs from filter_resolution when expansion changed a value.
                 "applied_filters": self.get_applied_search_filters(
                     tags=tags,
                     organizations=organizations,
@@ -1456,10 +1452,7 @@ class MediaSearchV2View(APIView):
             any_of_blocks=any_of_blocks,
         )
 
-        # The PostgreSQL counterpart of query_database_with_metadata's payload
-        # log: which filter got which values on this request. Built once and
-        # both logged and returned, so the log can never disagree with the
-        # response.
+        # Built once, then logged and returned, so the two can never disagree.
         applied_filters = self.get_applied_search_filters(
             tags=tags,
             organizations=organizations,
@@ -1501,9 +1494,8 @@ class MediaSearchV2View(APIView):
             "previous": previous_url,
             "results": serializer.data,
             "search_metadata": {
-                # Always empty here: this path runs precisely when the residual
-                # semantic query is, so there is nothing left to embed. No
-                # `top_k` either — that key is what marks the vector path.
+                # Always empty: this path only runs when nothing is left to
+                # embed. No top_k either — its absence marks the DB backend.
                 "query": '',
                 "offset": offset,
                 "limit": limit,
@@ -1954,23 +1946,10 @@ class MediaSearchV2View(APIView):
         any_of_blocks=None,
     ):
         """
-        Describe the filters that were applied to this search, as plain JSON.
+        Report the filters actually applied, for the log and search_metadata.
 
-        Read-only: it reports what the caller already filtered on and changes
-        nothing. Deliberately not named ``*_payload`` — a payload here is the
-        outbound vector-service request body (``as_payload``,
-        ``_filter_block_payload``), which this is not.
-
-        Separate from ``filter_resolution``, which says how the filters were
-        *decided*: this says what was finally applied, after alias expansion. The
-        two disagree whenever expansion or a fallback changes something, and that
-        gap is the whole reason a search can resolve correctly and still return
-        the wrong documents.
-
-        Feeds both the ``database filters:`` log and ``search_metadata`` from one
-        construction, so the two can never drift. Media types arrive as enum
-        instances on the PostgreSQL side, so every value is coerced to ``str`` to
-        stay JSON-serialisable.
+        Unlike filter_resolution (how filters were *decided*), this is what was
+        applied after alias expansion. str() keeps enum media types serialisable.
         """
         return {
             'tags': list(tags or []),
