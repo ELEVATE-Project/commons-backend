@@ -47,7 +47,9 @@ class CategoryMatcher:
     ):
         self._lookup = {}  # type: Dict[str, Tuple[str, str]]
         self._all_names = []  # type: List[str]
-        excluded_aliases = excluded_aliases or set()
+        excluded_aliases = _normalized_excluded_aliases(
+            excluded_aliases or set()
+        )
 
         for display_name, slug, aliases in entries:
             all_aliases = list(aliases)
@@ -393,6 +395,16 @@ def _name_variants(name: str) -> List[str]:
         if variant and variant.lower() not in {item.lower() for item in variants}:
             variants.append(variant)
     return variants
+
+
+def _normalized_excluded_aliases(aliases: Iterable[str]) -> set:
+    normalized = set()
+    for alias in aliases:
+        for variant in _name_variants(str(alias)):
+            key = variant.strip().lower()
+            if key:
+                normalized.add(key)
+    return normalized
 
 
 def _tokenized_name(name: str) -> str:
