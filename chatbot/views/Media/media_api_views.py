@@ -944,13 +944,6 @@ class MediaSearchV2View(APIView):
                 to_response_dict(query, resolved_filters),
             )
             any_of = self._build_any_of_filters(query)
-            if not any_of:
-                if not tags:
-                    tags = included_values(resolved_filters.theme)
-                if not resource_types:
-                    resource_types = included_values(
-                        resolved_filters.resource_type
-                    )
             fuzzy = self._fuzzy_result_from_resolved_filters(
                 resolved_filters,
                 include_flat_filters=not any_of,

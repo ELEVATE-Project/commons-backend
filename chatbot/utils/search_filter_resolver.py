@@ -2,12 +2,11 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process
 
 OrgEntry = Tuple[str, str, List[str]]
-SimpleEntry = Tuple[str, List[str]]
 
 
 @dataclass(frozen=True)
@@ -32,8 +31,6 @@ class MatchResult:
 @dataclass
 class ResolvedFilters:
     organization: List[MatchResult] = field(default_factory=list)
-    theme: List[MatchResult] = field(default_factory=list)
-    resource_type: List[MatchResult] = field(default_factory=list)
     file_type: List[MatchResult] = field(default_factory=list)
     search_text: str = ""
     confidence: float = 0.0
@@ -43,21 +40,18 @@ class ResolvedFilters:
 class CategoryMatcher:
     def __init__(
         self,
-        entries: Union[List[OrgEntry], List[SimpleEntry]],
-        has_slug: bool = True,
+        entries: List[OrgEntry],
         auto_alias: bool = False,
         auto_alias_leading_word: bool = True,
+        excluded_aliases: Optional[set] = None,
     ):
         self._lookup = {}  # type: Dict[str, Tuple[str, str]]
         self._all_names = []  # type: List[str]
+        excluded_aliases = _normalized_excluded_aliases(
+            excluded_aliases or set()
+        )
 
-        for entry in entries:
-            if has_slug:
-                display_name, slug, aliases = entry
-            else:
-                display_name, aliases = entry
-                slug = display_name
-
+        for display_name, slug, aliases in entries:
             all_aliases = list(aliases)
             if auto_alias:
                 for auto in derive_auto_aliases(display_name, include_leading_word=auto_alias_leading_word):
@@ -67,7 +61,7 @@ class CategoryMatcher:
             for name in (display_name,) + tuple(all_aliases):
                 for variant in _name_variants(name):
                     key = variant.strip().lower()
-                    if not key:
+                    if not key or key in excluded_aliases:
                         continue
                     self._lookup[key] = (display_name, slug)
                     self._all_names.append(variant)
@@ -252,8 +246,6 @@ def resolve_query_exact(
     remaining = query or ""
     results = {
         "organization": [],
-        "theme": [],
-        "resource_type": [],
         "file_type": [],
     }  # type: Dict[str, List[MatchResult]]
     matchers = _build_matchers(
@@ -261,7 +253,7 @@ def resolve_query_exact(
         file_type_vocabulary=file_type_vocabulary,
     )
 
-    for field_name in ("organization", "theme", "resource_type", "file_type"):
+    for field_name in ("organization", "file_type"):
         matcher = matchers[field_name]
         matches = matcher.find_all_exact(remaining)
         results[field_name] = matches
@@ -269,7 +261,7 @@ def resolve_query_exact(
             remaining = _strip_all(remaining, matches)
 
     candidates = {}
-    for field_name in ("organization", "theme", "resource_type", "file_type"):
+    for field_name in ("organization", "file_type"):
         existing_matches = results.get(field_name, [])
         threshold = _confidence_threshold(field_name)
         fuzzy_matches = matchers[field_name].find_all_fuzzy(
@@ -309,8 +301,6 @@ def resolve_query_exact(
 
     return ResolvedFilters(
         organization=results["organization"],
-        theme=results["theme"],
-        resource_type=results["resource_type"],
         file_type=results["file_type"],
         search_text=clean_search_text(remaining),
         confidence=confidence,
@@ -332,8 +322,6 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
         "query": query,
         "resolved": {
             "organization": [_match_to_dict(match) for match in resolved.organization],
-            "theme": [_match_to_dict(match) for match in resolved.theme],
-            "resource_type": [_match_to_dict(match) for match in resolved.resource_type],
             "file_type": [_match_to_dict(match) for match in resolved.file_type],
         },
         "search_text": resolved.search_text,
@@ -409,6 +397,16 @@ def _name_variants(name: str) -> List[str]:
     return variants
 
 
+def _normalized_excluded_aliases(aliases: Iterable[str]) -> set:
+    normalized = set()
+    for alias in aliases:
+        for variant in _name_variants(str(alias)):
+            key = variant.strip().lower()
+            if key:
+                normalized.add(key)
+    return normalized
+
+
 def _tokenized_name(name: str) -> str:
     return " ".join(re.findall(r"[A-Za-z0-9]+", _split_alnum_boundaries(name)))
 
@@ -424,7 +422,12 @@ def _compile_gazetteer_pattern(name: str):
 
 
 def _candidate_stopwords() -> set:
-    return _stopwords() | _noise_words() | _generic_leading_words()
+    return (
+        _stopwords()
+        | _noise_words()
+        | _generic_leading_words()
+        | _fuzzy_candidate_stopwords()
+    )
 
 
 def _auto_alias_excluded_words() -> set:
@@ -444,7 +447,11 @@ def _split_alnum_boundaries(value: str) -> str:
 
 
 def _clean_fuzzy_candidate(candidate: str) -> str:
-    stop_words = _noise_words() | _negation_words()
+    stop_words = (
+        _noise_words()
+        | _negation_words()
+        | _fuzzy_candidate_stopwords()
+    )
     words = [
         word
         for word in candidate.strip(" ?.!,").split()
@@ -462,16 +469,13 @@ def _build_matchers(
     return {
         "organization": CategoryMatcher(
             _organization_entries(organization_vocabulary),
-            has_slug=True,
             auto_alias=True,
             auto_alias_leading_word=False,
         ),
-        "theme": CategoryMatcher(_theme_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
-        "resource_type": CategoryMatcher(_resource_type_entries_from_env(), has_slug=False, auto_alias=True, auto_alias_leading_word=False),
         "file_type": CategoryMatcher(
             _file_type_entries(file_type_vocabulary),
-            has_slug=True,
             auto_alias=False,
+            excluded_aliases=_excluded_file_type_aliases(),
         ),
     }
 
@@ -519,19 +523,11 @@ def _merge_env_aliases(entries: List[OrgEntry], env_entries: List[OrgEntry]) -> 
 
 
 def _organization_entries_from_env() -> List[OrgEntry]:
-    return _load_env_entries("SEARCH_FILTER_ORGANIZATIONS", expected_length=3)
+    return _load_env_entries("SEARCH_FILTER_ORGANIZATIONS")
 
 
 def _file_type_entries_from_env() -> List[OrgEntry]:
-    return _load_env_entries("SEARCH_FILTER_FILE_TYPES", expected_length=3)
-
-
-def _resource_type_entries_from_env() -> List[SimpleEntry]:
-    return _load_env_entries("SEARCH_FILTER_RESOURCE_TYPES", expected_length=2)
-
-
-def _theme_entries_from_env() -> List[SimpleEntry]:
-    return _load_env_entries("SEARCH_FILTER_THEMES", expected_length=2)
+    return _load_env_entries("SEARCH_FILTER_FILE_TYPES")
 
 
 def _organization_confidence_threshold() -> int:
@@ -557,7 +553,7 @@ def _candidate_limit() -> int:
     return _int_env("SEARCH_FILTER_CANDIDATE_LIMIT", default_value=5, min_value=1)
 
 
-def _load_env_entries(env_name: str, expected_length: int) -> List[OrgEntry]:
+def _load_env_entries(env_name: str) -> List[OrgEntry]:
     raw_value = os.getenv(env_name, "").strip()
     if not raw_value:
         return []
@@ -569,30 +565,34 @@ def _load_env_entries(env_name: str, expected_length: int) -> List[OrgEntry]:
 
     normalized_entries = []
     for entry in entries:
-        if not isinstance(entry, list) or len(entry) != expected_length:
+        if not isinstance(entry, list):
             continue
 
-        if expected_length == 3:
+        try:
             display_value, slug, aliases = entry
-        else:
-            display_value, aliases = entry
-            slug = display_value
+        except ValueError:
+            continue
 
         if not display_value or not slug:
             continue
         if not isinstance(aliases, list):
             aliases = []
 
-        if expected_length == 3:
-            normalized_entries.append((str(display_value), str(slug), [str(alias) for alias in aliases]))
-        else:
-            normalized_entries.append((str(display_value), [str(alias) for alias in aliases]))
+        normalized_entries.append((str(display_value), str(slug), [str(alias) for alias in aliases]))
 
     return normalized_entries
 
 
 def _stopwords() -> set:
     return _env_string_set("SEARCH_FILTER_STOPWORDS")
+
+
+def _excluded_file_type_aliases() -> set:
+    return _env_string_set("SEARCH_FILTER_EXCLUDED_FILE_TYPE_ALIASES")
+
+
+def _fuzzy_candidate_stopwords() -> set:
+    return _env_string_set("SEARCH_FILTER_FUZZY_CANDIDATE_STOPWORDS")
 
 
 def _trigger_words() -> List[str]:
