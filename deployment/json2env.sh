@@ -1,5 +1,2 @@
 #!/bin/sh
-
-tr -d '\n' |
-grep -o '"[A-Za-z_][A-Za-z_0-9]*"\s*:\s*\("[^"]*"\|[0-9.]*\|true\|false\|null\)' |
-sed 's/"\([^"]*\)"\s*:\s*"\?\([^"]*\)"\?/\1="\2"/'
+jq -r 'to_entries[] | .key as $k | (.value | if type == "string" then . else tojson end) as $v | "\($k)=\($v)"' "$1" > "$2"
