@@ -281,7 +281,7 @@ def resolve_query_exact(
                 for match in fuzzy_matches[:_candidate_limit()]
             ]
             remaining = _strip_all(remaining, fuzzy_matches)
-        else:
+        elif field_name != "file_type":
             near_matches = matchers[field_name].find_all_fuzzy(
                 remaining,
                 _candidate_threshold(field_name),
@@ -445,9 +445,11 @@ def _strip_noise_phrases(text: str) -> str:
 
 
 def _should_run_fuzzy_match(field_name: str, query: str) -> bool:
-    if field_name != "organization":
-        return True
-    return _has_trigger_word(query, _organization_trigger_words())
+    if field_name == "organization":
+        return _has_trigger_word(query, _organization_trigger_words())
+    if field_name == "file_type":
+        return _has_trigger_word(query, _file_type_trigger_words())
+    return True
 
 
 def _has_trigger_word(query: str, triggers: Iterable[str]) -> bool:
@@ -617,6 +619,10 @@ def _fuzzy_candidate_stopwords() -> set:
 
 def _organization_trigger_words() -> List[str]:
     return _env_string_list("SEARCH_FILTER_ORGANIZATION_TRIGGER_WORDS")
+
+
+def _file_type_trigger_words() -> List[str]:
+    return _env_string_list("SEARCH_FILTER_FILE_TYPE_TRIGGER_WORDS")
 
 
 def _trigger_words() -> List[str]:
