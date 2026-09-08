@@ -1199,6 +1199,11 @@ class MediaSearchV2View(APIView):
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
                 "search_config": vector_response.get('search_config', {}),
+                # Whether the query was read as an acronym, and what it expanded
+                # to. Detection changes both the candidate set and the ranking,
+                # so results that look wrong are unreadable without it. None if
+                # the service did not report it.
+                "acronym_info": vector_response.get('acronym_info'),
                 # How each filter was decided. Without it, "LLM was skipped" and
                 # "LLM found nothing" look identical from the results alone.
                 "filter_resolution": resolved.diagnostics,
