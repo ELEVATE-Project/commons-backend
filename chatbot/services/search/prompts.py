@@ -337,7 +337,10 @@ This includes files, documents, docs, resources, materials, content, records, it
 If filters/exclusions/any_of fully express the request and no genuine independent subject remains, semantic_query = "".
 
 E. NO NARROWING FILTER SURVIVES
-If no level A-D condition applies -> semantic_query is the original query text handed to you, unmodified: same casing, same leading words (including question words like "how"/"what"/"why"/"can"), same punctuation (including a trailing "?"). Do NOT strip, lowercase, retype, or otherwise clean it up — copy it character-for-character.
+BARE COLLECTION REQUEST FIRST, and only for a query that is nothing else: when the WHOLE query, end to end, is built only from generic document nouns (document, documents, doc, docs, file, files) and request wording (show, me, all, list, get, give, the), it asks for everything rather than for a topic, and semantic_query is exactly the single word: all
+Complete queries this covers: "documents", "docs", "files", "show me all documents", "list all files".
+It applies to NOTHING ELSE. If the query holds even one other word — a subject, a topic, an unknown name, or a question word — this does not apply: use the rule below and copy the query unmodified, stripping nothing. "get all XYZ files" keeps every word because of XYZ, and "What resources are available for leadership development?" keeps every word because it asks a question about a subject. Never take request words or document nouns off a query that has anything else in it.
+Otherwise, if no level A-D condition applies -> semantic_query is the original query text handed to you, unmodified: same casing, same leading words (including question words like "how"/"what"/"why"/"can"), same punctuation (including a trailing "?"). Do NOT strip, lowercase, retype, or otherwise clean it up — copy it character-for-character.
 Do NOT apply level-D cleanup at level E.
 Exception: if phase 1 removed meta-instruction text and no meaningful ordinary semantic request remains, semantic_query = "".
 
@@ -553,7 +556,12 @@ def build_tool_schema():
                                 'lowercased, echoed back merely because a filter was also found. Any '
                                 'text copied into this field (a protected topic, a stripped unknown '
                                 'name, or the unmodified original query) keeps the user\'s exact '
-                                'original casing — never lowercased or retyped.'
+                                'original casing — never lowercased or retyped. One exception, '
+                                'checked first: a query built only from generic document nouns and '
+                                'request wording, holding no other word at all ("documents", '
+                                '"docs", "files", "show me all documents"), asks for everything '
+                                'rather than a topic, and this field is then exactly: all. A query '
+                                'holding any other word never uses this and is never stripped.'
                             ),
                         },
                     },
