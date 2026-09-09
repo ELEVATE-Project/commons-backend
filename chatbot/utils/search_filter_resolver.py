@@ -262,6 +262,9 @@ def resolve_query_exact(
 
     candidates = {}
     for field_name in ("organization", "file_type"):
+        if not _should_run_fuzzy_match(field_name, query):
+            continue
+
         existing_matches = results.get(field_name, [])
         threshold = _confidence_threshold(field_name)
         fuzzy_matches = matchers[field_name].find_all_fuzzy(
@@ -278,7 +281,7 @@ def resolve_query_exact(
                 for match in fuzzy_matches[:_candidate_limit()]
             ]
             remaining = _strip_all(remaining, fuzzy_matches)
-        else:
+        elif field_name != "file_type":
             near_matches = matchers[field_name].find_all_fuzzy(
                 remaining,
                 _candidate_threshold(field_name),
@@ -441,6 +444,25 @@ def _strip_noise_phrases(text: str) -> str:
     return re.sub(r"\s+", " ", working).strip()
 
 
+def _should_run_fuzzy_match(field_name: str, query: str) -> bool:
+    if field_name == "organization":
+        return _has_trigger_word(query, _organization_trigger_words())
+    if field_name == "file_type":
+        return _has_trigger_word(query, _file_type_trigger_words())
+    return True
+
+
+def _has_trigger_word(query: str, triggers: Iterable[str]) -> bool:
+    lowered = (query or "").lower()
+    for trigger in triggers:
+        trigger = str(trigger).strip().lower()
+        if not trigger:
+            continue
+        if re.search(r"\b" + re.escape(trigger) + r"\b", lowered):
+            return True
+    return False
+
+
 def _split_alnum_boundaries(value: str) -> str:
     with_digit_boundaries = re.sub(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", value)
     return re.sub(r"\s+", " ", with_digit_boundaries).strip()
@@ -593,6 +615,14 @@ def _excluded_file_type_aliases() -> set:
 
 def _fuzzy_candidate_stopwords() -> set:
     return _env_string_set("SEARCH_FILTER_FUZZY_CANDIDATE_STOPWORDS")
+
+
+def _organization_trigger_words() -> List[str]:
+    return _env_string_list("SEARCH_FILTER_ORGANIZATION_TRIGGER_WORDS")
+
+
+def _file_type_trigger_words() -> List[str]:
+    return _env_string_list("SEARCH_FILTER_FILE_TYPE_TRIGGER_WORDS")
 
 
 def _trigger_words() -> List[str]:
