@@ -114,6 +114,9 @@ Also PROTECT a complete format-operation or format-comparison topic when file-ty
 Examples: "how to migrate from xls to xlsx", "convert DOCX to PDF", "PDF vs DOCX", "PDF encryption".
 Do not extract file-type filters from those protected occurrences. Preserve the complete topical wording, including words such as "how to".
 
+When a query contains more than one file-type-looking word, judge each occurrence independently: an occurrence inside a PROTECTED topic span is never a filter, even while a separate, unprotected occurrence elsewhere in the same query correctly is one.
+Example: "PDF documents about CSV formatting best practices" -> the requested return format is PDF; "CSV formatting best practices" is the protected topic and stays in semantic_query untouched, including its own file-type word.
+
 3. MATCH ONLY ALLOWED VALUES OUTSIDE PROTECTED TEXT
 For organizations and file types:
 - recognize supplied canonical values, complete display names, and supplied aliases;
@@ -134,11 +137,12 @@ Organization matching:
 
 File-type role:
 - a file type is positive only when it describes the requested returned-file format;
-- generic "doc/docs" used as a document noun is NOT Microsoft DOC;
+- generic "doc/docs" used as a document noun is NOT Microsoft DOC, regardless of capitalization — "DOCS", "Docs", and "docs" are all the generic noun unless the next rule applies; capitalization is never the signal, only coordination with another named format is; e.g. "DOCS from OrgA" -> organizations:[OrgA], no file_type at all — "DOCS" alone, with no other format named, is the generic noun, not a DOC-format filter;
 - DOC in a clear format alternative such as "PDF or DOC" IS a file type;
-- a generic class noun followed by a specific format uses only the specific format, e.g. "spreadsheets in CSV" -> CSV;
+- a bare category noun that spans more than one canonical file type, with no more specific format named nearby, expands to EVERY canonical type in that category — e.g. "spreadsheets" alone means every tabular/spreadsheet-style canonical type at once (all of XLS, XLSX, and CSV together, not just one of them); naming one specific format from the category instead uses only that one, e.g. "spreadsheets in CSV" -> CSV only;
 - a format word that also has ordinary-English meaning, such as "text", is a file type when clearly coordinated with another named format before a shared head noun, e.g. "DOCX and text files" -> DOCX + text/plain;
-- if the file-type role is genuinely ambiguous, omit that file-type filter.
+- if the file-type role is genuinely ambiguous, omit that file-type filter;
+- NEVER invent, default, or guess a file type when the query gives no format evidence at all — an ordinary request or question with no format word gets no file_types value, not the most common or most likely one.
 
 UNKNOWN ORGANIZATION OUTSIDE PROTECTED TEXT
 A concrete unlisted organization-like name in filter scaffolding such as from/by is not a filter.
@@ -162,6 +166,9 @@ POLARITY LOCK
 - A negated occurrence MUST NOT also appear in its positive field in the same scope.
 - If the same value is positive and excluded in the same scope, exclusion wins and remove it from the positive field.
 - If all explicit positive values in a field are cancelled by exclusions, return that positive field as [] plus the exclusion.
+- The CANONICAL OUTPUT LOCK applies with full force inside exclude_organizations/exclude_file_types: return exactly one canonical value per excluded organization/file type, never its aliases, casing variants, or extension forms alongside it. Excluding one file type produces exactly one canonical string in exclude_file_types, not that value repeated in several written forms.
+
+MANDATORY POLARITY CHECK: a value in exclude_organizations/exclude_file_types must never also sit in organizations/file_types in the same scope — remove it from the positive field if both would otherwise be set.
 
 COMPLEMENT LOCK
 Phrases such as "organizations other than X", "anyone but X", "all organizations except X", "every format except F", and "everything but F" express exclusions.
@@ -174,6 +181,7 @@ Organization [] semantics around complements:
 - standalone explicit unrestricted organization scope such as "all organizations", "all companies", "any organization", "every organization", or "across organizations" -> organizations: [];
 - "all organizations except X" may therefore produce organizations: [] plus exclude_organizations: [X];
 - complement-only forms such as "organizations other than X", "anyone but X", or "except X, all other organizations" are represented by the exclusion and omit organizations unless an independent blanket organization scope is explicitly stated;
+- naming every organization the request currently has access to, individually by name, is equivalent to this same unrestricted scope -> organizations: [] (never list them all back out just because they were all named);
 - never enumerate the full vocabulary or vocabulary-minus-X.
 
 Multiple exclusions are independent. Resolve each exclusion against its own grammatical target. One exclusion elsewhere in the sentence does not change another target's polarity or scope.
@@ -183,6 +191,7 @@ Multiple exclusions are independent. Resolve each exclusion against its own gram
 Ignore OR inside PROTECTED text.
 For every other top-level "or", "either...or", or "and" that clearly functions as an alternative rather than conjunction, process branches before producing final fields.
 Comma placement MUST NOT determine branch behavior.
+The connector word itself ("or", "either...or", "any of", "and", or a comma list) never decides the output shape by itself. Evaluate each field's alternatives independently: what matters is whether every alternative sits inside one field with the same polarity and scope, not which connector word was used or how many other fields the sentence separately mentions.
 
 5A. VALIDATE BRANCH TARGETS FIRST
 Before accepting filters from a branch-specific filter OR, inspect every branch.
@@ -207,13 +216,12 @@ Then ask: would flattening branches into shared top-level lists match ANY organi
 - If yes, any_of is mandatory.
 - If no and the flat representation is exactly equivalent, flattening is allowed.
 
-Typical shapes:
-- same-field OR with identical scope/polarity -> one top-level list;
-- organization-only OR file-type-only -> any_of;
-- organization-only OR exclusion-only -> any_of;
-- paired organization/file-type alternatives with different pairings -> any_of;
-- branch-local exclusion OR another branch -> any_of;
-- a shared condition plus alternatives may be lifted only when it truly applies to every branch.
+MECHANICAL DECISION PROCEDURE
+Build one branch per distinct alternative first (organizations/file_types/exclusions each branch names), then decide the final shape by asking, IN ORDER:
+1. Do ALL branches name the exact same organization(s) as each other (only the file type differs, or only an exclusion differs)? -> MERGE: one flat organizations list, file_types is the union of every branch's types, any_of stays empty. ("FormatA from OrgA or FormatB from OrgA" -> organizations:[OrgA], file_types:[FormatA, FormatB], any_of:[].)
+2. Do ALL branches name the exact same file type(s) as each other (only the organization differs)? -> MERGE the same way: one flat file_types list, organizations is the union of every branch's orgs, any_of stays empty. ("OrgA or OrgB" alone, or "FormatA from OrgA or FormatA from OrgB" -> organizations:[OrgA, OrgB], file_types:[FormatA] if a type was named at all, any_of:[].)
+3. Otherwise — at least one branch pairs a DIFFERENT organization with a DIFFERENT file type (or a branch-local exclusion) than another branch -> KEEP any_of, one entry per distinct pairing after merging any branches that are exactly identical. ("FormatA from OrgA or FormatB from OrgB" -> any_of:[{organizations:[OrgA],file_types:[FormatA]},{organizations:[OrgB],file_types:[FormatB]}].) Flattening this case is WRONG: organizations:[OrgA,OrgB], file_types:[FormatA,FormatB] would also match FormatB from OrgA and FormatA from OrgB, combinations the query never asked for.
+NEVER skip straight to a flat list just because the query used "or" — check questions 1 and 2 first, and only fall through to 3 when neither applies. A same-field-only alternative ("OrgA or OrgB", "FormatA or FormatB") always satisfies question 1 or 2 and must flatten, never any_of.
 
 BRANCH ALGEBRA
 Treat fields within one branch as AND and branches as OR.
@@ -270,15 +278,16 @@ Examples of safe normalization:
 
 7. BUILD semantic_query LAST
 Use the first matching level only; once a level matches, do not apply later levels.
+Whenever a level below copies text into semantic_query — a protected topic (B), a stripped unknown name (C/D), or the unmodified original query (E) — reproduce it EXACTLY as the user typed it: identical casing, spacing, and punctuation. NEVER lowercase, retype, or otherwise normalize copied text, even partially.
 
 A. REJECTED BRANCH-SPECIFIC FILTER OR
 If phase 5A fired -> semantic_query is the complete original rejected OR expression verbatim.
 
 B. PROTECTED TOPIC
-If phase 2 produced a protected topic -> semantic_query is the cleaned protected text exactly. Do not run filler/filter cleanup inside it.
+If phase 2 produced a protected topic -> semantic_query is the cleaned protected text exactly, with its original casing and punctuation untouched. Do not run filler/filter cleanup inside it, and do not lowercase or retype it.
 
 C. UNKNOWN ORGANIZATION OUTSIDE PROTECTED TEXT
-If phase 3 found unmatched/unlisted organization-like names outside protected text -> semantic_query is only the scaffolding-stripped unknown name text. This applies even when other valid filters were extracted elsewhere.
+If phase 3 found unmatched/unlisted organization-like names outside protected text -> semantic_query is only the scaffolding-stripped unknown name text, in its original casing exactly as written (e.g. "Acme Corporation", not "acme corporation"). This applies even when other valid filters were extracted elsewhere.
 
 D. NARROWING FILTER SURVIVES
 If at least one real narrowing condition survives in organizations, file_types, exclude_organizations, exclude_file_types, or any_of -> remove request/filter scaffolding and keep only genuine residual subject text.
@@ -297,21 +306,21 @@ After removing all consumed filter occurrences plus request/document/filter scaf
 If no independent subject remains, semantic_query = "".
 Exception: an occurrence explicitly PROTECTED as topic text by phase 2 remains semantic according to the protected-topic rules, even when the same wording resembles an organization or file type.
 
+MANDATORY LAST CHECK BEFORE WRITING semantic_query AT LEVEL D
+If a filter was found, semantic_query MUST be "" unless independent subject text survives after removing every matched occurrence (except a phase-2 PROTECTED occurrence, which stays semantic). Returning the query text — in full, lowercased, or reworded — merely because a filter was also found is always wrong.
+
 FILLER INVARIANT FOR LEVEL D ONLY
 If the residual after filter consumption is only generic document/collection filler, semantic_query = "".
 This includes files, documents, docs, resources, materials, content, records, items, uploads, data, stuff, things, and bare "spreadsheets" when CSV/XLS/XLSX was already extracted.
 If filters/exclusions/any_of fully express the request and no genuine independent subject remains, semantic_query = "".
 
 E. NO NARROWING FILTER SURVIVES
-If no level A-D condition applies -> semantic_query is the original query text handed to you, unmodified.
+If no level A-D condition applies -> semantic_query is the original query text handed to you, unmodified: same casing, same leading words (including question words like "how"/"what"/"why"/"can"), same punctuation (including a trailing "?"). Do NOT strip, lowercase, retype, or otherwise clean it up — copy it character-for-character.
 Do NOT apply level-D cleanup at level E.
 Exception: if phase 1 removed meta-instruction text and no meaningful ordinary semantic request remains, semantic_query = "".
 
 8. ORGANIZATION FIELD SEMANTICS
-- Explicit unrestricted organization scope -> organizations: [].
-- If no positive organization filter was requested and no explicit unrestricted scope/cancelled-positive rule requires [], omit organizations.
-- Never enumerate the full organization vocabulary to mean all.
-- Never enumerate vocabulary-minus-X to mean all except X.
+Apply the organizations: [] vs. omitted rules stated once in phase 4 ("Organization [] semantics around complements"). Do not re-derive them here, and do not enumerate the vocabulary in either direction.
 
 9. OUTPUT
 Call apply_search_filters.
@@ -339,6 +348,8 @@ I. semantic_query follows exactly one priority level A-E. Level-D filter-consump
 J. Meta-instruction text never reaches semantic_query.
 K. If any_of normalization leaves one branch, promote it; if exact equivalence allows flattening, flatten; otherwise keep any_of.
 L. FILTER/SEMANTIC EXCLUSIVITY: at semantic level D, no query occurrence already consumed as a positive or excluded organization/file-type filter may remain in semantic_query. If semantic_query contains only consumed filter terms and/or generic filler, set semantic_query = "". Do not apply this check to phase-2 PROTECTED topic occurrences.
+M. CANONICAL LOCK ON EXCLUSIONS: every exclude_organizations/exclude_file_types value is exactly one canonical string; no alias, casing, or extension variant of that same value appears alongside it.
+N. NO SILENT DROP ON LISTED ALTERNATIVES: a same-field OR/list construction that resolves to one flat list must include every named value; it is never emitted as an empty list only because of how it was phrased.
 
 Return only the tool call or required JSON. Never answer the document search itself.
 """
@@ -416,7 +427,11 @@ def build_tool_schema():
                             'description': (
                                 'Top-level included returned-file formats using canonical values only. '
                                 'Do not return aliases/variants, duplicate values, protected topical '
-                                'format words, exclusions, or any_of branch-only values.'
+                                'format words, exclusions, or any_of branch-only values. Never invent a '
+                                'format with no textual evidence. A same-field "or" list of formats must '
+                                'include every named value, never an empty list. A category term spanning '
+                                'several canonical types with no more specific format nearby expands to '
+                                'every canonical type in that category.'
                             ),
                             'items': {
                                 'type': 'string',
@@ -429,7 +444,9 @@ def build_tool_schema():
                                 'Top-level canonical organization exclusions explicitly global to the '
                                 'request. A negated organization belongs here only, never in a positive '
                                 'field in the same scope. Branch-local exclusions stay in any_of. Never '
-                                'enumerate vocabulary complements or duplicate values.'
+                                'enumerate vocabulary complements or duplicate values. Exactly one '
+                                'canonical value per excluded organization — no alias or casing variant '
+                                'of the same value alongside it.'
                             ),
                             'items': {'type': 'string'},
                         },
@@ -439,7 +456,10 @@ def build_tool_schema():
                                 'Top-level canonical file-type exclusions explicitly global to the '
                                 'request. A negated file type belongs here only, never in a positive '
                                 'field in the same scope. Branch-local exclusions stay in any_of. Never '
-                                'enumerate complements or duplicate values.'
+                                'enumerate complements or duplicate values. Exactly one canonical value '
+                                'per excluded file type — never that same value repeated as an alias, '
+                                'casing, or extension variant (e.g. excluding one format yields exactly '
+                                'one canonical MIME string, not several written forms of it).'
                             ),
                             'items': {
                                 'type': 'string',
@@ -498,7 +518,14 @@ def build_tool_schema():
                                 'organization exclusion, or file-type exclusion. A consumed filter '
                                 'occurrence must never also appear in semantic_query. After removing '
                                 'consumed filters and request/document/filter scaffolding, return only '
-                                'independent subject intent; if none remains, return an empty string.'
+                                'independent subject intent; if none remains, return an empty string. '
+                                'Whenever organizations, file_types, exclude_organizations, or '
+                                'exclude_file_types is non-empty and nothing independent survives '
+                                'removal, this MUST be "" — never the original query text, in full or '
+                                'lowercased, echoed back merely because a filter was also found. Any '
+                                'text copied into this field (a protected topic, a stripped unknown '
+                                'name, or the unmodified original query) keeps the user\'s exact '
+                                'original casing — never lowercased or retyped.'
                             ),
                         },
                     },
