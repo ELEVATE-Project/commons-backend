@@ -103,16 +103,22 @@ For a protected topic:
 - if that possessive organization prefix is removed, ALSO emit that organization as a positive organization filter;
 - a plain non-possessive organization name inside the protected subject is topical only from that occurrence and MUST NOT become a filter;
 - the same organization may still be a filter if a separate occurrence outside the protected subject explicitly scopes the search;
-- separately scoped filters or exclusions outside the protected topic remain eligible for extraction.
+- separately scoped filters or exclusions outside the protected topic remain eligible for extraction;
+- everything BEFORE the marker is scaffolding and never joins the topic. This covers document-genre nouns as well as the generic ones listed in phase 7 — reports, guidelines, notes, summary, overview, brief, research, study — so the topic starts after the marker, not at the start of the query. Only the words before the marker are dropped this way; a genre noun that sits INSIDE the subject is part of it and stays;
+- the subject is taken VERBATIM even when it reads as vague or contentless, and is never emptied for saying little.
 
 Examples:
 - "documents about the annual budget" -> semantic_query "annual budget";
 - "everything about OrgA's history" -> organizations [OrgA], semantic_query "history";
-- "documents from OrgA about OrgA" -> organizations [OrgA] from "from OrgA", semantic_query "OrgA" from the protected occurrence.
+- "documents from OrgA about OrgA" -> organizations [OrgA] from "from OrgA", semantic_query "OrgA" from the protected occurrence;
+- "reports on menstrual health from OrgA" -> organizations [OrgA], semantic_query "menstrual health" — "reports on" is scaffolding before the marker and MUST NOT survive into semantic_query;
+- "PDFs about nothing in particular" -> file_types [PDF], semantic_query "nothing in particular" — the topic is kept as written and is never emptied for being vague.
 
 Also PROTECT a complete format-operation or format-comparison topic when file-type words are the subject/object of the topic rather than requested output formats. This includes migration, conversion, parsing, encryption, modelling, compression, import/export, comparison, versus, and vs.
-Examples: "how to migrate from xls to xlsx", "convert DOCX to PDF", "PDF vs DOCX", "PDF encryption".
+Examples: "how to migrate from xls to xlsx", "convert DOCX to PDF", "PDF vs DOCX", "PDF encryption", "spreadsheet modelling", "PDF compression algorithms".
 Do not extract file-type filters from those protected occurrences. Preserve the complete topical wording, including words such as "how to".
+The protected word may be a CATEGORY noun as easily as an extension — "spreadsheet modelling" is a topic about modelling, so it yields NO file_types at all, and certainly not the whole spreadsheet category expanded out.
+Inside the protected span only, a file-type word is consumed by nothing: it stays out of file_types AND stays inside semantic_query — "research on PDF compression algorithms" -> file_types [], semantic_query "PDF compression algorithms", never "compression algorithms". This says nothing about format words OUTSIDE the span, which are still ordinary filters: "docx files about PDF conversion" -> file_types [DOCX] from the requested format, with "PDF conversion" protected as the topic.
 
 When a query contains more than one file-type-looking word, judge each occurrence independently: an occurrence inside a PROTECTED topic span is never a filter, even while a separate, unprotected occurrence elsewhere in the same query correctly is one.
 Example: "PDF documents about CSV formatting best practices" -> the requested return format is PDF; "CSV formatting best practices" is the protected topic and stays in semantic_query untouched, including its own file-type word.
@@ -120,7 +126,7 @@ Example: "PDF documents about CSV formatting best practices" -> the requested re
 3. MATCH ONLY ALLOWED VALUES OUTSIDE PROTECTED TEXT
 For organizations and file types:
 - recognize supplied canonical values, complete display names, and supplied aliases;
-- case, spacing, punctuation, and obvious typo variation may differ when the intended allowed value is unambiguous;
+- case, spacing, punctuation, and obvious typo variation may differ when the intended allowed value is unambiguous — a lowercase and/or spaced writing of a listed name is still that value, so "vidhya vidhai" matches a listed "Vidhya Vidhai" and returns its canonical slug; matching is case-insensitive, and a spaced display name maps onto an unspaced canonical value;
 - NEVER map an unlisted value to the nearest allowed value;
 - evaluate each named organization independently.
 
@@ -139,7 +145,7 @@ File-type role:
 - a file type is positive only when it describes the requested returned-file format;
 - generic "doc/docs" used as a document noun is NOT Microsoft DOC, regardless of capitalization — "DOCS", "Docs", and "docs" are all the generic noun unless the next rule applies; capitalization is never the signal, only coordination with another named format is; e.g. "DOCS from OrgA" -> organizations:[OrgA], no file_type at all — "DOCS" alone, with no other format named, is the generic noun, not a DOC-format filter;
 - DOC in a clear format alternative such as "PDF or DOC" IS a file type;
-- a bare category noun that spans more than one canonical file type, with no more specific format named nearby, expands to EVERY canonical type in that category — e.g. "spreadsheets" alone means every tabular/spreadsheet-style canonical type at once (all of XLS, XLSX, and CSV together, not just one of them); naming one specific format from the category instead uses only that one, e.g. "spreadsheets in CSV" -> CSV only;
+- a bare category noun that spans more than one canonical file type, with no more specific format named nearby, expands to EVERY canonical type in that category — e.g. "spreadsheets" alone means every tabular/spreadsheet-style canonical type at once (all of XLS, XLSX, and CSV together, not just one of them); naming one specific format from the category instead uses only that one, e.g. "spreadsheets in CSV" -> CSV only, "spreadsheets in xls" -> XLS only, "spreadsheets in xlsx" -> XLSX only — never the other spreadsheet formats alongside it, however similar their names look. The same narrowing holds under negation, and it never costs the clause its organization: "OrgA files that are not spreadsheets in xlsx" -> organizations:[OrgA], exclude_file_types:[XLSX] only;
 - a format word that also has ordinary-English meaning, such as "text", is a file type when clearly coordinated with another named format before a shared head noun, e.g. "DOCX and text files" -> DOCX + text/plain;
 - if the file-type role is genuinely ambiguous, omit that file-type filter;
 - NEVER invent, default, or guess a file type when the query gives no format evidence at all — an ordinary request or question with no format word gets no file_types value, not the most common or most likely one.
@@ -173,9 +179,12 @@ MANDATORY POLARITY CHECK: a value in exclude_organizations/exclude_file_types mu
 COMPLEMENT LOCK
 Phrases such as "organizations other than X", "anyone but X", "all organizations except X", "every format except F", and "everything but F" express exclusions.
 - X/F is excluded, never positive from that occurrence.
-- NEVER compute, list, or infer the remaining allowed vocabulary.
+- NEVER compute, list, or infer the remaining allowed vocabulary — X alone goes in the exclude field; the vocabulary's other members are NEVER individually listed.
 - NEVER use "all vocabulary except X" as a positive list.
 - "other companies/organizations" with no named excluded organization creates no concrete organization filter or exclusion.
+- This also governs a compound exclusion naming a type AND an "other than X" organization clause together, e.g. "except FormatA files from companies other than OrgA" -> exclude_file_types:[FormatA], exclude_organizations:[OrgA] — two independent plain exclusions, X still alone in its field, never a positive filter and never every other organization listed out.
+
+MANDATORY COMPLEMENT CHECK: whenever "other than X" / "anyone but X" / "except X" governs organizations, the output MUST contain X itself (only X, one value) in exclude_organizations — never X in the positive organizations field, and never a list of every organization except X.
 
 Organization [] semantics around complements:
 - standalone explicit unrestricted organization scope such as "all organizations", "all companies", "any organization", "every organization", or "across organizations" -> organizations: [];
@@ -210,28 +219,40 @@ Independently global filters outside the rejected OR group may still remain if t
 - Branch-local exclusions stay inside their any_of entry.
 - Use a top-level exclusion only when the wording explicitly makes it global to the whole OR result.
 
-5C. BRANCH REPRESENTATION LITMUS TEST
-Represent every valid branch as its own filter object first.
-Then ask: would flattening branches into shared top-level lists match ANY organization/file-type combination, polarity, or exclusion scope that the query did not request?
-- If yes, any_of is mandatory.
-- If no and the flat representation is exactly equivalent, flattening is allowed.
+A negation NEVER reaches across the "or" into a sibling branch, and a sibling branch never donates values to its neighbour:
+- "OrgA documents that are not FormatB, or anything from OrgC" -> the negation governs only FormatB inside the OrgA branch; "anything from OrgC" stays a POSITIVE branch -> any_of:[{organizations:[OrgA],exclude_file_types:[FormatB]},{organizations:[OrgC]}]. Never read the negation as covering the whole "FormatB or OrgC" span, and never turn OrgC into exclude_organizations. A branch whose file type is negated STILL KEEPS its own positive organization: the exclusion narrows that branch, it does not replace it, so {organizations:[OrgA],exclude_file_types:[FormatB]} is the branch — never {exclude_file_types:[FormatB]} with OrgA dropped.
+- A branch stating unrestricted scope ("from anyone", "from any organization", "from anywhere") carries NO organization field and NO exclusion whatsoever. An organization named in a SIBLING branch is never excluded here: "FormatA from OrgA or FormatB from anyone" -> any_of:[{organizations:[OrgA],file_types:[FormatA]},{file_types:[FormatB]}]. Adding exclude_organizations:[OrgA] to the unrestricted branch invents a condition the query never stated.
 
-MECHANICAL DECISION PROCEDURE
-Build one branch per distinct alternative first (organizations/file_types/exclusions each branch names), then decide the final shape by asking, IN ORDER:
+5C. BRANCH REPRESENTATION: THE ONLY DECISION PROCEDURE
+Fields within one branch are AND; branches are OR. Build one branch per distinct alternative first, then decide the final shape by asking, IN ORDER — this is the only test to apply; do not separately re-derive it another way.
+
+0. ABSORB FIRST. If every condition of one branch also appears in another, the first branch is the broader one and the narrower one adds nothing it does not already match — drop the NARROWER branch and carry on with what is left, never the other way round, and never by unioning their fields. ("OrgA or OrgA FormatB" -> the OrgA branch absorbs the OrgA+FormatB branch, and the ENTIRE output is organizations:[OrgA], file_types:[], any_of:[]: the unrestricted OrgA branch already returns every OrgA FormatB document, so FormatB MUST NOT appear in file_types and OrgA MUST NOT be dropped in favour of the format.)
 1. Do ALL branches name the exact same organization(s) as each other (only the file type differs, or only an exclusion differs)? -> MERGE: one flat organizations list, file_types is the union of every branch's types, any_of stays empty. ("FormatA from OrgA or FormatB from OrgA" -> organizations:[OrgA], file_types:[FormatA, FormatB], any_of:[].)
 2. Do ALL branches name the exact same file type(s) as each other (only the organization differs)? -> MERGE the same way: one flat file_types list, organizations is the union of every branch's orgs, any_of stays empty. ("OrgA or OrgB" alone, or "FormatA from OrgA or FormatA from OrgB" -> organizations:[OrgA, OrgB], file_types:[FormatA] if a type was named at all, any_of:[].)
-3. Otherwise — at least one branch pairs a DIFFERENT organization with a DIFFERENT file type (or a branch-local exclusion) than another branch -> KEEP any_of, one entry per distinct pairing after merging any branches that are exactly identical. ("FormatA from OrgA or FormatB from OrgB" -> any_of:[{organizations:[OrgA],file_types:[FormatA]},{organizations:[OrgB],file_types:[FormatB]}].) Flattening this case is WRONG: organizations:[OrgA,OrgB], file_types:[FormatA,FormatB] would also match FormatB from OrgA and FormatA from OrgB, combinations the query never asked for.
-NEVER skip straight to a flat list just because the query used "or" — check questions 1 and 2 first, and only fall through to 3 when neither applies. A same-field-only alternative ("OrgA or OrgB", "FormatA or FormatB") always satisfies question 1 or 2 and must flatten, never any_of.
+3. Otherwise — at least one branch pairs a DIFFERENT organization with a DIFFERENT file type (or a branch-local exclusion) than another branch -> KEEP any_of, one entry per distinct pairing. ("FormatA from OrgA or FormatB from OrgB" -> any_of:[{organizations:[OrgA],file_types:[FormatA]},{organizations:[OrgB],file_types:[FormatB]}].) Flattening this case is WRONG: organizations:[OrgA,OrgB], file_types:[FormatA,FormatB] would also match FormatB from OrgA and FormatA from OrgB, combinations the query never asked for.
+   Where only SOME branches share a field, combine just those: "FormatA from OrgA or FormatB from OrgA or FormatC from OrgB" -> the two OrgA branches become one entry -> any_of:[{organizations:[OrgA],file_types:[FormatA,FormatB]},{organizations:[OrgB],file_types:[FormatC]}], two entries, never three.
 
-BRANCH ALGEBRA
-Treat fields within one branch as AND and branches as OR.
-Apply these identities by meaning, not by literal placeholder names:
-- {org:A} OR {type:F} -> keep any_of;
-- {org:A} OR {exclude_type:F} -> keep any_of;
-- {org:A, exclude_type:F} OR {org:B} -> keep any_of; exclusion stays with A;
-- {org:A, type:F1} OR {org:A, type:F2} -> merge F1/F2 under A;
-- {org:A} OR {org:A, type:F} -> keep only {org:A};
-- {org:A,type:F1} OR {org:B,type:F2} -> keep any_of unless the query explicitly supplies the complete cross-product that makes flat fields equivalent.
+REPEATED-NAME SHORTCUT — apply this BEFORE deciding on any_of. Each alternative naming both an organization and a format does NOT make the query branch-shaped; what matters is whether one of those names REPEATS:
+- the SAME organization named in every alternative -> question 1 is YES: write that organization once in the flat organizations and union the formats. "FormatA from OrgA or FormatB from OrgA" -> organizations:[OrgA], file_types:[FormatA,FormatB], any_of:[].
+- the SAME format named in every alternative -> question 2 is YES: write that format once in the flat file_types and union the organizations. "FormatA from OrgA or FormatA from OrgB" -> organizations:[OrgA,OrgB], file_types:[FormatA], any_of:[].
+any_of is only for alternatives that disagree on BOTH fields at once.
+
+Answer questions 1 and 2 EXACTLY, and answer each about its OWN field alone: question 1 compares only organizations and expects the formats to differ; question 2 compares only file types and expects the organizations to differ. A difference in the other field is what each question tolerates, never a reason to answer NO. Within its own field, answer NO when one branch names a value another does not, or names one where another leaves it unconstrained; answer YES when every branch leaves it unconstrained. A NO on both sends the branches to 3 UNCHANGED — "the query used or" is never itself a reason to flatten.
+
+A branch naming ONLY an organization, set against a branch naming ONLY a file type or ONLY an exclusion, answers NO to both questions — the two share neither an organization set nor a file-type set — so it always lands on 3. This is the single most common mistake: do not collapse it into flat fields.
+
+Worked examples that MUST keep any_of:
+- "OrgA PDFs or OrgB text files" -> any_of:[{organizations:[OrgA],file_types:[PDF]},{organizations:[OrgB],file_types:[text]}];
+- "documents from OrgA, or any FormatB file" -> any_of:[{organizations:[OrgA]},{file_types:[FormatB]}];
+- "anything from OrgA or anything in FormatB" -> any_of:[{organizations:[OrgA]},{file_types:[FormatB]}];
+- "anything from OrgA, or any file that is not FormatB" -> any_of:[{organizations:[OrgA]},{exclude_file_types:[FormatB]}];
+- "FormatA from OrgA or FormatB from OrgA or FormatC from OrgB" -> step 2 merges the two OrgA branches, two branches survive -> any_of:[{organizations:[OrgA],file_types:[FormatA,FormatB]},{organizations:[OrgB],file_types:[FormatC]}].
+A same-field-only alternative ("OrgA or OrgB", "FormatA or FormatB") always merges in step 2 and must flatten, never any_of.
+
+MUTUAL EXCLUSION — the alternatives are represented EXACTLY ONCE, in one place or the other, and are NEVER discarded:
+- more than one branch survived -> the values live in any_of, and the flat organizations/file_types stay empty;
+- one branch survived -> the values MOVE INTO the flat organizations/file_types and any_of becomes []. Moving them is mandatory: the surviving branch's organizations and file types must all appear in the flat fields. Do not blank them out — "represented once" means one location, never zero.
+Emitting the same alternatives in BOTH places is always wrong, even when each one looks correct on its own.
 
 For any_of:
 - branch-only values and exclusions stay only in their branch;
@@ -254,6 +275,7 @@ NEVER return the same any_of branch more than once.
 2. SUBSET ABSORPTION
 If branch P is less restrictive than branch Q and every condition of P is also contained in Q, remove Q.
 P OR (P AND extra) = P.
+KEEP THE BROADER BRANCH, DROP THE NARROWER ONE — never the reverse. An absent field is unconstrained and therefore broader, so {organizations:[OrgA]} absorbs {organizations:[OrgA],file_types:[FormatB]} and the surviving output is organizations:[OrgA] with NO file type. Discarding the broader branch's organization and keeping only the narrower branch's format loses every document the query asked for first.
 
 3. SAME-SCOPE GROUPING
 - branches with the same organization scope and same exclusions may merge by unioning positive file types;
@@ -264,7 +286,7 @@ After each merge, deduplicate the resulting lists and restart normalization.
 Lift a field to top level only when the exact same condition is present in every remaining branch and lifting does not change branch meaning or exclusion scope.
 
 5. SINGLE-BRANCH PROMOTION
-If one branch remains, remove any_of and promote that branch.
+If one branch remains, remove any_of and promote that branch: its fields become the flat top-level fields and any_of MUST be returned as []. Never leave the promoted branch — or the branches it was merged from — sitting in any_of alongside the flat fields.
 
 6. EQUIVALENCE-BASED FLATTENING
 Flatten completely only when the flat filters are mathematically equivalent to the remaining OR branches, including complete Cartesian combinations where required.
@@ -350,6 +372,10 @@ K. If any_of normalization leaves one branch, promote it; if exact equivalence a
 L. FILTER/SEMANTIC EXCLUSIVITY: at semantic level D, no query occurrence already consumed as a positive or excluded organization/file-type filter may remain in semantic_query. If semantic_query contains only consumed filter terms and/or generic filler, set semantic_query = "". Do not apply this check to phase-2 PROTECTED topic occurrences.
 M. CANONICAL LOCK ON EXCLUSIONS: every exclude_organizations/exclude_file_types value is exactly one canonical string; no alias, casing, or extension variant of that same value appears alongside it.
 N. NO SILENT DROP ON LISTED ALTERNATIVES: a same-field OR/list construction that resolves to one flat list must include every named value; it is never emitted as an empty list only because of how it was phrased.
+O. BRANCH-SHAPE RECHECK — run phase 5C's steps once more against what you are about to return:
+   - If two alternatives pair different organizations with different file types, or set an organization-only alternative against a file-type-only or exclusion-only one, then any_of MUST be non-empty and organizations/file_types MUST be empty. If you produced flat lists for them instead, you flattened incorrectly: rebuild them as any_of branches.
+   - If every alternative shares one field and they merged to a single branch, any_of MUST be [].
+   - any_of and flat fields MUST NOT both carry the same alternatives. Exactly one representation survives.
 
 Return only the tool call or required JSON. Never answer the document search itself.
 """
@@ -473,7 +499,9 @@ def build_tool_schema():
                                 'entries are ORed. Each branch must contain canonical unique values; '
                                 'semantically identical branches must appear only once. Keep branch-local '
                                 'scope/exclusions inside the branch and never copy branch-only logic to '
-                                'top-level fields. Flatten only when exactly equivalent.'
+                                'top-level fields. While this is non-empty, the flat organizations and '
+                                'file_types hold only conditions global to EVERY branch — never a copy '
+                                'or a union of branch values. Flatten only when exactly equivalent.'
                             ),
                             'items': {
                                 'type': 'object',
