@@ -249,7 +249,8 @@ Worked examples that MUST keep any_of:
 - "FormatA from OrgA or FormatB from OrgA or FormatC from OrgB" -> step 2 merges the two OrgA branches, two branches survive -> any_of:[{organizations:[OrgA],file_types:[FormatA,FormatB]},{organizations:[OrgB],file_types:[FormatC]}].
 A same-field-only alternative ("OrgA or OrgB", "FormatA or FormatB") always merges in step 2 and must flatten, never any_of.
 
-MUTUAL EXCLUSION — the alternatives are represented EXACTLY ONCE, in one place or the other, and are NEVER discarded:
+MUTUAL EXCLUSION — any_of and the flat POSITIVE fields never coexist. This is absolute and has no exceptions: whenever any_of is non-empty, organizations and file_types MUST BOTH be []. Only exclude_organizations/exclude_file_types may appear at top level beside any_of, and only for an exclusion global to every branch. A value written in both places is always wrong — and it is worse than untidy: the flat fields are ANDed with the branches, so a hedged copy silently drops documents the query asked for. Keep every value in exactly one place.
+The alternatives are represented EXACTLY ONCE, in one place or the other, and are NEVER discarded:
 - more than one branch survived -> the values live in any_of, and the flat organizations/file_types stay empty;
 - one branch survived -> the values MOVE INTO the flat organizations/file_types and any_of becomes []. Moving them is mandatory: the surviving branch's organizations and file types must all appear in the flat fields. Do not blank them out — "represented once" means one location, never zero.
 Emitting the same alternatives in BOTH places is always wrong, even when each one looks correct on its own.
@@ -378,7 +379,7 @@ N. NO SILENT DROP ON LISTED ALTERNATIVES: a same-field OR/list construction that
 O. BRANCH-SHAPE RECHECK — run phase 5C's steps once more against what you are about to return:
    - If two alternatives pair different organizations with different file types, or set an organization-only alternative against a file-type-only or exclusion-only one, then any_of MUST be non-empty and organizations/file_types MUST be empty. If you produced flat lists for them instead, you flattened incorrectly: rebuild them as any_of branches.
    - If every alternative shares one field and they merged to a single branch, any_of MUST be [].
-   - any_of and flat fields MUST NOT both carry the same alternatives. Exactly one representation survives.
+   - any_of non-empty REQUIRES organizations:[] and file_types:[]. No exceptions, and no "but this one is global" — a positive value beside a non-empty any_of is always wrong. Only exclude_* may be global there. Check this last, and if both are populated, empty the flat positives.
 
 Return only the tool call or required JSON. Never answer the document search itself.
 """
@@ -447,7 +448,8 @@ def build_tool_schema():
                                 'Top-level included organization canonical values only. Omit when '
                                 'unrequested. Use [] only for explicit unrestricted organization scope '
                                 'or when all explicit positives were cancelled. Do not return aliases, '
-                                'duplicates, complements, or any_of branch-only values here.'
+                                'duplicates, complements, or any_of branch-only values here. MUST be [] '
+                                'whenever any_of is non-empty — the two never coexist.'
                             ),
                             'items': {'type': 'string'},
                         },
@@ -460,7 +462,8 @@ def build_tool_schema():
                                 'format with no textual evidence. A same-field "or" list of formats must '
                                 'include every named value, never an empty list. A category term spanning '
                                 'several canonical types with no more specific format nearby expands to '
-                                'every canonical type in that category.'
+                                'every canonical type in that category. MUST be [] whenever any_of is '
+                                'non-empty — the two never coexist.'
                             ),
                             'items': {
                                 'type': 'string',
@@ -503,8 +506,10 @@ def build_tool_schema():
                                 'semantically identical branches must appear only once. Keep branch-local '
                                 'scope/exclusions inside the branch and never copy branch-only logic to '
                                 'top-level fields. While this is non-empty, the flat organizations and '
-                                'file_types hold only conditions global to EVERY branch — never a copy '
-                                'or a union of branch values. Flatten only when exactly equivalent.'
+                                'file_types MUST BOTH be [] — no exceptions, not even for a value that '
+                                'looks global; only exclude_* may be global here. They are ANDed with '
+                                'these branches, so a hedged copy silently drops matching documents. '
+                                'Flatten only when exactly equivalent, and then leave this empty.'
                             ),
                             'items': {
                                 'type': 'object',
