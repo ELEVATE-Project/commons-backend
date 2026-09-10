@@ -24,6 +24,7 @@ from string import Template
 
 from chatbot.models.company_models import CompanyBot
 from chatbot.models.enums import FileTypeChoices
+from chatbot.services.search.vocabularies import file_type_category_vocabulary
 
 logger = logging.getLogger('django')
 
@@ -143,9 +144,14 @@ Organization matching:
 
 File-type role:
 - a file type is positive only when it describes the requested returned-file format;
-- generic "doc/docs" used as a document noun is NOT Microsoft DOC, regardless of capitalization — "DOCS", "Docs", and "docs" are all the generic noun unless the next rule applies; capitalization is never the signal, only coordination with another named format is; e.g. "DOCS from OrgA" -> organizations:[OrgA], no file_type at all — "DOCS" alone, with no other format named, is the generic noun, not a DOC-format filter;
+- generic "doc/docs" used as a document noun is NOT Microsoft DOC, regardless of capitalization — "DOCS", "Docs", and "docs" are all the generic noun unless one of the two rules below applies; capitalization is never the signal, only coordination with another named format or a category qualifier is; e.g. "DOCS from OrgA" -> organizations:[OrgA], no file_type at all — "DOCS" alone, with no other format named, is the generic noun, not a DOC-format filter;
 - DOC in a clear format alternative such as "PDF or DOC" IS a file type;
-- a bare category noun that spans more than one canonical file type, with no more specific format named nearby, expands to EVERY canonical type in that category — e.g. "spreadsheets" alone means every tabular/spreadsheet-style canonical type at once (all of XLS, XLSX, and CSV together, not just one of them); naming one specific format from the category instead uses only that one, e.g. "spreadsheets in CSV" -> CSV only, "spreadsheets in xls" -> XLS only, "spreadsheets in xlsx" -> XLSX only — never the other spreadsheet formats alongside it, however similar their names look. The same narrowing holds under negation, and it never costs the clause its organization: "OrgA files that are not spreadsheets in xlsx" -> organizations:[OrgA], exclude_file_types:[XLSX] only;
+- a QUALIFIER in front of the generic noun can make the phrase a category term instead: "word docs"/"word documents" is the Word category and expands under the rule below, while bare "docs"/"documents" stays the generic noun and filters nothing. The qualifier is what decides it, never the noun on its own;
+- GROUPED CATEGORY TERMS. The user message supplies a "Category terms" table: each row lists the wordings of one generic category and the canonical types that category covers. A category term used as a requested format expands to EVERY canonical type on its row — all of them, never just the one that looks most likely. "word files" returns BOTH Word types; "excel files" and "spreadsheets" return BOTH Excel types. Use the supplied table as the authority on which types a category covers; never widen a row with a type it does not list, and never invent a category the table does not name.
+- The expansion applies in EVERY scope, not only the top level: in file_types, in exclude_file_types, and independently inside EACH any_of branch. A branch whose format is a category term carries that category's full type list, exactly as a top-level field would — e.g. "word files from OrgA or excel files from OrgB" -> any_of:[{organizations:[OrgA],file_types:[both Word types]},{organizations:[OrgB],file_types:[both Excel types]}]. Under negation the same holds. A BARE category term under negation — no specific format named beside it — NEVER collapses to one type: "documents excluding word files" -> exclude_file_types:[both Word types]; "all files except excel" -> exclude_file_types:[both Excel types]; "documents excluding excel files" -> exclude_file_types:[both Excel types]. Excluding a bare category is as many canonical types as that category has, never the single one whose name most resembles the word used. The narrowing rule below still applies inside exclusions, though: a specific format named beside the category narrows the exclusion to that format alone — "documents excluding spreadsheets in xls" -> exclude_file_types:[XLS] only. An exclusion never costs the clause its organization either — "OrgA files that are not spreadsheets in xlsx" -> organizations:[OrgA], exclude_file_types:[XLSX] only.
+- A SPECIFIC FORMAT NAMED ALONGSIDE A CATEGORY TERM NARROWS IT to just that format — the category does not also contribute its other types. "spreadsheets in CSV" -> CSV only, "spreadsheets in xls" -> XLS only, "spreadsheets in xlsx" -> XLSX only, "word files in docx" -> DOCX only — never the category's other formats alongside it, however similar their names look. A specific format named on its own is likewise only itself: "DOC files" -> DOC only, "DOCX files" -> DOCX only, "XLS files" -> XLS only, "XLSX files" -> XLSX only. Expansion is for the generic category word alone; an extension or exact format name is never expanded to its neighbours.
+- CSV is NOT part of the spreadsheet/excel category and is never added by expanding one. It is a file type only when named outright, as in "csv files" or "spreadsheets in csv".
+- CATEGORY EXPANSION NEVER OVERRIDES PHASE 2. A category word inside a protected topic span is still protected and still yields NO file_types — "spreadsheet modelling" is a topic about modelling, not a request for the Excel types, and the whole category must not be expanded out of it. Expansion applies only to an occurrence that survived phase 2 as a requested returned-file format;
 - a format word that also has ordinary-English meaning, such as "text", is a file type when clearly coordinated with another named format before a shared head noun, e.g. "DOCX and text files" -> DOCX + text/plain;
 - if the file-type role is genuinely ambiguous, omit that file-type filter;
 - NEVER invent, default, or guess a file type when the query gives no format evidence at all — an ordinary request or question with no format word gets no file_types value, not the most common or most likely one.
@@ -172,7 +178,7 @@ POLARITY LOCK
 - A negated occurrence MUST NOT also appear in its positive field in the same scope.
 - If the same value is positive and excluded in the same scope, exclusion wins and remove it from the positive field.
 - If all explicit positive values in a field are cancelled by exclusions, return that positive field as [] plus the exclusion.
-- The CANONICAL OUTPUT LOCK applies with full force inside exclude_organizations/exclude_file_types: return exactly one canonical value per excluded organization/file type, never its aliases, casing variants, or extension forms alongside it. Excluding one file type produces exactly one canonical string in exclude_file_types, not that value repeated in several written forms.
+- The CANONICAL OUTPUT LOCK applies inside exclude_organizations/exclude_file_types as ONE WRITTEN FORM PER TYPE: for each excluded file type, emit its canonical string once and never its aliases, casing variants, or extension forms alongside it — one excluded type is one canonical string, not that same value repeated in several written forms. This limits how each type is WRITTEN; it never limits HOW MANY types an exclusion contains. A BARE generic category term excludes every canonical type on its row in the "Category terms" table, each of them written exactly once — excluding "excel" is therefore TWO canonical strings, not one, and excluding "word" is likewise TWO. A specific format named beside the category still narrows the exclusion to that one format.
 
 MANDATORY POLARITY CHECK: a value in exclude_organizations/exclude_file_types must never also sit in organizations/file_types in the same scope — remove it from the positive field if both would otherwise be set.
 
@@ -180,6 +186,7 @@ COMPLEMENT LOCK
 Phrases such as "organizations other than X", "anyone but X", "all organizations except X", "every format except F", and "everything but F" express exclusions.
 - X/F is excluded, never positive from that occurrence.
 - NEVER compute, list, or infer the remaining allowed vocabulary — X alone goes in the exclude field; the vocabulary's other members are NEVER individually listed.
+- "X alone" is about WHICH thing is excluded, not about how many output values it produces: only the named thing is excluded and the rest of the vocabulary is never listed. It does NOT mean a single value. When X is a generic category term, X alone still expands to every canonical type on its row — "all files except excel" -> exclude_file_types with BOTH Excel types, "everything but word" -> BOTH Word types, and in neither case is any other type enumerated.
 - NEVER use "all vocabulary except X" as a positive list.
 - "other companies/organizations" with no named excluded organization creates no concrete organization filter or exclusion.
 - This also governs a compound exclusion naming a type AND an "other than X" organization clause together, e.g. "except FormatA files from companies other than OrgA" -> exclude_file_types:[FormatA], exclude_organizations:[OrgA] — two independent plain exclusions, X still alone in its field, never a positive filter and never every other organization listed out.
@@ -334,7 +341,7 @@ If a filter was found, semantic_query MUST be "" unless independent subject text
 
 FILLER INVARIANT FOR LEVEL D ONLY
 If the residual after filter consumption is only generic document/collection filler, semantic_query = "".
-This includes files, documents, docs, resources, materials, content, records, items, uploads, data, stuff, things, and bare "spreadsheets" when CSV/XLS/XLSX was already extracted.
+This includes files, documents, docs, resources, materials, content, records, items, uploads, data, stuff, things, and a category term already consumed as a filter — "word", "excel", "spreadsheets" and their listed wordings — once its types were extracted.
 If filters/exclusions/any_of fully express the request and no genuine independent subject remains, semantic_query = "".
 
 E. NO NARROWING FILTER SURVIVES
@@ -374,7 +381,7 @@ I. semantic_query follows exactly one priority level A-E. Level-D filter-consump
 J. Meta-instruction text never reaches semantic_query.
 K. If any_of normalization leaves one branch, promote it; if exact equivalence allows flattening, flatten; otherwise keep any_of.
 L. FILTER/SEMANTIC EXCLUSIVITY: at semantic level D, no query occurrence already consumed as a positive or excluded organization/file-type filter may remain in semantic_query. If semantic_query contains only consumed filter terms and/or generic filler, set semantic_query = "". Do not apply this check to phase-2 PROTECTED topic occurrences.
-M. CANONICAL LOCK ON EXCLUSIONS: every exclude_organizations/exclude_file_types value is exactly one canonical string; no alias, casing, or extension variant of that same value appears alongside it.
+M. CANONICAL LOCK ON EXCLUSIONS: each excluded organization/file type appears as exactly one canonical string, with no alias, casing, or extension variant of that SAME value beside it. This checks WRITTEN FORM ONLY and never the number of types — NEVER delete a type from exclude_organizations/exclude_file_types to satisfy it. If an excluded generic category term contributed several canonical types, every one of them stays.
 N. NO SILENT DROP ON LISTED ALTERNATIVES: a same-field OR/list construction that resolves to one flat list must include every named value; it is never emitted as an empty list only because of how it was phrased.
 O. BRANCH-SHAPE RECHECK — run phase 5C's steps once more against what you are about to return:
    - If two alternatives pair different organizations with different file types, or set an organization-only alternative against a file-type-only or exclusion-only one, then any_of MUST be non-empty and organizations/file_types MUST be empty. If you produced flat lists for them instead, you flattened incorrectly: rebuild them as any_of branches.
@@ -460,10 +467,11 @@ def build_tool_schema():
                                 'Do not return aliases/variants, duplicate values, protected topical '
                                 'format words, exclusions, or any_of branch-only values. Never invent a '
                                 'format with no textual evidence. A same-field "or" list of formats must '
-                                'include every named value, never an empty list. A category term spanning '
-                                'several canonical types with no more specific format nearby expands to '
-                                'every canonical type in that category. MUST be [] whenever any_of is '
-                                'non-empty — the two never coexist.'
+                                'include every named value, never an empty list. A generic category term '
+                                'from the supplied "Category terms" table expands to EVERY canonical type '
+                                'listed on its row; a specific format named on its own or alongside the '
+                                'category narrows to just that format and is never expanded. MUST be [] '
+                                'whenever any_of is non-empty — the two never coexist.'
                             ),
                             'items': {
                                 'type': 'string',
@@ -488,10 +496,16 @@ def build_tool_schema():
                                 'Top-level canonical file-type exclusions explicitly global to the '
                                 'request. A negated file type belongs here only, never in a positive '
                                 'field in the same scope. Branch-local exclusions stay in any_of. Never '
-                                'enumerate complements or duplicate values. Exactly one canonical value '
-                                'per excluded file type — never that same value repeated as an alias, '
-                                'casing, or extension variant (e.g. excluding one format yields exactly '
-                                'one canonical MIME string, not several written forms of it).'
+                                'enumerate complements or duplicate values. One WRITTEN FORM per excluded '
+                                'type: each excluded type appears as one canonical string, never that '
+                                'same type repeated as an alias, casing, or extension variant. That '
+                                'constrains how each type is written, NOT how many types this list holds '
+                                '— an excluded generic category term still expands to EVERY canonical '
+                                'type on its row in the supplied "Category terms" table when no specific '
+                                'format is named beside it, so excluding a bare two-type category yields '
+                                'two canonical strings and neither may be dropped to make the list '
+                                'shorter. A specific format named beside the category narrows the '
+                                'exclusion to that one format.'
                             ),
                             'items': {
                                 'type': 'string',
@@ -509,6 +523,10 @@ def build_tool_schema():
                                 'file_types MUST BOTH be [] — no exceptions, not even for a value that '
                                 'looks global; only exclude_* may be global here. They are ANDed with '
                                 'these branches, so a hedged copy silently drops matching documents. '
+                                'Category-term expansion applies independently INSIDE each branch: a '
+                                "branch whose format is a generic category carries that category's full "
+                                'type list from the supplied "Category terms" table, exactly as a '
+                                'top-level field would. '
                                 'Flatten only when exactly equivalent, and then leave this empty.'
                             ),
                             'items': {
@@ -597,6 +615,26 @@ def _vocabulary_block(vocabulary, empty=''):
     return '\n'.join(lines) or empty
 
 
+def _category_block(categories):
+    """Render {category: (aliases, [mime, ...])} as the grouped-category table."""
+    lines = []
+
+    for _category, (aliases, mimes) in (categories or {}).items():
+        known_as = ', '.join(str(alias) for alias in aliases if alias)
+        expands_to = ', '.join(str(mime) for mime in mimes if mime)
+        if known_as and expands_to:
+            lines.append(f'  {known_as} — {expands_to}')
+
+    if not lines:
+        return ''
+
+    return (
+        '\n\nCategory terms — a generic category word covers SEVERAL canonical '
+        'types, and expands to EVERY type listed beside it:\n'
+        + '\n'.join(lines)
+    )
+
+
 def _candidates_block(candidates):
     """Render fuzzy-match suggestions, or an empty string when none exist."""
     lines = [
@@ -628,6 +666,13 @@ def build_user_message(
     file_types follows the same structure.
     template is normally CompanyBot.pre_context; USER_MESSAGE_TEMPLATE is the
     fallback when the stored template is empty.
+
+    The grouped-category table rides along inside the $file_types substitution
+    rather than in a $file_categories placeholder of its own. safe_substitute
+    leaves an unknown placeholder untouched, so a bot whose pre_context was
+    seeded or hand-edited before this existed would render the variable name
+    instead of the table, or drop it entirely — folding it into a placeholder
+    every stored template already has makes it arrive either way.
     """
     values = {
         'query': raw_query,
@@ -635,7 +680,10 @@ def build_user_message(
             organizations,
             empty='  (none available)',
         ),
-        'file_types': _vocabulary_block(file_types),
+        'file_types': (
+            _vocabulary_block(file_types)
+            + _category_block(file_type_category_vocabulary())
+        ),
         'candidates': _candidates_block(candidates),
     }
 
