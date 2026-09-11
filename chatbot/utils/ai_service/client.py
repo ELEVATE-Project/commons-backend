@@ -221,12 +221,20 @@ def chat(
 
 
 def extract_tool_arguments(response, tool_name):
-    """Extract tool arguments from a chat response."""
+    """Extract tool arguments from a chat response.
+
+    A provider occasionally returns more than one tool call for the same
+    function in one turn — observed as a draft followed by a corrected call,
+    both named identically. The last matching call wins: it is the model's
+    final answer, not the superseded draft.
+    """
     try:
         message = (response.get('choices') or [{}])[0].get('message') or {}
     except (AttributeError, IndexError, TypeError):
         return None
 
+    parsed_result = None
+    matched_calls = 0
     for call in message.get('tool_calls') or []:
         function = call.get('function') or {}
 
@@ -246,7 +254,15 @@ def extract_tool_arguments(response, tool_name):
                 parsed = None
 
         if isinstance(parsed, dict):
-            return parsed
+            matched_calls += 1
+            parsed_result = parsed
+
+    if parsed_result is not None:
+        if matched_calls > 1:
+            logger.warning(
+                'ai_service: %s tool calls for %r in one response; using the last one',
+                matched_calls, tool_name)
+        return parsed_result
 
     # Some providers return the tool arguments as plain message content.
     content = message.get('content')

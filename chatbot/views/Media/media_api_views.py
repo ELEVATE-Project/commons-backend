@@ -1055,7 +1055,16 @@ class MediaSearchV2View(APIView):
         # and so misses a qualifier stated once before the OR, and OR'ing its
         # looser branch in would swallow the correct one. The model's answer
         # wins; the splitter is the fallback for when there is no answer.
-        combined_any_of = resolved_any_of or deterministic_any_of
+        #
+        # Keyed on llm_used rather than on resolved_any_of being truthy: an
+        # empty any_of from the model is an answer -- "these alternatives are
+        # one flat list" -- not a missing one, and falling back there would AND
+        # the splitter's looser branches over correct flat filters and drop
+        # matching documents.
+        combined_any_of = (
+            resolved_any_of if resolved.diagnostics.get('llm_used')
+            else deterministic_any_of
+        )
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
