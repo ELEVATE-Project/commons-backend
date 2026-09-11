@@ -11,6 +11,7 @@ case-insensitive matching decide *whether* a value is valid, but
 
 import logging
 
+from chatbot.constants.search import FILE_TYPE_CATEGORIES, FILE_TYPE_CATEGORY_ALIASES
 from chatbot.models.enums import EntityStatus, FileTypeChoices
 from chatbot.services.search.config import (
     VOCAB_AUTO,
@@ -63,6 +64,19 @@ def file_type_vocabulary():
             aliases.append(f"{bare}s")
         vocabulary[choice.value] = list(dict.fromkeys(aliases))
     return vocabulary
+
+
+
+
+def file_type_category_vocabulary():
+    """``{category: (aliases, [mime, ...])}`` for the prompt's category block."""
+    return {
+        category: (
+            FILE_TYPE_CATEGORY_ALIASES.get(category, [category]),
+            list(mimes),
+        )
+        for category, mimes in FILE_TYPE_CATEGORIES.items()
+    }
 
 
 def select_organization_vocabulary(bot, candidates=None, scope=None):
