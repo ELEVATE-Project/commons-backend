@@ -1,0 +1,27 @@
+[Unit]
+Description=SG Commons Celery Worker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+WorkingDirectory=/opt/deployment/commons-backend
+
+Environment="PYTHONPATH=/opt/deployment/commons-backend"
+Environment="DJANGO_SETTINGS_MODULE=shikshalokam_mohini.settings"
+
+ExecStart=/opt/deployment/commons-backend/.venv/bin/celery \
+    -A shikshalokam_mohini \
+    worker \
+    --pool=threads
+
+Restart=always
+RestartSec=5
+
+StandardOutput=append:/opt/deployment/commons-backend/commons_celery.log
+StandardError=append:/opt/deployment/commons-backend/commons_celery.log
+
+[Install]
+WantedBy=multi-user.target

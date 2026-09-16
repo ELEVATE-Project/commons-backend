@@ -1,0 +1,515 @@
+{% load i18n %}
+{% block extrahead %}
+    <!-- Flatpickr CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+    <!-- Flatpickr JS -->
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <!-- Add Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <!-- jQuery (Select2 dependency) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Select2 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+{% endblock %}
+
+<div style="display: inline-flex;">
+    {% if title == "From Date" %}
+    <div id= 'custom_date_select_id' class="form-group" style="display: inline-block; margin-right: 10px;">
+        <select id="date_range_selector" onchange="toggleDateInputs(this.value)"
+        >
+
+        >
+            <option selected value="default_date">Date</option>
+            <option value="created_at">Clear Date</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="last_week">Last Week</option>
+            <option value="last_seven_days">Last 7 Days</option>
+            <option value="last_thirty_days">Last 30 Days</option>
+            <option value="last_month">Last Month</option>
+            <option value="select_date">Specific Dates</option>
+            <option value="on_date">On Date</option>
+
+        </select>
+        <input type="hidden"  value="">
+
+    </div>
+
+    {% else %}
+    <div class="form-group" style="display: inline-block; margin-right: 10px;">
+        <select class="form-control search-filter" style="width: 100%;" tabindex="-1" data-name="{{ field_name }}">
+            <option value="">{{ title }}</option>
+            <option value="">---------</option>
+            {% for choice in choices %}
+                {% if choice.name %}
+                    <option data-name="{{ choice.name }}" value="{{ choice.value }}"
+                            {% if choice.selected %}selected {% endif %}
+                    >
+                        {{ choice.display }}
+                    </option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+    {% endif %}
+</div>
+
+
+<style>
+    /* Customize the hover background color for Select2 options */
+    .select2-container--default .select2-results__option--highlighted[aria-selected] {
+        background-color: #f8f9fa;  /* Light grey background on hover */
+        color: #212529;  /* Darker text color on hover */
+    }
+
+    /* Optional: Customize the dropdown itself */
+    .select2-container--default .select2-selection--single {
+        border-color: #ced4da;
+        padding: 6px;
+        font-size: 16px;
+    }
+
+    .breadcrumb{
+        margin-bottom: 0;
+        background-color: transparent;
+
+    }
+
+</style>
+
+<script>
+    $(document).ready(function() {
+        $('#date_range_selector').select2();  // Apply Select2 to the select element
+    });
+
+    if (typeof window.selectedDateRange === 'undefined') {
+        window.selectedDateRange = null;
+    }
+
+    function formatDateToLocal(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0'); // getMonth() is 0-based
+        const day = String(date.getDate()).padStart(2, '0'); // getDate() gives the day of the month
+
+        return `${year}-${month}-${day}`;
+    }
+
+    function toggleDateInputs(value) {
+        console.log("Selected value: ", value);
+        const parentDiv = document.getElementById('custom_date_select_id');
+
+        let fromDateInput = document.getElementById('id_created_at_from');
+        if (!fromDateInput) {
+            const fromDateLabel = document.createElement('label');
+            fromDateLabel.htmlFor = 'id_created_at_from';
+            fromDateLabel.style.display = 'inline-block';
+            fromDateLabel.style.padding = '5px';
+            fromDateLabel.innerText = 'Select Range:';
+            fromDateLabel.style.fontSize = '1rem';
+            fromDateLabel.id = 'select_date_from_label_id';
+            parentDiv.appendChild(fromDateLabel);
+
+            fromDateInput = document.createElement('input');
+            fromDateInput.type = 'date';
+            fromDateInput.id = 'id_created_at_from';
+            fromDateInput.name = 'created_at__gte';
+            fromDateInput.value = "{% if request.GET.created_at__gte %}{{ request.GET.created_at__gte }}{% endif %}";
+
+            fromDateInput.style.padding = '8px';
+            fromDateInput.style.border = '1px solid #ccc';
+            fromDateInput.style.borderRadius = '4px';
+            fromDateInput.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,.1)';
+            fromDateInput.style.fontSize = '1rem';
+            fromDateInput.style.width = '200px';
+            fromDateInput.style.color = '#333';
+            fromDateInput.style.backgroundColor = '#fff';
+            fromDateInput.style.transition = 'all 0.2s ease-in-out';
+            fromDateInput.style.display = 'inline-block';
+            fromDateInput.style.marginRight = '10px';
+
+            flatpickr(fromDateInput, {
+                mode: "range",  // Enables range selection
+                dateFormat: "Y-m-d",  // Optional: Customize the date format
+                onChange: function(selectedDates, dateStr, instance) {
+                    if (selectedDates.length === 2) {
+                        const [startDate, endDate] = selectedDates;
+
+                        // Format the date manually to ensure no timezone issues
+                        const formattedStartDate = formatDateToLocal(startDate);  // Use formatDateToLocal helper function
+                        const formattedEndDate = formatDateToLocal(endDate);  // Use formatDateToLocal helper function
+
+                        // Create or update hidden inputs for gte and lte
+                        let createdAtGteInput = document.getElementById('created_at__gte');
+                        if (!createdAtGteInput) {
+                            createdAtGteInput = document.createElement('input');
+                            createdAtGteInput.type = 'hidden';
+                            createdAtGteInput.id = 'created_at__gte';
+                            createdAtGteInput.name = 'created_at__gte';
+                            document.querySelector('form').appendChild(createdAtGteInput);
+                        }
+                        createdAtGteInput.value = formattedStartDate;
+
+                        let createdAtLteInput = document.getElementById('created_at__lte');
+                        if (!createdAtLteInput) {
+                            createdAtLteInput = document.createElement('input');
+                            createdAtLteInput.type = 'hidden';
+                            createdAtLteInput.id = 'created_at__lte';
+                            createdAtLteInput.name = 'created_at__lte';
+                            document.querySelector('form').appendChild(createdAtLteInput);
+                        }
+                        createdAtLteInput.value = formattedEndDate;
+                    }
+                }
+            });
+
+
+            parentDiv.appendChild(fromDateInput);
+
+        }
+
+
+        let onDateInput = document.getElementById('id_on_date');
+        if (!onDateInput) {
+
+            const onDateLabel = document.createElement('label');
+            onDateLabel.htmlFor = 'id_on_date';
+            onDateLabel.style.display = 'inline-block';
+            onDateLabel.style.padding = '5px';
+            onDateLabel.innerText = 'On Date:';
+            onDateLabel.style.fontSize = '1rem';
+            onDateLabel.id = 'id_on_date_label';
+            parentDiv.appendChild(onDateLabel);
+
+            onDateInput = document.createElement('input');
+            onDateInput.type = 'date';
+            onDateInput.id = 'id_on_date';
+            onDateInput.name = 'created_at__date';
+
+            onDateInput.style.padding = '8px';
+            onDateInput.style.border = '1px solid #ccc';
+            onDateInput.style.borderRadius = '4px';
+            onDateInput.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,.1)';
+            onDateInput.style.fontSize = '1rem';
+            onDateInput.style.width = '200px';
+            onDateInput.style.color = '#333';
+            onDateInput.style.backgroundColor = '#fff';
+            onDateInput.style.transition = 'all 0.2s ease-in-out';
+            onDateInput.style.display = 'inline-block';
+            onDateInput.style.marginRight = '10px';
+            onDateInput.classList.add("flatpickr")
+            flatpickr(onDateInput, {
+                mode: "single",  // Enables multiple date selection
+                dateFormat: "Y-m-d",  // Optional: Customize the date format
+            });
+
+            parentDiv.appendChild(onDateInput);
+
+        }
+
+
+        let createdAtDateInput = document.getElementById('created_at__date');
+        if (!createdAtDateInput) {
+            createdAtDateInput = document.createElement('input');
+            createdAtDateInput.type = 'hidden';
+            createdAtDateInput.id = 'created_at__date';
+            createdAtDateInput.name = 'created_at__date';
+            document.querySelector('form').appendChild(createdAtDateInput);
+        }
+
+
+
+        createdAtDateInput.value = '';
+        fromDateInput.style.display = 'none';
+        onDateInput.style.display = 'none';
+
+        if (value === 'default_date'){
+            $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+        } else if (value === 'created_at') {
+            $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+             window.selectedDateRange = { type: 'created_at'};
+            console.log("Setting display none.");
+
+        } else if (value === 'yesterday') {
+           $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const formattedYesterday = yesterday.toISOString().split('T')[0];
+            console.log("Yesterday's date: ", formattedYesterday);
+            createdAtDateInput.value = formattedYesterday;
+             window.selectedDateRange = { type: 'yesterday', value: formattedYesterday };
+
+        }  else if (value === 'last_seven_days') {
+           $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+
+            const today = new Date();
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(today.getDate() - 7);
+            const endDate = today
+            endDate.setDate(today.getDate() - 1)
+
+            const fromDate = sevenDaysAgo.toISOString().split('T')[0];
+            const toDate = endDate.toISOString().split('T')[0];
+
+            let createdAtGteInput = document.getElementById('created_at__gte');
+            if (!createdAtGteInput) {
+                createdAtGteInput = document.createElement('input');
+                createdAtGteInput.type = 'hidden';
+                createdAtGteInput.id = 'created_at__gte';
+                createdAtGteInput.name = 'created_at__gte';
+                document.querySelector('form').appendChild(createdAtGteInput);
+            }
+            createdAtGteInput.value = fromDate;
+
+            // Set or create the 'created_at__lte' hidden input
+            let createdAtLteInput = document.getElementById('created_at__lte');
+            if (!createdAtLteInput) {
+                createdAtLteInput = document.createElement('input');
+                createdAtLteInput.type = 'hidden';
+                createdAtLteInput.id = 'created_at__lte';
+                createdAtLteInput.name = 'created_at__lte';
+                document.querySelector('form').appendChild(createdAtLteInput);
+            }
+            createdAtLteInput.value = toDate;
+
+             window.selectedDateRange = { type: 'last_seven_days', fromDate: fromDate, toDate: toDate };
+
+            console.log("URL for Last 7 Days: ?created_at__gte=" + fromDate + "&created_at__lte=" + toDate);
+
+        }  else if (value === 'last_thirty_days') {
+           $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+
+            const today = new Date();
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            const endDate = today
+            endDate.setDate(today.getDate() - 1)
+
+            const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
+            const toDate = endDate.toISOString().split('T')[0];
+
+            let createdAtGteInput = document.getElementById('created_at__gte');
+            if (!createdAtGteInput) {
+                createdAtGteInput = document.createElement('input');
+                createdAtGteInput.type = 'hidden';
+                createdAtGteInput.id = 'created_at__gte';
+                createdAtGteInput.name = 'created_at__gte';
+                document.querySelector('form').appendChild(createdAtGteInput);
+            }
+            createdAtGteInput.value = fromDate;
+
+            // Set or create the 'created_at__lte' hidden input
+            let createdAtLteInput = document.getElementById('created_at__lte');
+            if (!createdAtLteInput) {
+                createdAtLteInput = document.createElement('input');
+                createdAtLteInput.type = 'hidden';
+                createdAtLteInput.id = 'created_at__lte';
+                createdAtLteInput.name = 'created_at__lte';
+                document.querySelector('form').appendChild(createdAtLteInput);
+            }
+            createdAtLteInput.value = toDate;
+
+             window.selectedDateRange = { type: 'last_thirty_days', fromDate: fromDate, toDate: toDate };
+
+            console.log("URL for Last 30 Days: ?created_at__gte=" + fromDate + "&created_at__lte=" + toDate);
+
+        }  else if (value === 'last_month') {
+            $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+
+            const today = new Date();
+            const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            const lastDayOfPreviousMonth = new Date(firstDayOfCurrentMonth - 1);
+            const firstDayOfPreviousMonth = new Date(lastDayOfPreviousMonth.getFullYear(), lastDayOfPreviousMonth.getMonth(), 1);
+            console.log('firstDayOfPreviousMonth: ', firstDayOfPreviousMonth)
+            const fromDate = formatDateToLocal(firstDayOfPreviousMonth);
+            const toDate = formatDateToLocal(lastDayOfPreviousMonth);
+
+            let createdAtGteInput = document.getElementById('created_at__gte');
+            if (!createdAtGteInput) {
+                createdAtGteInput = document.createElement('input');
+                createdAtGteInput.type = 'hidden';
+                createdAtGteInput.id = 'created_at__gte';
+                createdAtGteInput.name = 'created_at__gte';
+                document.querySelector('form').appendChild(createdAtGteInput);
+            }
+            createdAtGteInput.value = fromDate;
+
+            // Set or create the 'created_at__lte' hidden input
+            let createdAtLteInput = document.getElementById('created_at__lte');
+            if (!createdAtLteInput) {
+                createdAtLteInput = document.createElement('input');
+                createdAtLteInput.type = 'hidden';
+                createdAtLteInput.id = 'created_at__lte';
+                createdAtLteInput.name = 'created_at__lte';
+                document.querySelector('form').appendChild(createdAtLteInput);
+            }
+            createdAtLteInput.value = toDate;
+
+
+             window.selectedDateRange = { type: 'last_month', fromDate: fromDate, toDate: toDate };
+
+            console.log("URL for Last Month: ?created_at__gte=" + fromDate + "&created_at__lte=" + toDate);
+
+
+        }  else if (value === 'select_date') {
+            $('#id_on_date_label, #id_on_date').hide();
+
+            from_label = document.getElementById('select_date_from_label_id')
+            from_label.style.display = 'inline-block';
+
+            fromDateInput.style.display = 'inline-block';
+             window.selectedDateRange = { type: 'select_date' };
+        } else if (value === 'on_date') {
+            $('#select_date_from_label_id').hide();
+
+            let onDateLabel = document.getElementById('id_on_date_label');
+            onDateLabel.style.display = 'inline-block';
+            onDateInput.style.display = 'inline-block';
+            onDateInput.focus();  // Automatically focus on the date picker
+            onDateInput.addEventListener('change', function () {
+                createdAtDateInput.value = onDateInput.value;  // Set the hidden input with the picked date
+            });
+             window.selectedDateRange = { type: 'on_date' };  // Track that "on_date" was selected
+        } else if (value === 'today') {
+            $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+
+            const today = new Date().toISOString().split('T')[0];
+            console.log("Today's date: ", today);
+            createdAtDateInput.value = today;
+             window.selectedDateRange = { type: 'today', value: today };
+        } else if (value === 'last_week') {
+            $('#select_date_from_label_id, #id_on_date_label, #id_on_date').hide();
+
+            const today = new Date();
+            // Subtract 7 days from today to move to the same day in the previous week
+            const lastWeekSunday = new Date(today);
+             // Go back to the last Sunday of the previous week
+            lastWeekSunday.setDate(today.getDate() - today.getDay() - 7);
+
+            // Calculate last Monday by subtracting 6 days from the last Sunday
+            const lastWeekMonday = new Date(lastWeekSunday);
+             // Go back to the previous Monday
+            lastWeekMonday.setDate(lastWeekSunday.getDate() - 6);
+
+            // Format the dates in 'YYYY-MM-DD'
+            const fromDate = lastWeekMonday.toISOString().split('T')[0];
+            const toDate = lastWeekSunday.toISOString().split('T')[0];
+
+            let createdAtGteInput = document.getElementById('created_at__gte');
+            if (!createdAtGteInput) {
+                createdAtGteInput = document.createElement('input');
+                createdAtGteInput.type = 'hidden';
+                createdAtGteInput.id = 'created_at__gte';
+                createdAtGteInput.name = 'created_at__gte';
+                document.querySelector('form').appendChild(createdAtGteInput);
+            }
+            createdAtGteInput.value = fromDate;
+
+            // Set or create the 'created_at__lte' hidden input
+            let createdAtLteInput = document.getElementById('created_at__lte');
+            if (!createdAtLteInput) {
+                createdAtLteInput = document.createElement('input');
+                createdAtLteInput.type = 'hidden';
+                createdAtLteInput.id = 'created_at__lte';
+                createdAtLteInput.name = 'created_at__lte';
+                document.querySelector('form').appendChild(createdAtLteInput);
+            }
+            createdAtLteInput.value = toDate;
+
+            // Store the selected date range
+             window.selectedDateRange = { type: 'last_week', fromDate: fromDate, toDate: toDate };
+
+            console.log("URL for Last Week: ?created_at__gte=" + fromDate + "&created_at__lte=" + toDate);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchButton = document.querySelector('#search_group button[type="submit"]');
+        const mainForm = document.querySelector('#changelist-search');
+
+        if (searchButton) {
+            searchButton.addEventListener('click', function(event) {
+                console.log("Search button clicked");
+
+                event.preventDefault(); // Prevent default form submission to customize the process
+                console.log("SelectedRangeData: ", window.selectedDateRange)
+
+                let url = new URL(window.location.href);
+                let originalSearchParams = new URLSearchParams(url.search);
+
+                if ( window.selectedDateRange) {
+                    url.searchParams.delete('created_at__gte');
+                    url.searchParams.delete('created_at__date');
+                    url.searchParams.delete('created_at__lte');
+                }
+
+                // Handle date filter based on the selected range
+                if ( window.selectedDateRange) {
+                    if ( window.selectedDateRange.type === 'created_at') {
+                    } else if (['today', 'yesterday'].includes( window.selectedDateRange.type)) {
+                        url.searchParams.set('created_at__date',  window.selectedDateRange.value);
+                    } else if (['last_week', 'last_month', 'last_seven_days', 'last_thirty_days'].includes( window.selectedDateRange.type)) {
+                        url.searchParams.set('created_at__gte',  window.selectedDateRange.fromDate);
+                        url.searchParams.set('created_at__lte',  window.selectedDateRange.toDate + ' 23:59:59');
+                    } else if ( window.selectedDateRange.type === 'select_date') {
+
+                        const fromDateValue = document.getElementById('created_at__gte').value;
+                        let toDateValue = document.getElementById('created_at__lte').value;
+                        console.log("fromDateValue: ", fromDateValue)
+                        console.log("toDateValue: ", toDateValue)
+
+                        // If from and to dates are the same, set toDateValue to today's date
+                        if (fromDateValue === toDateValue) {
+                            const today = new Date();
+                            toDateValue = today.toISOString().split('T')[0];  // Set to today's date in YYYY-MM-DD format
+                            console.log("toDateValue updated to today's date: ", toDateValue);
+                        }
+
+                        if (fromDateValue && toDateValue) {
+                            toDateValue += ' 23:59:59';
+                            url.searchParams.set('created_at__gte', fromDateValue);
+                            url.searchParams.set('created_at__lte', toDateValue);
+                        }
+
+                    } else if ( window.selectedDateRange.type === 'on_date') {
+                        const onDateValue = document.getElementById('id_on_date').value;
+                        if (onDateValue) {
+                            url.searchParams.set('created_at__date', onDateValue);
+                        }
+                    }
+                }
+
+                const formElements = mainForm.elements;
+                for (let element of formElements) {
+                 console.log("url: ", url.href)
+                 console.log("element: ", element)
+                    if (element.name && element.value) {
+                        if (element.name !== 'created_at__gte' && element.name !== 'created_at__lte' && element.name !== 'created_at__date') {
+                            url.searchParams.set(element.name, element.value);
+                        }
+                    }
+                }
+
+
+                // Check if any new search parameters were added or changed
+                if (url.searchParams.toString() === originalSearchParams.toString()) {
+                    // Reset URL if no new parameters are added
+                    url = new URL(url.origin + url.pathname);
+                    console.log("URL reset to base:", url.href);
+                } else {
+                    console.log("URL with updated parameters:", url.href);
+                }
+
+                console.log("Final URL with all filters: ", url.toString());
+                window.location.href = url.toString();
+            });
+        } else {
+            console.error("Search button not found.");
+        }
+    });
+
+
+
+</script>

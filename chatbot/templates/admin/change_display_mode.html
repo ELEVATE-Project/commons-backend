@@ -1,0 +1,111 @@
+{# admin/change_display_mode.html #}
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} | Django Site Admin{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <h1>{{ title }}</h1>
+
+    <div style="background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px;">
+        <p><strong>You have selected {{ selected_count }} file(s).</strong></p>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+
+        <div class="form-row">
+            <div>
+                <label for="display_mode">Display Mode:</label>
+                <select name="display_mode" id="display_mode" required style="padding: 8px; font-size: 14px;">
+                    <option value="">-- Select Display Mode --</option>
+                    {% for value, label in display_mode_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 20px;">
+            <fieldset class="module" style="padding: 15px;">
+                <legend style="font-weight: bold;">Apply to:</legend>
+                <div>
+                    <label>
+                        <input type="radio" name="apply_to" value="selected" checked>
+                        <strong>Selected files only</strong> ({{ selected_count }} file(s))
+                    </label>
+                </div>
+                <div style="margin-top: 10px;">
+                    <label>
+                        <input type="radio" name="apply_to" value="all">
+                        <strong>All files</strong> in the database
+                    </label>
+                </div>
+            </fieldset>
+        </div>
+
+        <div class="submit-row" style="margin-top: 20px;">
+            <a href="../" class="button">Cancel</a>
+            <button type="submit" class="button default" style="background-color: #417690; color: white; padding: 10px 15px;">
+                Apply Change
+            </button>
+        </div>
+    </form>
+
+    <hr style="margin-top: 30px;">
+
+    <h3>Display Mode Descriptions:</h3>
+    <ul style="line-height: 1.8;">
+        <li><strong>Visible:</strong> File is visible to all users in the frontend</li>
+        <li><strong>AI Only:</strong> File is hidden from the UI but available for AI processing (chatbot, MIP generation)</li>
+        <li><strong>Private:</strong> File is hidden from both the UI and AI processing</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block extrahead %}
+<style>
+    .form-row {
+        margin: 10px 0;
+    }
+
+    .form-row label {
+        display: block;
+        margin: 5px 0;
+        font-weight: bold;
+    }
+
+    .form-row select {
+        width: 100%;
+        max-width: 400px;
+    }
+
+    fieldset.module {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #f9f9f9;
+    }
+
+    fieldset.module legend {
+        padding: 0 10px;
+        margin-left: -10px;
+    }
+
+    fieldset.module div {
+        padding: 5px 0;
+    }
+
+    fieldset.module input[type="radio"] {
+        margin-right: 8px;
+    }
+
+    .submit-row {
+        text-align: right;
+    }
+
+    .submit-row .button {
+        margin-left: 10px;
+    }
+</style>
+{% endblock %}

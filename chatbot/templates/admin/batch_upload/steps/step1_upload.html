@@ -1,0 +1,142 @@
+<h2>Upload Files</h2>
+
+<!-- Organization Selection -->
+<div class="field-group" style="margin-bottom: 30px; padding: 20px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;">
+    <label for="organizationSelect" style="font-size: 16px; font-weight: 600; margin-bottom: 10px; display: block;">
+        Select Organization *
+    </label>
+    <select id="organizationSelect" required style="padding: 12px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px; width: 300px;">
+        <option value="">-- Select Organization --</option>
+        {% for company in companies %}
+            <option value="{{ company.slug }}"
+                    data-name="{{ company.name }}"
+                    {% if user_company and company.id == user_company.id %}selected{% endif %}>
+                {{ company.name }}
+            </option>
+        {% endfor %}
+    </select>
+    <div style="margin-top: 8px; font-size: 12px; color: #666;">
+        This organization will be used as metadata for all uploaded files.
+    </div>
+</div>
+
+<!-- Organization Confirmation Modal -->
+<div id="orgConfirmModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
+    <div style="background-color: white; margin: 15% auto; padding: 30px; border-radius: 8px; width: 436px; text-align: center;">
+        <h3 style="margin-bottom: 20px; color: #ff9800;">Organization Selection</h3>
+        <p style="margin-bottom: 20px; line-height: 1.5;">
+            You've selected a different organization than your profile organization.
+            Are you sure you want to proceed with "<span id="selectedOrgName" style="font-weight: bold;"></span>"?
+        </p>
+        <div style="display: flex; gap: 15px; justify-content: center;">
+            <button onclick="confirmOrgSelection(true)" class="btn btn-primary">Yes, Use Selected</button>
+            <button onclick="confirmOrgSelection(false)" class="btn btn-secondary">No, Use Default</button>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden Company Bot Selection -->
+<div class="company-bot-selection">
+    <label for="companyBotSelect">Select Company Bot *</label>
+    <select id="companyBotSelect" required>
+        <option value="">-- Select Company Bot --</option>
+        {% for bot in company_bots %}
+            <option value="{{ bot.id }}" {% if bot.id == default_bot_id %}selected{% endif %}>{{ bot.name }} ({{ bot.company.name }})</option>
+        {% endfor %}
+    </select>
+</div>
+
+<div class="info-message" style="margin-bottom: 20px;">
+    <div style="display: flex; align-items: flex-start; gap: 12px;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1976d2" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <div>
+            <p style="margin: 0 0 8px 0; font-weight: 600; color: #1976d2;">Template File Handling</p>
+            <p style="margin: 0; line-height: 1.5; color: #333;">
+                By default, files containing the keyword "template" in the title will be treated as templatized files that contain user-defined key-value pairs and an embedded link to the solution/asset. You can disable this default behavior by removing the "template" reference from the upload document.
+            </p>
+        </div>
+    </div>
+</div>
+
+<div class="upload-area" id="uploadArea">
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#417690" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="17 8 12 3 7 8"></polyline>
+        <line x1="12" y1="3" x2="12" y2="15"></line>
+    </svg>
+    <p style="margin-top: 20px; font-size: 18px;">Drag and drop files here or click to browse</p>
+    <p style="margin-top: 10px; color: #666;">
+        Supported formats:
+        {% for file_type in file_types %}{{ file_type.label }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    </p>
+    <input type="file" id="fileInput" multiple
+           accept="{% for file_type in file_types %}{{ file_type.extension }}{% if not forloop.last %},{% endif %}{% endfor %}">
+</div>
+
+<!-- Upload Progress -->
+<div id="extractionProgress" class="extraction-progress">
+    <div class="progress-header">
+        <div class="progress-title">
+            Upload Progress
+            <span id="aiStatus" style="margin-left: 15px; font-size: 14px; color: #666; display: none;">
+                <span class="spinner" style="width: 14px; height: 14px; border-width: 2px; margin-right: 5px;"></span>
+                AI enhancement in progress...
+            </span>
+        </div>
+        <div class="progress-stats">
+            <div class="progress-stat success">
+                <span>✓</span>
+                <span id="successCount">0</span>
+            </div>
+            <div class="progress-stat error">
+                <span>✗</span>
+                <span id="errorCount">0</span>
+            </div>
+        </div>
+    </div>
+    <div class="progress-bar-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="extractionProgressBar"></div>
+        </div>
+        <div class="progress-text" id="progressText">Starting upload...</div>
+    </div>
+</div>
+
+<!-- File Sections Container -->
+<div id="fileSections" class="file-sections">
+    <!-- Successful Files Section -->
+    <div id="successfulSection" class="file-section successful-section" style="display: none;">
+        <div class="section-header">
+            <div>
+                <span class="section-title">Uploaded Files</span>
+                <span class="section-count" id="successfulCount">(0)</span>
+            </div>
+        </div>
+        <div id="successfulFilesList" class="file-list"></div>
+    </div>
+
+    <!-- Failed Files Section -->
+    <div id="failedSection" class="file-section failed-section" style="display: none;">
+        <div class="section-header">
+            <div>
+                <span class="section-title">Failed Uploads</span>
+                <span class="section-count" id="failedCount">(0)</span>
+            </div>
+            <button class="retry-all-btn" id="retryAllFailedBtn" onclick="retryAllFailedUploads()">
+                Upload All Failed Again
+            </button>
+        </div>
+        <div id="failedFilesList" class="file-list"></div>
+    </div>
+</div>
+
+<div class="button-group">
+    <a href="{% url 'admin:chatbot_media_changelist' %}" class="btn btn-secondary">Back to Media List</a>
+    <div>
+        <button class="btn btn-primary" id="proceedBtn" style="display: none;" disabled>Proceed to Review</button>
+    </div>
+</div>

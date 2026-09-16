@@ -1,0 +1,89 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mohini-postgres
+    env_file:
+      - .env.postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and channels
+  redis:
+    image: redis:7-alpine
+    container_name: mohini-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Gotenberg for document conversion
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: mohini-gotenberg
+    ports:
+      - "3003:3000"
+
+  # Django Backend Service
+  backend:
+    image: shikshalokam-mohini-service
+    container_name: shikshalokamqa/mitra-backend
+    command: >
+      sh -c "python manage.py create_schemas && python manage.py migrate chatbot 0066 --fake && python manage.py migrate &&
+      uvicorn shikshalokam_mohini.asgi:application --host 0.0.0.0 --port 9000 --workers 4 --ws-ping-interval 30 --ws-ping-timeout 600"
+    env_file:
+      - .env.backend
+    ports:
+      - "9000:9000"
+    volumes:
+      - logs:/app/shikshalokam-mohini-service/logs
+      - ./secrets.json:/app/backend/config/secrets.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Worker
+  celery-worker:
+    image: shikshalokam-mohini-service
+    container_name: mohini-celery-worker
+    command: celery -A shikshalokam_mohini worker
+    env_file:
+      - .env.backend
+    volumes:
+      - logs:/app/shikshalokam-mohini-service/logs
+      - ./secrets.json:/app/backend/config/secrets.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  logs:
+
+
+networks:
+  backend:
+    driver: bridge

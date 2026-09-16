@@ -1,0 +1,194 @@
+---
+- hosts: elevate
+  become: yes
+
+  vars:
+    project_path: /opt/deployment
+    current_path: /opt/deployment/commons-backend
+    uvicorn_port: 9000
+    uvicorn_workers: 4
+
+  tasks:
+    - name: Read Vault token
+      slurp:
+        src: "{{ project_path }}/.token"
+      register: slurpfile
+
+    - name: Create release path
+      set_fact:
+        release_path: "{{ project_path }}/releases/{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
+
+    - name: Create release directory
+      file:
+        path: "{{ release_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone repository
+      git:
+        repo: https://github.com/ELEVATE-Project/commons-backend.git
+        dest: "{{ release_path }}"
+        version: "{{ gitBranch }}"
+        clone: yes
+        update: yes
+
+    - name: Download application secrets
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-backend"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/data2.json"
+
+    - name: Download GCP credentials
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-backend-gcp-auth"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/client_secret.json"
+
+    - name: Download config secrets
+      shell: >
+        curl --silent --insecure
+        --location
+        --request GET "{{ vaultAddress }}commons-gcp-config"
+        --header "X-Vault-Token: {{ slurpfile.content | b64decode | trim }}"
+        | jq '.data.data'
+        > "{{ release_path }}/config/secrets.json"
+
+    - name: Remove current deployment
+      file:
+        path: "{{ current_path }}"
+        state: absent
+
+    - name: Create deployment directory
+      file:
+        path: "{{ current_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Move release into deployment directory
+      shell: mv {{ release_path }}/* {{ current_path }}/
+
+    - name: Make json2env executable
+      file:
+        path: "{{ current_path }}/deployment/json2env.sh"
+        mode: "0744"
+
+    - name: Generate .env
+      shell: >
+        cat {{ current_path }}/data2.json |
+        {{ current_path }}/deployment/json2env.sh
+        > {{ current_path }}/.env
+
+    - name: Create Python virtual environment
+      command: uv venv
+      args:
+        chdir: "{{ current_path }}"
+        creates: "{{ current_path }}/.venv"
+
+    - name: Install dependencies
+      shell: uv sync
+      args:
+        chdir: "{{ current_path }}"
+
+    - name: Install psycopg2-binary
+      shell: uv pip install psycopg2-binary
+      args:
+        chdir: "{{ current_path }}"
+
+    - name: Create logs directory
+      file:
+        path: "{{ current_path }}/logs"
+        state: directory
+        mode: "0755"
+
+    - name: Run Django migrations
+      shell: |
+        set -a
+        source .env
+        set +a
+        .venv/bin/python manage.py migrate
+      args:
+        executable: /bin/bash
+        chdir: "{{ current_path }}"
+      register: migrate_result
+      retries: 5
+      delay: 10
+      until: migrate_result.rc == 0
+
+    - name: Install Celery service
+      template:
+        src: templates/sg-commons-celery.service.j2
+        dest: /etc/systemd/system/sg-commons-celery.service
+        mode: "0644"
+      notify:
+        - Reload systemd
+
+    - meta: flush_handlers
+
+    - name: Enable Celery
+      systemd:
+        name: sg-commons-celery
+        enabled: yes
+
+    - name: Restart Celery
+      systemd:
+        name: sg-commons-celery
+        state: restarted
+
+    - name: Verify Celery
+      command: systemctl is-active sg-commons-celery
+      register: celery_status
+      changed_when: false
+      failed_when: celery_status.stdout != "active"
+
+    - debug:
+        var: celery_status.stdout
+
+    - name: Install Uvicorn service
+      template:
+        src: templates/sg-commons-uvicorn.service.j2
+        dest: /etc/systemd/system/sg-commons-uvicorn.service
+        mode: "0644"
+      notify:
+        - Reload systemd
+
+    - meta: flush_handlers
+
+    - name: Enable Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        enabled: yes
+
+    - name: Restart Uvicorn
+      systemd:
+        name: sg-commons-uvicorn
+        state: restarted
+
+    - name: Verify Uvicorn
+      command: systemctl is-active sg-commons-uvicorn
+      register: uvicorn_status
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: uvicorn_status.stdout == "active"
+      failed_when: false
+
+    - name: Dump recent Uvicorn logs if not active
+      command: journalctl -u sg-commons-uvicorn -n 50 --no-pager
+      register: uvicorn_logs
+      changed_when: false
+      when: uvicorn_status.stdout != "active"
+
+    - debug:
+        var: uvicorn_logs.stdout_lines
+      when: uvicorn_status.stdout != "active"
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes

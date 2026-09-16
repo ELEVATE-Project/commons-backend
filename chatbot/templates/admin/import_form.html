@@ -1,0 +1,213 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Import Company Bots{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:chatbot_companybot_changelist' %}">Company Bots</a>
+    &rsaquo; Import
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="import-container">
+    <h1 class="page-title">Import Company Bots</h1>
+    <p class="subtitle">Upload a file containing bot data in JSON, Excel, or CSV format.</p>
+
+    <form method="post" enctype="multipart/form-data" id="import-form" class="import-form">
+        {% csrf_token %}
+
+        <div class="form-group">
+            <label for="import_file">Select file to import:</label>
+            <input type="file" name="import_file" id="import_file" accept=".json,.xlsx,.csv" required>
+            <p class="help">
+                Supported formats: <strong>JSON</strong>, <strong>XLSX</strong>, or <strong>CSV</strong><br>
+                Include all related Voice and StateMachine records in the file.
+            </p>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn primary">Import</button>
+            <a href="{% url 'admin:chatbot_companybot_changelist' %}" class="btn cancel">Cancel</a>
+        </div>
+    </form>
+
+    <div class="info-box">
+        <h2>📘 Import Instructions</h2>
+        <ul>
+            <li><strong>JSON Format:</strong> Nested structure with <code>voices</code> and <code>state_machines</code> arrays.</li>
+            <li><strong>XLSX Format:</strong> Use three sheets — <code>Bots</code>, <code>Voices</code>, and <code>StateMachines</code>.</li>
+            <li><strong>CSV Format:</strong> Single sheet, flattened structure with JSON columns.</li>
+        </ul>
+
+        <h3>📄 Download Templates</h3>
+        <ul class="template-links">
+            <li><a href="{% url 'admin:chatbot_companybot_export' %}?format=json&template=true">Download JSON Template</a></li>
+            <li><a href="{% url 'admin:chatbot_companybot_export' %}?format=xlsx&template=true">Download XLSX Template</a></li>
+            <li><a href="{% url 'admin:chatbot_companybot_export' %}?format=csv&template=true">Download CSV Template</a></li>
+        </ul>
+    </div>
+</div>
+
+<script>
+document.getElementById('import-form').addEventListener('submit', function(e) {
+    const fileInput = document.getElementById('import_file');
+    const file = fileInput.files[0];
+    if (!file) {
+        alert('Please select a file to import.');
+        e.preventDefault();
+        return;
+    }
+    const validExtensions = ['.json', '.xlsx', '.csv'];
+    const fileName = file.name.toLowerCase();
+    if (!validExtensions.some(ext => fileName.endsWith(ext))) {
+        alert('Please select a valid file format (JSON, XLSX, or CSV).');
+        e.preventDefault();
+    }
+});
+</script>
+
+<style>
+.import-container {
+    max-width: 750px;
+    margin: 0 auto;
+    padding: 30px;
+}
+
+.page-title {
+    font-size: 26px;
+    font-weight: 600;
+    color: #222;
+    margin-bottom: 10px;
+}
+
+.subtitle {
+    color: #666;
+    font-size: 15px;
+    margin-bottom: 25px;
+}
+
+/* Form styles */
+.import-form {
+    background: #f9fbfd;
+    border: 1px solid #d8e0eb;
+    border-radius: 10px;
+    padding: 25px 25px 20px;
+    margin-bottom: 35px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.form-group {
+    margin-bottom: 18px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #333;
+}
+
+input[type="file"] {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    transition: border-color 0.2s ease;
+}
+
+input[type="file"]:focus {
+    border-color: #0b57d0;
+    outline: none;
+}
+
+.help {
+    font-size: 13px;
+    color: #777;
+    margin-top: 6px;
+}
+
+/* Buttons */
+.form-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 15px;
+}
+
+.btn {
+    display: inline-block;
+    text-align: center;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 500;
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.btn.primary {
+    background: #0b57d0;
+    color: white;
+}
+
+.btn.primary:hover {
+    background: #094fc1;
+}
+
+.btn.cancel {
+    background: #f8f8f8;
+    color: #555;
+    border: 1px solid #ccc;
+}
+
+.btn.cancel:hover {
+    background: #eee;
+}
+
+/* Info box */
+.info-box {
+    background: #fff;
+    border: 1px solid #e0e6ef;
+    border-radius: 10px;
+    padding: 20px 25px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+
+.info-box h2 {
+    font-size: 18px;
+    color: #0b57d0;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.info-box ul {
+    margin: 10px 0 20px 18px;
+    padding: 0;
+    font-size: 14px;
+    color: #444;
+}
+
+.info-box li {
+    margin-bottom: 6px;
+}
+
+.template-links li {
+    margin-bottom: 5px;
+}
+
+.template-links a {
+    color: #0b57d0;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.template-links a:hover {
+    text-decoration: underline;
+}
+</style>
+{% endblock %}

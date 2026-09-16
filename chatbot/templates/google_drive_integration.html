@@ -1,0 +1,351 @@
+{% extends 'admin/base_site.html' %}
+{% load i18n static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; <a href="/admin/chatbot/">Chatbot</a>
+    &rsaquo; <a href="/admin/chatbot/media/">Media</a>
+    &rsaquo; List Repositories
+</div>
+{% endblock %}
+
+{% block content %}
+
+<div class="module">
+
+    <div class="repositories-header">
+        <h2>Repositories</h2>
+
+        <div class="header-actions">
+            <a class="btn btn-success" id="connect-google-drive" href="{{ drive_upload_url }}">{% trans 'Add Repository' %}</a>
+        </div>
+    </div>
+
+    <div class="table-wrapper">
+        <table id="repositories-table">
+            <thead>
+                <tr>
+                    <th style="width:8%">Sl No</th>
+                    <th style="width:50%">Repository URL</th>
+                    <th style="width:17%">Status</th>
+                    <th style="width:25%">Created At</th>
+                    <!-- COMMENTED OUT - Action column (to be implemented in upcoming phase)
+                    <th style="width:10%">Action</th>
+                    -->
+                </tr>
+            </thead>
+    
+            <tbody id="repositories-body">
+                <tr>
+                    <td colspan="4">Loading repositories...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pagination-container">
+        <button id="prev-page" class="pagination-btn" disabled>
+            &#8592; Previous
+        </button>
+    
+        <span id="page-info">Page 1</span>
+    
+        <button id="next-page" class="pagination-btn" disabled>
+            Next &#8594;
+        </button>
+    </div>
+
+</div>
+
+
+<style>
+.module {
+    width: 100%;
+    max-width: 100%;
+    background: transparent;
+    box-shadow: none;
+    border: none;
+}
+
+.repositories-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.repositories-header h2 {
+    margin: 0;
+    font-size: 34px;
+    font-weight: 400;
+}
+
+.table-wrapper {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+#repositories-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+}
+
+#repositories-table thead tr {
+    border-bottom: 1px solid #dee2e6;
+}
+
+#repositories-table th {
+    background: #fff;
+    color: #0d6efd;
+    font-weight: 700;
+    text-align: left;
+    padding: 16px 18px;
+    font-size: 17px;
+    border: none;
+    white-space: nowrap;
+}
+
+#repositories-table td {
+    padding: 16px 18px;
+    border-top: 1px solid #e9ecef;
+    font-size: 15px;
+    vertical-align: middle;
+}
+
+/* Start with grey on the first row */
+#repositories-table tbody tr:nth-child(odd) {
+    background: #eceff3;
+}
+
+/* Second row white */
+#repositories-table tbody tr:nth-child(even) {
+    background: #ffffff;
+}
+
+/* Slightly darker hover */
+#repositories-table tbody tr:hover {
+    background: #d9eafc;
+}
+
+#repositories-table a {
+    color: #0d6efd;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+#repositories-table a:hover {
+    text-decoration: underline;
+}
+
+.btn-success {
+    padding: 10px 22px;
+    font-size: 17px;
+    font-weight: 600;
+    border-radius: 4px;
+}
+
+/* COMMENTED OUT - Delete button functionality (to be implemented in upcoming phase)
+.delete-btn {
+    background: #dc3545;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .2s;
+}
+
+.delete-btn:hover {
+    background: #bb2d3b;
+}
+*/
+
+#repositories-table th:first-child,
+#repositories-table td:first-child {
+    width: 80px;
+    text-align: center;
+}
+
+/* COMMENTED OUT - Last column styling for Action column (to be implemented in upcoming phase)
+#repositories-table th:last-child,
+#repositories-table td:last-child {
+    width: 120px;
+    text-align: center;
+}
+*/
+
+.pagination-container {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.pagination-btn {
+    padding: 8px 18px;
+    border: 1px solid #0d6efd;
+    border-radius: 4px;
+    background: #0d6efd;
+    color: #fff;
+    cursor: pointer;
+    transition: all .2s ease;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: #0b5ed7;
+}
+
+.pagination-btn:disabled {
+    background: #d6d6d6;
+    border-color: #d6d6d6;
+    color: #888;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+#page-info {
+    font-weight: 600;
+}
+</style>
+
+
+<script>
+let page = 1;
+const limit = 10;
+document.addEventListener('DOMContentLoaded', function () {
+    async function loadRepositories() {
+        try {
+            const repositoriesOrgId = "{{ repositories_org_id|default:''|escapejs }}";
+            const isSuperuser = "{{ is_superuser|yesno:'true,false' }}" === "true";
+            if (!isSuperuser && !repositoriesOrgId) {
+                throw new Error('No organization selected for repository lookup.');
+            }
+
+            const repositoryUrl = new URL('/api/repositories/', window.location.origin);
+            repositoryUrl.searchParams.set('page', page);
+            repositoryUrl.searchParams.set('limit', limit);
+            if (!isSuperuser) {
+                repositoryUrl.searchParams.set('orgId', repositoriesOrgId);
+            }
+
+            const response = await fetch(
+                repositoryUrl.toString(),
+                {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            const data = await response.json();
+
+            console.log('Repositories:', data);
+
+            const repositories = data.result.data;
+            const totalCount = data.result.count;
+            const totalPages = Math.ceil(totalCount / limit);
+
+            document.getElementById('page-info').textContent =
+                `Page ${page} of ${totalPages || 1}`;
+
+            const prevBtn = document.getElementById('prev-page');
+            const nextBtn = document.getElementById('next-page');
+
+            prevBtn.disabled = page <= 1;
+            nextBtn.disabled = page >= totalPages || totalPages === 0;
+            const tbody = document.getElementById('repositories-body');
+
+            tbody.innerHTML = '';
+
+            repositories.forEach((repo, index) => {
+                const createdAt = new Date(repo.created_at).toLocaleString();
+
+                const row = document.createElement('tr');
+                const addCell = (text) => {
+                    const td = document.createElement('td');
+                    td.textContent = text;
+                    row.appendChild(td);
+                   return td;
+                };
+
+                addCell(String(index + 1));
+
+                const linkCell = document.createElement('td');
+                const link = document.createElement('a');
+                const rootLink = repo.root_link || '';
+                if (/^https?:\/\//i.test(rootLink)) {
+                   link.href = rootLink;
+                }
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.title = rootLink;
+                link.textContent = repo.repository_name || rootLink || 'Repository';
+                linkCell.appendChild(link);
+                row.appendChild(linkCell);
+
+                addCell(repo.status || '');
+                addCell(createdAt);
+
+                const actionCell = document.createElement('td');
+                actionCell.style.textAlign = 'center';
+
+                /* COMMENTED OUT - Delete button functionality (to be implemented in upcoming phase)
+                const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = 'Delete';
+
+                // Dummy button for now (no functionality)
+                deleteBtn.addEventListener('click', function () {
+                    console.log('Delete clicked for:', repo);
+                });
+
+                actionCell.appendChild(deleteBtn);
+                */
+                row.appendChild(actionCell);
+
+                tbody.appendChild(row);
+            });
+
+            if (repositories.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4">No repositories found</td>
+                    </tr>
+                `;
+            }
+
+        } catch (error) {
+            console.error('Failed to fetch repositories:', error);
+
+            document.getElementById('repositories-body').innerHTML = `
+                <tr>
+                    <td colspan="4">Failed to load repositories</td>
+                </tr>
+            `;
+        }
+
+    }
+    loadRepositories();
+    document.getElementById('prev-page').addEventListener('click', () => {
+        if (page > 1) {
+            page--;
+            loadRepositories();
+        }
+    });
+
+    document.getElementById('next-page').addEventListener('click', () => {
+        page++;
+        loadRepositories();
+    });
+
+});
+</script>
+{% endblock %}

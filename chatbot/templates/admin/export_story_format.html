@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+  <div class="module aligned" style="max-width: 500px; margin: auto; padding: 30px; background-color: #fff; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+    <h2 style="text-align: center; margin-bottom: 25px;">📤 Export Stories</h2>
+    <form method="post">{% csrf_token %}
+      <input type="hidden" name="ids" value="{{ ids }}">
+
+      <div class="form-row">
+        <label for="format" style="font-weight: bold;">Choose a format:</label>
+        <select name="format" class="vSelect" style="width: 100%; margin-top: 5px;">
+          <option value="csv">🧾 CSV (Spreadsheet)</option>
+<!--          <option value="xls">📈 Excel (.xls)</option>-->
+          <option value="docx">📝 Word Document (.docx)</option>
+          <option value="zip-pdf">🗂️ ZIP (PDFs)</option>
+        </select>
+      </div>
+
+      <div style="text-align: center; margin-top: 30px;">
+        <button type="submit" class="button default" style="padding: 10px 24px; font-size: 16px;">
+          💾 Export
+        </button>
+      </div>
+    </form>
+  </div>
+{% endblock %}
