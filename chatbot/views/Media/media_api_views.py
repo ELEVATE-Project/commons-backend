@@ -1996,8 +1996,6 @@ class MediaSearchV2View(APIView):
         exclusion_count = count_negation_cues(query)
         if exclusion_count > self._any_of_limit('any_of_max_exclusions'):
             return 'complex_alternatives_exclusions'
-        if exclusion_count:
-            return 'complex_alternatives_exclusion_scope'
         return None
 
     def _any_of_limit(self, setting):
