@@ -11,6 +11,9 @@ OrgEntry = Tuple[str, str, List[str]]
 GENERIC_FILE_TYPE_NOUNS = frozenset({
     "document", "documents", "doc", "docs", "file", "files",
 })
+NEGATION_SCOPE_BREAKERS = (
+    "about", "regarding", "related to", "covering", "from", "on",
+)
 
 
 @dataclass(frozen=True)
@@ -767,10 +770,21 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
         if cue_index != -1:
             found_cues.append((cue_index, cue_words))
 
+    trigger_words = set(_trigger_words())
+    scope_breakers = [
+        re.findall(r"[a-z0-9']+", breaker)
+        for breaker in NEGATION_SCOPE_BREAKERS
+        if breaker not in trigger_words
+    ]
     for cue_index, cue_words in sorted(found_cues, reverse=True):
-        if not _negation_consumed_before_match(
-            window_words[cue_index:], cue_words
+        cue_window = window_words[cue_index:]
+        words_after_cue = cue_window[len(cue_words):]
+        if any(
+            _find_word_sequence(words_after_cue, breaker_words) != -1
+            for breaker_words in scope_breakers
         ):
+            continue
+        if not _negation_consumed_before_match(cue_window, cue_words):
             return True
     return False
 
