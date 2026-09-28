@@ -18,6 +18,7 @@ from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
     clean_search_text,
+    count_negation_cues,
     included_values,
     resolve_query_exact,
     to_response_dict,
@@ -50,6 +51,7 @@ class FuzzyFilterResult:
     query: str = None
     confidence: float = 0.0
     candidates: dict = field(default_factory=dict)
+    llm_reason: str = None
 
 
 @dataclass
@@ -944,6 +946,7 @@ class MediaSearchV2View(APIView):
                 to_response_dict(query, resolved_filters),
             )
             any_of = self._build_any_of_filters(query)
+            alternative_llm_reason = self._alternative_llm_reason(query, any_of)
             fuzzy = self._fuzzy_result_from_resolved_filters(
                 resolved_filters,
                 include_flat_filters=not any_of,
@@ -953,6 +956,7 @@ class MediaSearchV2View(APIView):
                     if any_of else resolved_filters.search_text
                 ),
             )
+            fuzzy.llm_reason = alternative_llm_reason
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
@@ -1211,16 +1215,16 @@ class MediaSearchV2View(APIView):
                 # How each filter was decided. Without it, "LLM was skipped" and
                 # "LLM found nothing" look identical from the results alone.
                 "filter_resolution": resolved.diagnostics,
-                # What was actually sent to Qdrant, after alias expansion.
-                # Differs from filter_resolution when expansion changed a value.
+                # Canonical filters applied by the search. Storage aliases are
+                # expanded only at the Qdrant call boundary above.
                 "applied_filters": self.get_applied_search_filters(
                     tags=tags,
                     organizations=organizations,
                     resource_types=resource_types,
-                    file_types=qdrant_file_types,
+                    file_types=media_types,
                     exclude_organizations=exclude_organizations,
-                    exclude_file_types=qdrant_exclude_file_types,
-                    any_of_blocks=any_of_blocks,
+                    exclude_file_types=exclude_media_types,
+                    any_of_blocks=combined_any_of,
                 ),
             },
         }, status=status.HTTP_200_OK)
@@ -1292,7 +1296,12 @@ class MediaSearchV2View(APIView):
             all_explicit = bool(explicit_orgs and explicit_types)
 
             should_call, reason = self._should_call_llm(
-                mode, fuzzy.confidence, threshold, all_explicit)
+                mode,
+                fuzzy.confidence,
+                threshold,
+                all_explicit,
+                force_reason=fuzzy.llm_reason,
+            )
 
             # llm_decision records which branch was taken, for both outcomes. It
             # is deliberately not called llm_skipped: on failure the reason
@@ -1318,9 +1327,36 @@ class MediaSearchV2View(APIView):
                 'llm_error_code': getattr(exc, 'code', None),
             })
 
+        self._normalize_resolved_polarity(resolved)
         return resolved
 
-    def _should_call_llm(self, mode, confidence, threshold, all_explicit):
+    def _normalize_resolved_polarity(self, resolved):
+        from chatbot.services.search.filter_blocks import FilterBlock
+
+        normalized = FilterBlock(
+            organizations=resolved.organizations,
+            media_types=resolved.media_types,
+            exclude_organizations=resolved.exclude_organizations,
+            exclude_media_types=resolved.exclude_media_types,
+        )
+        resolved.organizations = normalized.organizations
+        resolved.media_types = normalized.media_types
+        resolved.exclude_organizations = normalized.exclude_organizations
+        resolved.exclude_media_types = normalized.exclude_media_types
+        resolved.any_of = [
+            block.normalized() if hasattr(block, 'normalized') else block
+            for block in resolved.any_of
+        ]
+        resolved.diagnostics.update({
+            'organizations': resolved.organizations,
+            'media_types': resolved.media_types,
+            'exclude_organizations': resolved.exclude_organizations,
+            'exclude_media_types': resolved.exclude_media_types,
+        })
+
+    def _should_call_llm(
+        self, mode, confidence, threshold, all_explicit, force_reason=None,
+    ):
         """Return whether LLM should run and why."""
         from chatbot.services.search.config import MODE_ALWAYS, MODE_OFF
 
@@ -1328,6 +1364,8 @@ class MediaSearchV2View(APIView):
             return False, 'mode_off'
         if mode == MODE_ALWAYS:
             return True, 'mode_always'
+        if force_reason:
+            return True, force_reason
         if all_explicit:
             return False, 'filters_explicit'
         if confidence >= threshold:
@@ -1948,10 +1986,10 @@ class MediaSearchV2View(APIView):
         any_of_blocks=None,
     ):
         """
-        Report the filters actually applied, for the log and search_metadata.
+        Report canonical applied filters for the log and search_metadata.
 
-        Unlike filter_resolution (how filters were *decided*), this is what was
-        applied after alias expansion. str() keeps enum media types serialisable.
+        Storage-specific aliases are expanded only at datastore query boundaries.
+        str() keeps enum media types serialisable.
         """
         return {
             'tags': list(tags or []),
@@ -1993,27 +2031,14 @@ class MediaSearchV2View(APIView):
         for match in matches:
             if not match.negated:
                 continue
-            values.extend(self._file_type_payload_variants(match))
+            values.append(self._file_type_payload_value(match))
         return list(dict.fromkeys(value for value in values if value))
 
-    def _file_type_payload_variants(self, match):
-        display_value = match.display_value or ""
-        slug = match.slug or ""
-        variants = [
-            slug,
-            display_value,
-            display_value.lower(),
-        ]
-
-        extension = FileTypeChoices.get_extension_mapping().get(slug)
-        if not extension and "/" in slug:
-            extension = f".{slug.rsplit('/', 1)[-1]}"
-        if extension:
-            variants.extend([extension, extension.lstrip(".")])
-
-        return variants
-
     def _build_any_of_filters(self, query):
+        from chatbot.services.search.filter_blocks import (
+            carry_shared_positive_qualifiers,
+        )
+
         clauses = [
             clause.strip()
             for clause in re.split(r"\bOR\b", query, flags=re.IGNORECASE)
@@ -2026,7 +2051,7 @@ class MediaSearchV2View(APIView):
         for clause in clauses:
             resolved = self._resolve_query_filters(clause)
             block = self._any_of_block_from_resolved_filters(resolved)
-            if block:
+            if not block.is_empty():
                 blocks.append(block)
 
         # Fewer than two alternatives is an AND, which the flat fields already
@@ -2035,29 +2060,42 @@ class MediaSearchV2View(APIView):
         if len(blocks) < 2:
             return []
 
-        return self._distribute_shared_file_types(blocks)
+        return carry_shared_positive_qualifiers(blocks)
 
-    def _distribute_shared_file_types(self, blocks):
-        """
-        Carry a file type stated once into the bare organization branches after it.
+    def _alternative_llm_reason(self, query, blocks):
+        if len(re.findall(r"\S+", query or "")) > self._any_of_limit(
+            'any_of_max_query_words'
+        ):
+            return 'complex_alternatives_query_length'
 
-        "pdf from A or B" resolves its second clause to an organization alone,
-        matching every file B has and swallowing the narrowed branch beside it.
-        Only such a branch inherits — one naming its own format, or format-only,
-        means what it says — and only the positive type travels, never exclusions.
-        """
-        distributed = []
-        for block in blocks:
-            if set(block) == {'organizations'}:
-                inherited = next(
-                    (earlier['file_type']
-                     for earlier in distributed if earlier.get('file_type')),
-                    None,
-                )
-                if inherited:
-                    block = dict(block, file_type=list(inherited))
-            distributed.append(block)
-        return distributed
+        clauses = [
+            clause for clause in re.split(r"\bOR\b", query or "", flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+        if len(clauses) <= 1:
+            return None
+        if len(clauses) > self._any_of_limit('any_of_max_alternatives'):
+            return 'complex_alternatives_count'
+
+        organizations = {
+            organization
+            for block in blocks
+            for organization in block.organizations
+        }
+        if len(organizations) > self._any_of_limit('any_of_max_organizations'):
+            return 'complex_alternatives_organizations'
+
+        exclusion_count = count_negation_cues(query)
+        if exclusion_count > self._any_of_limit('any_of_max_exclusions'):
+            return 'complex_alternatives_exclusions'
+        if exclusion_count:
+            return 'complex_alternatives_exclusion_scope'
+        return None
+
+    def _any_of_limit(self, setting):
+        from chatbot.services.search.config import get_search_llm_setting
+
+        return get_search_llm_setting(None, setting)
 
     def _search_text_from_any_of_clauses(self, query):
         clauses = [
@@ -2077,7 +2115,8 @@ class MediaSearchV2View(APIView):
         return " ".join(search_texts)
 
     def _any_of_block_from_resolved_filters(self, resolved_filters):
-        block = {}
+        from chatbot.services.search.filter_blocks import FilterBlock
+
         organizations = included_values(
             resolved_filters.organization, use_slug=True
         )
@@ -2091,16 +2130,12 @@ class MediaSearchV2View(APIView):
             resolved_filters.file_type
         )
 
-        if organizations:
-            block["organizations"] = organizations
-        if file_types:
-            block["file_type"] = file_types
-        if exclude_organizations:
-            block["exclude_organizations"] = exclude_organizations
-        if exclude_file_types:
-            block["exclude_file_type"] = exclude_file_types
-
-        return block
+        return FilterBlock(
+            organizations=organizations,
+            media_types=file_types,
+            exclude_organizations=exclude_organizations,
+            exclude_media_types=exclude_file_types,
+        ).normalized()
 
     def _file_type_payload_value(self, match):
         # The slug is the FileTypeChoices value, which is what both stores hold:

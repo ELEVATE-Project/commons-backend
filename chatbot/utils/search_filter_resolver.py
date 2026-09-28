@@ -8,6 +8,10 @@ from rapidfuzz import fuzz, process
 
 OrgEntry = Tuple[str, str, List[str]]
 
+GENERIC_FILE_TYPE_NOUNS = frozenset({
+    "document", "documents", "doc", "docs", "file", "files",
+})
+
 
 @dataclass(frozen=True)
 class MatchResult:
@@ -210,7 +214,7 @@ class CategoryMatcher:
     def _gazetteer_match_all(self, query: str) -> List[MatchResult]:
         lowered = query.lower()
         claimed_spans = []  # type: List[Tuple[int, int]]
-        found_display_values = set()
+        found_polarities = set()
         hits = []  # type: List[Tuple[int, MatchResult]]
 
         for pattern, name in self._compiled_patterns:
@@ -220,7 +224,9 @@ class CategoryMatcher:
                     continue
 
                 display_value, slug = self._lookup[name.lower()]
-                if display_value in found_display_values:
+                negated = _is_negated(lowered, start)
+                polarity_key = (display_value, negated)
+                if polarity_key in found_polarities:
                     continue
 
                 hits.append((start, MatchResult(
@@ -229,10 +235,10 @@ class CategoryMatcher:
                     method="gazetteer_exact",
                     score=100,
                     matched_span=query[start:end],
-                    negated=_is_negated(lowered, start),
+                    negated=negated,
                 )))
                 claimed_spans.append((start, end))
-                found_display_values.add(display_value)
+                found_polarities.add(polarity_key)
 
         hits.sort(key=lambda hit: hit[0])
         return [result for _, result in hits]
@@ -292,6 +298,11 @@ def resolve_query_exact(
                     for match in near_matches[:_candidate_limit()]
                 ]
 
+    results = {
+        field_name: _normalize_match_polarity(matches)
+        for field_name, matches in results.items()
+    }
+
     scores = [
         match.score
         for matches in results.values()
@@ -315,6 +326,35 @@ def included_values(matches: Iterable[MatchResult], use_slug: bool = False) -> L
             continue
         values.append(match.slug if use_slug and match.slug else match.display_value)
     return list(dict.fromkeys(values))
+
+
+def _normalize_match_polarity(matches: Iterable[MatchResult]) -> List[MatchResult]:
+    matches = list(matches or [])
+    excluded = {
+        match.slug or match.display_value
+        for match in matches
+        if match.negated
+    }
+    normalized = []
+    seen = set()
+    for match in matches:
+        value = match.slug or match.display_value
+        if not match.negated and value in excluded:
+            continue
+        key = (value, match.negated)
+        if key not in seen:
+            normalized.append(match)
+            seen.add(key)
+    return normalized
+
+
+def count_negation_cues(query: str) -> int:
+    """Count configured negation phrases as complete words in a query."""
+    cues = sorted(_negation_words(), key=len, reverse=True)
+    if not query or not cues:
+        return 0
+    pattern = r"(?<!\w)(?:" + "|".join(re.escape(cue) for cue in cues) + r")(?!\w)"
+    return len(re.findall(pattern, query, flags=re.IGNORECASE))
 
 
 def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
@@ -342,7 +382,12 @@ def clean_search_text(text: str) -> str:
             working = working.replace(phrase, " ")
 
     words = working.split()
-    removable_words = _noise_words() | _negation_words() | _stopwords()
+    removable_words = (
+        _noise_words()
+        | _negation_words()
+        | _stopwords()
+        | GENERIC_FILE_TYPE_NOUNS
+    )
     return " ".join(word for word in words if word not in removable_words).strip()
 
 
@@ -412,7 +457,11 @@ def _tokenized_name(name: str) -> str:
 
 
 def _compile_gazetteer_pattern(name: str):
-    tokens = re.findall(r"[a-z0-9]+", _split_alnum_boundaries(name.lower()))
+    normalized = _split_alnum_boundaries(name.lower()).strip()
+    if re.fullmatch(r"\.[a-z0-9]+", normalized):
+        return re.compile(r"(?<![a-z0-9])" + re.escape(normalized) + r"\b")
+
+    tokens = re.findall(r"[a-z0-9]+", normalized)
     if not tokens:
         return re.compile(r"\b" + re.escape(name.lower()) + r"\b")
     if len(tokens) == 1:
@@ -427,6 +476,7 @@ def _candidate_stopwords() -> set:
         | _noise_words()
         | _generic_leading_words()
         | _fuzzy_candidate_stopwords()
+        | GENERIC_FILE_TYPE_NOUNS
     )
 
 
@@ -451,6 +501,7 @@ def _clean_fuzzy_candidate(candidate: str) -> str:
         _noise_words()
         | _negation_words()
         | _fuzzy_candidate_stopwords()
+        | GENERIC_FILE_TYPE_NOUNS
     )
     words = [
         word
@@ -488,11 +539,27 @@ def _organization_entries(vocabulary) -> List[OrgEntry]:
 
 def _file_type_entries(vocabulary) -> List[OrgEntry]:
     if not vocabulary:
-        return _file_type_entries_from_env()
-    return _merge_env_aliases(
-        _entries_from_vocabulary(vocabulary),
-        _file_type_entries_from_env(),
-    )
+        entries = _file_type_entries_from_env()
+    else:
+        entries = _merge_env_aliases(
+            _entries_from_vocabulary(vocabulary),
+            _file_type_entries_from_env(),
+        )
+    return _with_explicit_file_type_context(entries)
+
+
+def _with_explicit_file_type_context(entries: List[OrgEntry]) -> List[OrgEntry]:
+    contextual_entries = []
+    for display_name, slug, aliases in entries:
+        contextual_aliases = list(aliases)
+        for alias in aliases:
+            normalized = str(alias).strip().lower()
+            if re.fullmatch(r"\.[a-z0-9]+", normalized):
+                contextual_aliases.append(f"{normalized[1:]} format")
+        contextual_entries.append(
+            (display_name, slug, list(dict.fromkeys(contextual_aliases)))
+        )
+    return contextual_entries
 
 
 def _entries_from_vocabulary(vocabulary) -> List[OrgEntry]:
@@ -588,7 +655,10 @@ def _stopwords() -> set:
 
 
 def _excluded_file_type_aliases() -> set:
-    return _env_string_set("SEARCH_FILTER_EXCLUDED_FILE_TYPE_ALIASES")
+    return (
+        _env_string_set("SEARCH_FILTER_EXCLUDED_FILE_TYPE_ALIASES")
+        | GENERIC_FILE_TYPE_NOUNS
+    )
 
 
 def _fuzzy_candidate_stopwords() -> set:
@@ -682,42 +752,25 @@ def _match_to_dict(match: MatchResult) -> Dict:
 
 def _is_negated(lowered_query: str, match_start: int) -> bool:
     preceding_text = lowered_query[:match_start]
-    words = preceding_text.split()
+    words = re.findall(r"[a-z0-9']+", preceding_text)
     if not words:
         return False
     window_size = _negation_window_words()
     if window_size <= 0:
         return False
 
-    last_negation = max(
-        (lowered_query.rfind(cue, 0, match_start) for cue in _negation_words()),
-        default=-1,
-    )
-    if last_negation == -1:
-        return False
-
-    scope_breakers = ("about", "regarding", "related to", "covering", "from", "on")
-    last_breaker = max(
-        (lowered_query.rfind(breaker, 0, match_start) for breaker in scope_breakers),
-        default=-1,
-    )
-    if last_breaker > last_negation:
-        return False
-
     window_words = words[-window_size:]
-    window_text = " ".join(window_words)
+    found_cues = []
     for cue in _negation_words():
-        if " " in cue:
-            cue_words = cue.split()
-            cue_index = _find_word_sequence(window_words, cue_words)
-            if cue_index != -1:
-                if _negation_consumed_before_match(window_words[cue_index:], cue_words):
-                    continue
-                return True
-        elif cue in window_words:
-            cue_index = len(window_words) - 1 - window_words[::-1].index(cue)
-            if _negation_consumed_before_match(window_words[cue_index:], [cue]):
-                continue
+        cue_words = re.findall(r"[a-z0-9']+", cue.lower())
+        cue_index = _find_last_word_sequence(window_words, cue_words)
+        if cue_index != -1:
+            found_cues.append((cue_index, cue_words))
+
+    for cue_index, cue_words in sorted(found_cues, reverse=True):
+        if not _negation_consumed_before_match(
+            window_words[cue_index:], cue_words
+        ):
             return True
     return False
 
@@ -726,6 +779,15 @@ def _find_word_sequence(words: List[str], sequence: List[str]) -> int:
     if not sequence or len(sequence) > len(words):
         return -1
     for index in range(0, len(words) - len(sequence) + 1):
+        if words[index:index + len(sequence)] == sequence:
+            return index
+    return -1
+
+
+def _find_last_word_sequence(words: List[str], sequence: List[str]) -> int:
+    if not sequence or len(sequence) > len(words):
+        return -1
+    for index in range(len(words) - len(sequence), -1, -1):
         if words[index:index + len(sequence)] == sequence:
             return index
     return -1

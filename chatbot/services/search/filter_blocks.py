@@ -17,9 +17,6 @@ here — callers stay one-liners.
 
 from dataclasses import dataclass, field
 
-from chatbot.services.search.vocabularies import expand_aliases
-
-
 @dataclass
 class FilterBlock:
     """
@@ -34,6 +31,18 @@ class FilterBlock:
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self.exclude_organizations = _unique(self.exclude_organizations)
+        self.exclude_media_types = _unique(self.exclude_media_types)
+        self.organizations = [
+            value for value in _unique(self.organizations)
+            if value not in self.exclude_organizations
+        ]
+        self.media_types = [
+            value for value in _unique(self.media_types)
+            if value not in self.exclude_media_types
+        ]
+
     def is_empty(self):
         """
         True when this block filters on nothing.
@@ -44,6 +53,15 @@ class FilterBlock:
         return not (self.organizations or self.media_types
                     or self.exclude_organizations or self.exclude_media_types)
 
+    def normalized(self):
+        """Return a copy with empty and duplicate values removed."""
+        return FilterBlock(
+            organizations=_unique(self.organizations),
+            media_types=_unique(self.media_types),
+            exclude_organizations=_unique(self.exclude_organizations),
+            exclude_media_types=_unique(self.exclude_media_types),
+        )
+
     def with_expanded_media_types(self, type_vocabulary):
         """
         The same block with its media types widened to every stored spelling.
@@ -53,6 +71,8 @@ class FilterBlock:
         one would silently miss the other. The flat fields already get this
         treatment in media_api_views; blocks need it just as much.
         """
+        from chatbot.services.search.vocabularies import expand_aliases
+
         return FilterBlock(
             organizations=list(self.organizations),
             media_types=expand_aliases(self.media_types, type_vocabulary),
@@ -79,3 +99,74 @@ class FilterBlock:
             if values:
                 payload[key] = list(values)
         return payload
+
+
+def carry_shared_positive_qualifiers(blocks):
+    """Carry one edge branch's shared positive qualifier across alternatives.
+
+    Handles compact forms such as ``PDF from A or B`` and ``A or B PDFs``.
+    Only a first or last branch that names both axes can donate a value, every
+    other branch must name exactly the complementary positive axis, and no
+    exclusion is ever moved between branches.
+    """
+    normalized = [block.normalized() for block in blocks if not block.is_empty()]
+    if len(normalized) < 2:
+        return normalized
+
+    for source_index in (0, len(normalized) - 1):
+        source = normalized[source_index]
+        others = [
+            block for index, block in enumerate(normalized)
+            if index != source_index
+        ]
+        if source.organizations and source.media_types and all(
+            _is_org_only(block) for block in others
+        ):
+            return [
+                FilterBlock(
+                    organizations=block.organizations,
+                    media_types=(block.media_types or source.media_types),
+                    exclude_organizations=block.exclude_organizations,
+                    exclude_media_types=block.exclude_media_types,
+                ).normalized()
+                for block in normalized
+            ]
+
+        if source.organizations and source.media_types and all(
+            _is_media_type_only(block) for block in others
+        ):
+            return [
+                FilterBlock(
+                    organizations=(block.organizations or source.organizations),
+                    media_types=block.media_types,
+                    exclude_organizations=block.exclude_organizations,
+                    exclude_media_types=block.exclude_media_types,
+                ).normalized()
+                for block in normalized
+            ]
+
+    return normalized
+
+
+def _unique(values):
+    return list(dict.fromkeys(value for value in values or [] if value))
+
+
+def _has_exclusions(block):
+    return bool(block.exclude_organizations or block.exclude_media_types)
+
+
+def _is_org_only(block):
+    return bool(
+        block.organizations
+        and not block.media_types
+        and not _has_exclusions(block)
+    )
+
+
+def _is_media_type_only(block):
+    return bool(
+        block.media_types
+        and not block.organizations
+        and not _has_exclusions(block)
+    )
