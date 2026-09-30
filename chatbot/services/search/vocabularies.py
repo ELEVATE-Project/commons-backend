@@ -60,7 +60,13 @@ def file_type_vocabulary():
     for choice in FileTypeChoices:
         dotted = extensions.get(choice, '')
         bare = dotted.lstrip('.')
-        vocabulary[choice.value] = [str(choice.label), bare, dotted]
+        label = str(choice.label)
+        aliases = [label, bare, dotted]
+        if label:
+            aliases.append(f"{label}s")
+        if bare:
+            aliases.append(f"{bare}s")
+        vocabulary[choice.value] = list(dict.fromkeys(aliases))
     return vocabulary
 
 
