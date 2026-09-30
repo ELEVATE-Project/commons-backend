@@ -11,6 +11,9 @@ OrgEntry = Tuple[str, str, List[str]]
 GENERIC_FILE_TYPE_NOUNS = frozenset({
     "document", "documents", "doc", "docs", "file", "files",
 })
+COORDINATION_WORDS = frozenset({"or"})
+NEGATION_PLACEHOLDERS = frozenset({"anything", "nothing"})
+FILTER_SCOPE_WORDS = frozenset({"anyone", "anywhere", "only", "uploaded"})
 NEGATION_SCOPE_BREAKERS = (
     "about", "regarding", "related to", "covering", "from", "on",
 )
@@ -265,6 +268,17 @@ def resolve_query_exact(
     for field_name in ("organization", "file_type"):
         matcher = matchers[field_name]
         matches = matcher.find_all_exact(remaining)
+        if field_name == "file_type":
+            matches.extend(_contextual_doc_matches(
+                remaining,
+                file_type_vocabulary,
+                existing_matches=matches,
+            ))
+            matches.sort(
+                key=lambda match: remaining.lower().find(
+                    match.matched_span.lower()
+                )
+            )
         results[field_name] = matches
         if matches:
             remaining = _strip_all(remaining, matches)
@@ -377,7 +391,7 @@ def clean_search_text(text: str) -> str:
     if not text or not text.strip():
         return ""
 
-    working = text.lower()
+    working = re.sub(r"[,;]+", " ", text.lower())
     for phrase in _noise_phrases():
         working = working.replace(phrase, " ")
     for phrase in _negation_words():
@@ -390,6 +404,9 @@ def clean_search_text(text: str) -> str:
         | _negation_words()
         | _stopwords()
         | GENERIC_FILE_TYPE_NOUNS
+        | COORDINATION_WORDS
+        | NEGATION_PLACEHOLDERS
+        | FILTER_SCOPE_WORDS
     )
     return " ".join(word for word in words if word not in removable_words).strip()
 
@@ -563,6 +580,72 @@ def _with_explicit_file_type_context(entries: List[OrgEntry]) -> List[OrgEntry]:
             (display_name, slug, list(dict.fromkeys(contextual_aliases)))
         )
     return contextual_entries
+
+
+def _contextual_doc_matches(
+    query: str,
+    vocabulary,
+    existing_matches: Optional[List[MatchResult]] = None,
+) -> List[MatchResult]:
+    """Recognize DOC only where ``doc`` unambiguously names a format.
+
+    Bare "doc/docs/documents" remain generic nouns. Singular ``doc`` becomes
+    the Word binary format when followed by file/format, or when coordinated
+    with another file type ("PDF or DOC", "doc, docx").
+    """
+    if not query or not vocabulary:
+        return []
+
+    doc_slug = None
+    display_value = "DOC"
+    for slug, aliases in vocabulary.items():
+        normalized = {str(value).strip().lower() for value in aliases or []}
+        if ".doc" in normalized and ".docx" not in normalized:
+            doc_slug = str(slug)
+            display_value = next(
+                (str(value) for value in aliases or []
+                 if str(value).strip().lower() == "doc"),
+                "DOC",
+            )
+            break
+    if not doc_slug:
+        return []
+
+    existing_matches = list(existing_matches or [])
+    has_other_file_type = any(match.slug != doc_slug for match in existing_matches)
+    matches = []
+    for occurrence in re.finditer(r"\bdoc\b", query, flags=re.IGNORECASE):
+        start, end = occurrence.span()
+        if any(
+            query.lower().find(match.matched_span.lower()) <= start <
+            query.lower().find(match.matched_span.lower()) + len(match.matched_span)
+            for match in existing_matches
+            if query.lower().find(match.matched_span.lower()) != -1
+        ):
+            continue
+
+        suffix = query[end:]
+        explicit_context = bool(re.match(
+            r"\s+(?:file|files|format|formats)\b",
+            suffix,
+            flags=re.IGNORECASE,
+        ))
+        coordinated = has_other_file_type and bool(
+            re.search(r"(?:,|\b(?:or|and)\b)\s*$", query[:start], re.IGNORECASE)
+            or re.match(r"\s*(?:,|\b(?:or|and)\b)", suffix, re.IGNORECASE)
+        )
+        if not (explicit_context or coordinated):
+            continue
+
+        matches.append(MatchResult(
+            display_value=display_value,
+            slug=doc_slug,
+            method="contextual_exact",
+            score=100,
+            matched_span=occurrence.group(0),
+            negated=_is_negated(query.lower(), start),
+        ))
+    return matches
 
 
 def _entries_from_vocabulary(vocabulary) -> List[OrgEntry]:
@@ -754,6 +837,33 @@ def _match_to_dict(match: MatchResult) -> Dict:
 
 
 def _is_negated(lowered_query: str, match_start: int) -> bool:
+    # A comma-delimited format restriction such as
+    # "all organizations except A, PDF or DOCX only" starts a new positive
+    # scope. Without this, the earlier organization exclusion leaks into the
+    # later file-type list.
+    segment_start = max(
+        lowered_query.rfind(",", 0, match_start),
+        lowered_query.rfind(";", 0, match_start),
+    ) + 1
+    segment_end_candidates = [
+        index for index in (
+            lowered_query.find(",", match_start),
+            lowered_query.find(";", match_start),
+        )
+        if index != -1
+    ]
+    segment_end = min(segment_end_candidates) if segment_end_candidates else len(lowered_query)
+    local_segment = lowered_query[segment_start:segment_end]
+    local_prefix = lowered_query[segment_start:match_start]
+    if (
+        re.search(r"\bonly\b", local_segment)
+        and not any(
+            re.search(r"(?<!\w)" + re.escape(cue) + r"(?!\w)", local_prefix)
+            for cue in (_negation_words() | {"nothing"})
+        )
+    ):
+        return False
+
     preceding_text = lowered_query[:match_start]
     words = re.findall(r"[a-z0-9']+", preceding_text)
     if not words:
@@ -764,7 +874,7 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
 
     window_words = words[-window_size:]
     found_cues = []
-    for cue in _negation_words():
+    for cue in (_negation_words() | {"nothing"}):
         cue_words = re.findall(r"[a-z0-9']+", cue.lower())
         cue_index = _find_last_word_sequence(window_words, cue_words)
         if cue_index != -1:
@@ -813,7 +923,9 @@ def _negation_consumed_before_match(window_words: List[str], cue_words: List[str
         return False
 
     trigger_words = set(_trigger_words())
-    removable_words = _noise_words() | _stopwords()
+    removable_words = (
+        _noise_words() | _stopwords() | NEGATION_PLACEHOLDERS
+    )
     for index, word in enumerate(words_after_cue):
         if word in trigger_words:
             previous_content = [
@@ -829,10 +941,14 @@ def _negation_consumed_before_match(window_words: List[str], cue_words: List[str
 def _strip_span(query: str, span: str) -> str:
     if not span:
         return query
-    idx_lower = query.lower().find(span.lower())
-    if idx_lower == -1:
+    match = re.search(
+        r"(?<!\w)" + re.escape(span) + r"(?!\w)",
+        query,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
         return query
-    return (query[:idx_lower] + " " + query[idx_lower + len(span):]).strip()
+    return (query[:match.start()] + " " + query[match.end():]).strip()
 
 
 def _strip_all(query: str, matches: List[MatchResult]) -> str:
