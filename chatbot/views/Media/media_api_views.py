@@ -986,6 +986,8 @@ class MediaSearchV2View(APIView):
                 organizations=organizations,
                 resource_types=resource_types,
                 media_types=media_types,
+                fuzzy=fuzzy,
+                any_of=any_of,
             )
 
         # Normalize score ordering (only valid for search) to created_at for database queries
@@ -1019,6 +1021,8 @@ class MediaSearchV2View(APIView):
         organizations,
         resource_types,
         media_types,
+        fuzzy=None,
+        any_of=None,
     ):
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
@@ -1033,9 +1037,6 @@ class MediaSearchV2View(APIView):
 
         # Resolve the natural-language query into filters. Explicit filters from
         # the UI are passed through untouched and always win.
-        # Placeholder until the RapidFuzz resolver lands in this file: swap for
-        # `fuzzy = self._resolve_fuzzy_filters(query)`.
-        fuzzy = None
         resolved = self._resolve_search_filters(
             query,
             fuzzy=fuzzy,
