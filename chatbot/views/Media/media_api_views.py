@@ -945,7 +945,9 @@ class MediaSearchV2View(APIView):
                 "[MediaSearchV2View] Resolved search filters:::::::::::::",
                 to_response_dict(query, resolved_filters),
             )
-            any_of = self._build_any_of_filters(query)
+            any_of = self._build_any_of_filters(
+                query, resolved_filters=resolved_filters
+            )
             alternative_llm_reason = self._alternative_llm_reason(query, any_of)
             fuzzy = self._fuzzy_result_from_resolved_filters(
                 resolved_filters,
@@ -1069,11 +1071,55 @@ class MediaSearchV2View(APIView):
             resolved_any_of if resolved.diagnostics.get('llm_used')
             else deterministic_any_of
         )
+        rapidfuzz_filters = self._rapidfuzz_filter_metadata(
+            fuzzy, deterministic_any_of
+        )
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
         print(f"[MediaSearchV2View] resolved media_types: {media_types}")
         print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
+
+        # Imported locally, like the AI-search chain elsewhere in this view, so a
+        # broken import degrades one search instead of the whole media API.
+        from chatbot.services.search.vocabularies import (
+            expand_aliases, file_type_vocabulary)
+
+        # Widened to every spelling the payload uses: metadata.type holds both
+        # 'application/pdf' and a bare 'pdf' depending on how a doc was ingested.
+        type_vocabulary = file_type_vocabulary()
+        qdrant_file_types = expand_aliases(media_types, type_vocabulary)
+        qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
+        # Each alternative needs the same widening; named any_of_blocks because
+        # any_of is already the Q-builder at the top of this module. Driven off
+        # the same combined_any_of the PostgreSQL branch uses, so the two
+        # backends can never be handed a different set of alternatives.
+        any_of_blocks = []
+        for block in combined_any_of:
+            expanded_block = dict(self._filter_block_payload(block))
+            for key in ("file_type", "exclude_file_type"):
+                values = expanded_block.get(key)
+                if values:
+                    expanded_block[key] = expand_aliases(values, type_vocabulary)
+            any_of_blocks.append(expanded_block)
+
+        vector_service_payload = {
+            "query": query if query else None,
+            "top_k": top_k,
+            "filter_score": filter_score,
+            "detail_filter_score": detail_filter_score,
+            "categories": tags if tags else None,
+            "organizations": organizations if organizations else None,
+            "resource_type": resource_types if resource_types else None,
+            "file_type": qdrant_file_types if qdrant_file_types else None,
+            "exclude_organizations": (
+                exclude_organizations if exclude_organizations else None
+            ),
+            "exclude_file_type": (
+                qdrant_exclude_file_types if qdrant_exclude_file_types else None
+            ),
+            "any_of": any_of_blocks if any_of_blocks else None,
+        }
 
         # Nothing left to embed once the query reduced to filters only, so serve
         # it from the same PostgreSQL path a filters-only request uses.
@@ -1101,45 +1147,11 @@ class MediaSearchV2View(APIView):
                 exclude_media_types=exclude_media_types,
                 any_of_blocks=combined_any_of,
                 diagnostics=resolved.diagnostics,
+                rapidfuzz_filters=rapidfuzz_filters,
             )
 
-        # Imported locally, like the AI-search chain elsewhere in this view, so a
-        # broken import degrades one search instead of the whole media API.
-        from chatbot.services.search.vocabularies import (
-            expand_aliases, file_type_vocabulary)
-
-        # Widened to every spelling the payload uses: metadata.type holds both
-        # 'application/pdf' and a bare 'pdf' depending on how a doc was ingested.
-        type_vocabulary = file_type_vocabulary()
-        qdrant_file_types = expand_aliases(media_types, type_vocabulary)
-        qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
-        # Each alternative needs the same widening; named any_of_blocks because
-        # any_of is already the Q-builder at the top of this module. Driven off
-        # the same combined_any_of the PostgreSQL branch uses, so the two
-        # backends can never be handed a different set of alternatives.
-        any_of_blocks = []
-        for block in combined_any_of:
-            expanded_block = dict(self._filter_block_payload(block))
-            for key in ("file_type", "exclude_file_type"):
-                values = expanded_block.get(key)
-                if values:
-                    expanded_block[key] = expand_aliases(values, type_vocabulary)
-            any_of_blocks.append(expanded_block)
-
         # Query vector database
-        vector_response = query_database_with_metadata(
-            query=query if query else None,
-            top_k=top_k,
-            filter_score=filter_score,
-            detail_filter_score=detail_filter_score,
-            categories=tags if tags else None,
-            organizations=organizations if organizations else None,
-            resource_type=resource_types if resource_types else None,
-            file_type=qdrant_file_types if qdrant_file_types else None,
-            exclude_organizations=exclude_organizations if exclude_organizations else None,
-            exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None,
-            any_of=any_of_blocks if any_of_blocks else None
-        )
+        vector_response = query_database_with_metadata(**vector_service_payload)
 
         print(f"[MediaSearchV2View] vector_response error: {vector_response.get('error')}")
         print(f"[MediaSearchV2View] vector_response result count: {len(vector_response.get('results', []))}")
@@ -1159,6 +1171,7 @@ class MediaSearchV2View(APIView):
                 "search_metadata": {
                     "query": query,
                     "vector_db_error": True,
+                    "rapidfuzz_filters": rapidfuzz_filters,
                 },
             }, status=error_status)
 
@@ -1215,6 +1228,7 @@ class MediaSearchV2View(APIView):
                 # How each filter was decided. Without it, "LLM was skipped" and
                 # "LLM found nothing" look identical from the results alone.
                 "filter_resolution": resolved.diagnostics,
+                "rapidfuzz_filters": rapidfuzz_filters,
                 # Canonical filters applied by the search. Storage aliases are
                 # expanded only at the Qdrant call boundary above.
                 "applied_filters": self.get_applied_search_filters(
@@ -1479,6 +1493,7 @@ class MediaSearchV2View(APIView):
         exclude_media_types=None,
         any_of_blocks=None,
         diagnostics=None,
+        rapidfuzz_filters=None,
     ):
         queryset = self._build_database_queryset()
         queryset = self._apply_database_filters(
@@ -1543,6 +1558,7 @@ class MediaSearchV2View(APIView):
                 "returned_results": len(serializer.data),
                 # Empty for a plain listing, which resolves no filters at all.
                 "filter_resolution": diagnostics or {},
+                "rapidfuzz_filters": rapidfuzz_filters or {},
                 "applied_filters": applied_filters,
             },
         }, status=status.HTTP_200_OK)
@@ -2005,6 +2021,21 @@ class MediaSearchV2View(APIView):
             ],
         }
 
+    def _rapidfuzz_filter_metadata(self, fuzzy, any_of_blocks=None):
+        fuzzy = fuzzy or FuzzyFilterResult()
+        return {
+            'organizations': list(fuzzy.organizations or []),
+            'media_types': [str(value) for value in fuzzy.media_types or []],
+            'exclude_organizations': list(fuzzy.exclude_organizations or []),
+            'exclude_media_types': [
+                str(value) for value in fuzzy.exclude_media_types or []
+            ],
+            'any_of': [
+                self._filter_block_payload(block)
+                for block in any_of_blocks or []
+            ],
+        }
+
     def _filter_block_payload(self, block):
         if isinstance(block, dict):
             return block
@@ -2034,16 +2065,34 @@ class MediaSearchV2View(APIView):
             values.append(self._file_type_payload_value(match))
         return list(dict.fromkeys(value for value in values if value))
 
-    def _build_any_of_filters(self, query):
+    def _build_any_of_filters(self, query, resolved_filters=None):
         from chatbot.services.search.filter_blocks import (
             carry_shared_positive_qualifiers,
         )
 
-        clauses = [
-            clause.strip()
-            for clause in re.split(r"\bOR\b", query, flags=re.IGNORECASE)
-            if clause.strip()
-        ]
+        # A shared negation applies to every item in an exclusion list:
+        # "everything except A or B" means NOT (A OR B), not
+        # "(not A) OR B". The full-query resolver preserves that scope, while
+        # splitting first would leave the second clause falsely positive.
+        resolved_filters = (
+            resolved_filters or self._resolve_query_filters(query)
+        )
+        full_query_block = self._any_of_block_from_resolved_filters(
+            resolved_filters
+        )
+        if (
+            (
+                full_query_block.exclude_organizations
+                and not full_query_block.organizations
+            )
+            or (
+                full_query_block.exclude_media_types
+                and not full_query_block.media_types
+            )
+        ):
+            return []
+
+        clauses = self._split_any_of_clauses(query)
         if len(clauses) < 2:
             return []
 
@@ -2060,7 +2109,51 @@ class MediaSearchV2View(APIView):
         if len(blocks) < 2:
             return []
 
-        return carry_shared_positive_qualifiers(blocks)
+        if not any(self._has_unrestricted_org_scope(clause) for clause in clauses):
+            blocks = carry_shared_positive_qualifiers(blocks)
+
+        if self._alternatives_flatten_to_full_query(blocks):
+            return []
+        return blocks
+
+    def _split_any_of_clauses(self, query):
+        # Commas define the outer alternatives in "A, B, or C". An OR inside
+        # one comma group remains there so a trailing qualifier can govern it:
+        # "DOC or DOCX from A, or CSV from B".
+        if ',' in (query or ''):
+            clauses = re.split(r"\s*,\s*", query)
+            return [
+                re.sub(r"^(?:or|and)\s+", "", clause.strip(), flags=re.I)
+                for clause in clauses
+                if re.sub(r"^(?:or|and)\s+", "", clause.strip(), flags=re.I)
+            ]
+        return [
+            clause.strip()
+            for clause in re.split(r"\bOR\b", query or "", flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+
+    def _has_unrestricted_org_scope(self, clause):
+        return bool(re.search(
+            r"\b(?:anyone|any organization|all organizations|anywhere)\b",
+            clause or "",
+            flags=re.IGNORECASE,
+        ))
+
+    def _alternatives_flatten_to_full_query(self, blocks):
+        if not blocks or any(
+            block.exclude_organizations or block.exclude_media_types
+            for block in blocks
+        ):
+            return False
+
+        organization_sets = {
+            tuple(sorted(block.organizations)) for block in blocks
+        }
+        media_type_sets = {
+            tuple(sorted(block.media_types)) for block in blocks
+        }
+        return len(organization_sets) == 1 or len(media_type_sets) == 1
 
     def _alternative_llm_reason(self, query, blocks):
         if len(re.findall(r"\S+", query or "")) > self._any_of_limit(
@@ -2096,11 +2189,7 @@ class MediaSearchV2View(APIView):
         return get_search_llm_setting(None, setting)
 
     def _search_text_from_any_of_clauses(self, query):
-        clauses = [
-            clause.strip()
-            for clause in re.split(r"\bOR\b", query, flags=re.IGNORECASE)
-            if clause.strip()
-        ]
+        clauses = self._split_any_of_clauses(query)
         search_texts = []
         for clause in clauses:
             search_text = self._resolve_query_filters(clause).search_text
