@@ -1149,6 +1149,10 @@ class MediaSearchV2View(APIView):
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
                 "search_config": vector_response.get('search_config', {}),
+                # Whether the query was read as an acronym, and what it expanded
+                # to. The service sends null when nothing was detected, so fall
+                # back to {} and keep the key's shape stable for callers.
+                "acronym_info": vector_response.get('acronym_info') or {},
                 # How each filter was decided. Without this it is invisible why
                 # a natural-language search returned what it did — in particular
                 # "the LLM was skipped" and "the LLM found nothing" look
