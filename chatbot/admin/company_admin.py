@@ -11,6 +11,8 @@ from chatbot.models import Company, Profile, ProfileType, CompanyBot, CompanyCha
 from chatbot.models.company_models import CompanyStateMachine
 from chatbot.resources.resource import CompanyChatResource
 from chatbot.resources.company_resource import ChatSessionResource
+from chatbot.utils.company_cache import evict_company_cache, sync_company_cache
+from django.db import transaction
 from django.shortcuts import redirect
 from django.contrib import messages
 import logging
@@ -75,6 +77,35 @@ class CompanyAdmin(admin.ModelAdmin):
             return qs.filter(id=profile[0].company.id)
         else:
             return qs.none()
+
+    def save_model(self, request, obj, form, change):
+        old_slug = None
+        if change and obj.pk:
+            old_slug = Company.objects.filter(pk=obj.pk).values_list('slug', flat=True).first()
+
+        super().save_model(request, obj, form, change)
+
+        def _sync_cache():
+            if old_slug and old_slug != obj.slug:
+                evict_company_cache(old_slug)
+            sync_company_cache(obj)
+
+        transaction.on_commit(_sync_cache)
+
+    def delete_model(self, request, obj):
+        slug = obj.slug
+        super().delete_model(request, obj)
+        transaction.on_commit(lambda: evict_company_cache(slug))
+
+    def delete_queryset(self, request, queryset):
+        slugs = [company.slug for company in queryset]
+        super().delete_queryset(request, queryset)
+
+        def _evict_all():
+            for slug in slugs:
+                evict_company_cache(slug)
+
+        transaction.on_commit(_evict_all)
 
 
 @admin.register(CompanyBot)

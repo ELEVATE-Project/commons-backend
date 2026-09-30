@@ -3,6 +3,7 @@ from django.db.models import Q
 
 from chatbot.models import Company, Profile, ProfileType
 from chatbot.models.geo_models import ProfileAddress
+from chatbot.utils.company_cache import get_all_companies
 
 
 class ProfileCompanyChatFilter(admin.SimpleListFilter):
@@ -58,7 +59,7 @@ class CompanyChatCompanyFilter(admin.SimpleListFilter):
         profile = Profile.objects.filter(email=user_email).select_related('company').first()
 
         if request.user.is_superuser:
-            return Company.objects.values_list('id', 'name')
+            return [(company.id, company.name) for company in get_all_companies()]
 
         if profile and profile.profile_type == ProfileType.MODERATOR:
             return [(profile.company.id, profile.company.name)]
@@ -120,7 +121,7 @@ class ProfileCompanyFilter(admin.SimpleListFilter):
         user_email = request.user.email
         profile = Profile.objects.filter(email=user_email)
         if request.user.is_superuser:
-            return [(company.id, company.name) for company in Company.objects.all()]
+            return [(company.id, company.name) for company in get_all_companies()]
         elif len(profile) > 0 and profile[0].profile_type == ProfileType.MODERATOR:
             return [(profile[0].company.id, profile[0].company.name)]
         else:
@@ -139,7 +140,7 @@ class StoryCompanyFilter(admin.SimpleListFilter):
         user_email = request.user.email
         profile = Profile.objects.filter(email=user_email)
         if request.user.is_superuser:
-            return [(company.id, company.name) for company in Company.objects.all()]
+            return [(company.id, company.name) for company in get_all_companies()]
         elif len(profile) > 0 and profile[0].profile_type == ProfileType.MODERATOR:
             return [(profile[0].company.id, profile[0].company.name)]
         else:
@@ -244,7 +245,7 @@ class ChatSessionFilter(admin.SimpleListFilter):
         user_email = request.user.email
         profile = Profile.objects.filter(email=user_email)
         if request.user.is_superuser:
-            return [(company.id, company.name) for company in Company.objects.all()]
+            return [(company.id, company.name) for company in get_all_companies()]
         elif len(profile) > 0 and profile[0].profile_type == ProfileType.MODERATOR:
             return [(profile[0].company.id, profile[0].company.name)]
         else:

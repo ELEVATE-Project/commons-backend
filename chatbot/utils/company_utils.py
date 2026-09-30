@@ -1,6 +1,7 @@
 from django.db.models import Q
 
 from chatbot.models import Company, Profile
+from chatbot.utils.company_cache import get_all_companies
 
 
 def get_user_profile(user):
@@ -79,3 +80,14 @@ def get_company_queryset_for_user(user):
         return Company.objects.none()
 
     return Company.objects.filter(pk=user_company.pk).order_by("name")
+
+
+def get_companies_for_display(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        return []
+
+    if getattr(user, "is_superuser", False):
+        return get_all_companies()
+
+    user_company = get_user_company(user)
+    return [user_company] if user_company else []
