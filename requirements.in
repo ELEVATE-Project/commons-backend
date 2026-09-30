@@ -82,6 +82,7 @@ llama-parse
 ############################
 chromadb
 qdrant-client
+rapidfuzz
 lancedb
 
 ############################

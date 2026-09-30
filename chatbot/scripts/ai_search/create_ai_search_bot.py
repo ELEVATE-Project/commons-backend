@@ -5,13 +5,19 @@ import argparse
 import os
 import sys
 
-if __name__ == '__main__' and not os.environ.get('DJANGO_SETTINGS_MODULE'):
-    # Allow the script to run directly from the project root.
-    sys.path.insert(0, os.path.abspath(
-        os.path.join(os.path.dirname(__file__), '..', '..', '..')))
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shikshalokam_mohini.settings')
-    import django
-    django.setup()
+# Allow the script to run directly, from any cwd. The repo root has to go on
+# sys.path even when the deployment already exports DJANGO_SETTINGS_MODULE --
+# Python only puts this file's own directory on sys.path.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shikshalokam_mohini.settings')
+
+import django  # noqa: E402
+
+django.setup()
 
 from chatbot.models.company_models import Company, CompanyBot          # noqa: E402
 from chatbot.models.enums import EntityStatus, LLMProvider             # noqa: E402

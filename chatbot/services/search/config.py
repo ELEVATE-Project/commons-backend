@@ -103,11 +103,21 @@ SETTINGS = {
     # organization filtering, so it is opted into once that matcher is trusted.
     'llm_org_use_fuzzy_candidates': (
         'AI_SEARCH_LLM_ORG_USE_FUZZY_CANDIDATES', False, _boolean),
+    'any_of_max_query_words': ('SEARCH_FILTER_ANY_OF_MAX_QUERY_WORDS', 40, _positive_int),
+    'any_of_max_alternatives': ('SEARCH_FILTER_ANY_OF_MAX_ALTERNATIVES', 4, _positive_int),
+    'any_of_max_organizations': ('SEARCH_FILTER_ANY_OF_MAX_ORGANIZATIONS', 2, _positive_int),
+    'any_of_max_exclusions': ('SEARCH_FILTER_ANY_OF_MAX_EXCLUSIONS', 1, _positive_int),
 }
 
 # Deployment-wide, never per bot: whether the LLM runs at all must not differ
 # between bot rows, and a stale row must not override .env.
-ENV_ONLY = frozenset({'llm_mode'})
+ENV_ONLY = frozenset({
+    'llm_mode',
+    'any_of_max_query_words',
+    'any_of_max_alternatives',
+    'any_of_max_organizations',
+    'any_of_max_exclusions',
+})
 
 
 def bot_params(bot):
