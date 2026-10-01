@@ -298,14 +298,14 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
         # raw_dense/normalized_*/*_multiplier + title_match/summary_match added so QA can
         # reproduce the full score chain (see search_metadata.search_config.scoring_context
         # for the per-query min/max + boost table).
-        # Acronym keys explain a document's acronym score: pre_boost_score (before the
-        # title, summary and text boosts) and text_match/text_multiplier (the body uses
+        # Acronym keys explain a document's acronym score: acronym_pre_boost_score (before the
+        # title, summary and text boosts) and acronym_in_body_match/acronym_in_body_multiplier (the body uses
         # the acronym). match_source marks a keyword-injected result.
         for debug_key in ('keyword_score', 'rrf_score', 'dense_rank', 'sparse_rank',
                           'raw_dense', 'normalized_dense', 'normalized_sparse',
-                          'title_multiplier', 'summary_multiplier', 'text_multiplier',
-                          'title_match', 'summary_match', 'text_match',
-                          'match_source', 'pre_boost_score', 'measured_relevance'):
+                          'title_multiplier', 'summary_multiplier', 'acronym_in_body_multiplier',
+                          'title_match', 'summary_match', 'acronym_in_body_match',
+                          'match_source', 'acronym_pre_boost_score', 'pre_floor_score'):
             if instance.get(debug_key) is not None:
                 result[debug_key] = instance.get(debug_key)
 
