@@ -1,6 +1,7 @@
 import requests
 import os
 from typing import List, Dict, Any, Optional
+from chatbot.constants.constants import DEFAULT_METADATA_SEARCH_TOP_K
 from chatbot.llm_models.llm_script import handle_bedrock_model
 
 DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
@@ -117,7 +118,7 @@ def query_text_search(query: str, priority: str = "P1", limit: int = 10):
 
 def build_metadata_search_payload(
     query: str = None,
-    top_k: int = 20,
+    top_k: int = DEFAULT_METADATA_SEARCH_TOP_K,
     filter_score: int = 0,
     detail_filter_score: Optional[Dict[str, Any]] = None,
     categories: List[str] = None,
@@ -150,7 +151,7 @@ def build_metadata_search_payload(
 
 def query_database_with_metadata(
     query: str = None,
-    top_k: int = 20,
+    top_k: int = DEFAULT_METADATA_SEARCH_TOP_K,
     filter_score: int = 0,
     detail_filter_score: Optional[Dict[str, Any]] = None,
     categories: List[str] = None,

@@ -14,6 +14,7 @@ from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
     MediaListSerializer, MediaDetailSerializer, MediaSearchResultSerializer
 )
+from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
@@ -958,6 +959,13 @@ class MediaSearchV2View(APIView):
                     if any_of else resolved_filters.search_text
                 ),
             )
+            if any_of:
+                fuzzy = self._apply_trailing_global_filter_clause(query, fuzzy)
+            if not any_of:
+                fuzzy = self._absorb_redundant_org_file_type_alternatives(
+                    query,
+                    fuzzy,
+                )
             fuzzy.llm_reason = alternative_llm_reason
         
         # Determine ordering: score for search, user choice otherwise
@@ -1024,6 +1032,7 @@ class MediaSearchV2View(APIView):
         fuzzy=None,
         any_of=None,
     ):
+        raw_query = query
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
         from chatbot.models import CompanyBot
@@ -1038,12 +1047,14 @@ class MediaSearchV2View(APIView):
             other_params = json_repair.repair_json(other_params, return_objects=True)
         detail_filter_score = other_params.get("detail_filter_score", None)
 
+        explicit_organizations = list(organizations or [])
+        explicit_media_types = list(media_types or [])
         resolved = self._resolve_search_filters(
             query,
             fuzzy=fuzzy,
             explicit_filters={
-                'organizations': organizations,
-                'media_types': media_types,
+                'organizations': explicit_organizations,
+                'media_types': explicit_media_types,
             },
         )
         # Not `resolved.query or query`: an empty residual is meaningful and
@@ -1057,20 +1068,20 @@ class MediaSearchV2View(APIView):
         exclude_media_types = list(resolved.exclude_media_types)
         resolved_any_of = list(resolved.any_of or [])
         deterministic_any_of = list(any_of or [])
-        # One source, never both: the splitter resolves each clause in isolation
-        # and so misses a qualifier stated once before the OR, and OR'ing its
-        # looser branch in would swallow the correct one. The model's answer
-        # wins; the splitter is the fallback for when there is no answer.
-        #
-        # Keyed on llm_used rather than on resolved_any_of being truthy: an
-        # empty any_of from the model is an answer -- "these alternatives are
-        # one flat list" -- not a missing one, and falling back there would AND
-        # the splitter's looser branches over correct flat filters and drop
-        # matching documents.
-        combined_any_of = (
-            resolved_any_of if resolved.diagnostics.get('llm_used')
-            else deterministic_any_of
-        )
+
+        combined_any_of = resolved_any_of or deterministic_any_of
+        if deterministic_any_of and not resolved_any_of:
+            if not explicit_organizations:
+                organizations = []
+            if not explicit_media_types:
+                media_types = []
+            _, trailing_global_filter = self._split_trailing_global_filter_clause(
+                raw_query
+            )
+            if not trailing_global_filter:
+                exclude_organizations = []
+                exclude_media_types = []
+            resolved.diagnostics['any_of_source'] = 'deterministic'
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
             fuzzy, deterministic_any_of
         )
@@ -1940,11 +1951,12 @@ class MediaSearchV2View(APIView):
         raw_query=None,
         semantic_query=None,
     ):
+        semantic_query_provided = semantic_query is not None
         semantic_query = self._clean_filter_search_text(
             resolved_filters.search_text if semantic_query is None
             else semantic_query
         )
-        if not semantic_query and raw_query:
+        if not semantic_query_provided and not semantic_query and raw_query:
             semantic_query = self._semantic_query_without_filter_spans(
                 raw_query, resolved_filters
             )
@@ -1983,7 +1995,7 @@ class MediaSearchV2View(APIView):
             if not span:
                 continue
             remaining = re.sub(
-                re.escape(span),
+                r"(?<!\w)" + re.escape(span) + r"(?!\w)",
                 " ",
                 remaining,
                 count=1,
@@ -2065,40 +2077,46 @@ class MediaSearchV2View(APIView):
             values.append(self._file_type_payload_value(match))
         return list(dict.fromkeys(value for value in values if value))
 
-    def _build_any_of_filters(self, query, resolved_filters=None):
+    def _build_any_of_filters(self, query, resolved_filters=None, resolver=None):
         from chatbot.services.search.filter_blocks import (
             carry_shared_positive_qualifiers,
         )
+
+        resolver = resolver or self._resolve_query_filters
 
         # A shared negation applies to every item in an exclusion list:
         # "everything except A or B" means NOT (A OR B), not
         # "(not A) OR B". The full-query resolver preserves that scope, while
         # splitting first would leave the second clause falsely positive.
         resolved_filters = (
-            resolved_filters or self._resolve_query_filters(query)
+            resolved_filters or resolver(query)
         )
         full_query_block = self._any_of_block_from_resolved_filters(
             resolved_filters
         )
         if (
-            (
-                full_query_block.exclude_organizations
-                and not full_query_block.organizations
+            (full_query_block.exclude_organizations
+             or full_query_block.exclude_media_types)
+            and not (
+                full_query_block.organizations
+                or full_query_block.media_types
             )
-            or (
-                full_query_block.exclude_media_types
-                and not full_query_block.media_types
-            )
+        ):
+            return []
+        if (
+            full_query_block.exclude_organizations
+            and full_query_block.media_types
+            and not full_query_block.organizations
         ):
             return []
 
         clauses = self._split_any_of_clauses(query)
-        if len(clauses) < 2:
+        if len(clauses) < MIN_ANY_OF_BRANCHES:
             return []
 
         blocks = []
         for clause in clauses:
-            resolved = self._resolve_query_filters(clause)
+            resolved = resolver(clause)
             block = self._any_of_block_from_resolved_filters(resolved)
             if not block.is_empty():
                 blocks.append(block)
@@ -2106,7 +2124,17 @@ class MediaSearchV2View(APIView):
         # Fewer than two alternatives is an AND, which the flat fields already
         # express, and the vector service rejects a one-entry any_of outright.
         # Mirrors llm_extractor._resolve_any_of.
-        if len(blocks) < 2:
+        if len(blocks) < MIN_ANY_OF_BRANCHES:
+            return []
+
+        if self._should_keep_flat_cross_product(
+            full_query_block,
+            blocks,
+            clauses,
+        ):
+            return []
+
+        if self._comma_constraints_are_not_alternatives(query, blocks):
             return []
 
         if not any(self._has_unrestricted_org_scope(clause) for clause in clauses):
@@ -2117,6 +2145,8 @@ class MediaSearchV2View(APIView):
         return blocks
 
     def _split_any_of_clauses(self, query):
+        query, _ = self._split_trailing_semantic_clause(query)
+        query, _ = self._split_trailing_global_filter_clause(query)
         # Commas define the outer alternatives in "A, B, or C". An OR inside
         # one comma group remains there so a trailing qualifier can govern it:
         # "DOC or DOCX from A, or CSV from B".
@@ -2132,6 +2162,89 @@ class MediaSearchV2View(APIView):
             for clause in re.split(r"\bOR\b", query or "", flags=re.IGNORECASE)
             if clause.strip()
         ]
+
+    def _comma_constraints_are_not_alternatives(self, query, blocks):
+        if ',' not in (query or ''):
+            return False
+
+        raw_parts = [
+            part.strip()
+            for part in re.split(r"\s*,\s*", query or "")
+            if part.strip()
+        ]
+        if len(raw_parts) != len(blocks):
+            return False
+
+        for index, (part, block) in enumerate(zip(raw_parts, blocks)):
+            if index == 0:
+                continue
+            if re.match(r"^(?:or|and)\b", part, flags=re.IGNORECASE):
+                continue
+            if (
+                (block.organizations and not block.media_types)
+                or (block.media_types and not block.organizations)
+                or (
+                    (block.exclude_organizations or block.exclude_media_types)
+                    and not (block.organizations or block.media_types)
+                )
+            ):
+                return True
+        return False
+
+    def _should_keep_flat_cross_product(self, full_query_block, blocks, clauses):
+        if any(self._has_unrestricted_org_scope(clause) for clause in clauses):
+            return False
+
+        if (
+            not full_query_block.organizations
+            or not full_query_block.media_types
+            or full_query_block.exclude_organizations
+            or full_query_block.exclude_media_types
+        ):
+            return False
+
+        has_org_only = any(
+            block.organizations
+            and not block.media_types
+            and not block.exclude_organizations
+            and not block.exclude_media_types
+            for block in blocks
+        )
+        has_type_only = any(
+            block.media_types
+            and not block.organizations
+            and not block.exclude_organizations
+            and not block.exclude_media_types
+            for block in blocks
+        )
+        has_both = any(
+            block.organizations
+            and block.media_types
+            and not block.exclude_organizations
+            and not block.exclude_media_types
+            for block in blocks
+        )
+        return has_both and (has_org_only or has_type_only)
+
+    def _split_trailing_semantic_clause(self, query):
+        match = re.search(
+            r",\s*(?:about|regarding|related to|covering|on)\s+(.+?)\s*$",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return query or "", ""
+        return (query[:match.start()].strip(), match.group(1).strip())
+
+    def _split_trailing_global_filter_clause(self, query):
+        match = re.search(
+            r",\s*(?:but\s+)?(?:nothing\s+from|excluding|exclude|not)\b.+$",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return query or "", ""
+        return (query[:match.start()].strip(), query[match.start() + 1:].strip())
 
     def _has_unrestricted_org_scope(self, clause):
         return bool(re.search(
@@ -2154,6 +2267,75 @@ class MediaSearchV2View(APIView):
             tuple(sorted(block.media_types)) for block in blocks
         }
         return len(organization_sets) == 1 or len(media_type_sets) == 1
+
+    def _absorb_redundant_org_file_type_alternatives(
+        self,
+        query,
+        fuzzy,
+        resolver=None,
+    ):
+        if not query or not fuzzy or not fuzzy.organizations or not fuzzy.media_types:
+            return fuzzy
+
+        resolver = resolver or self._resolve_query_filters
+        clauses = self._split_any_of_clauses(query)
+        if len(clauses) < MIN_ANY_OF_BRANCHES:
+            return fuzzy
+
+        blocks = []
+        for clause in clauses:
+            resolved = resolver(clause)
+            block = self._any_of_block_from_resolved_filters(resolved)
+            if not block.is_empty():
+                blocks.append(block)
+
+        org_only = {
+            org
+            for block in blocks
+            if (
+                block.organizations
+                and not block.media_types
+                and not block.exclude_organizations
+                and not block.exclude_media_types
+            )
+            for org in block.organizations
+        }
+        if not org_only:
+            return fuzzy
+
+        if any(
+            block.organizations
+            and block.media_types
+            and all(org in org_only for org in block.organizations)
+            for block in blocks
+        ):
+            fuzzy.media_types = []
+            fuzzy.query = ""
+        return fuzzy
+
+    def _apply_trailing_global_filter_clause(self, query, fuzzy, resolver=None):
+        _, trailing_filter = self._split_trailing_global_filter_clause(query)
+        if not trailing_filter:
+            return fuzzy
+
+        resolver = resolver or self._resolve_query_filters
+        resolved = resolver(trailing_filter)
+        exclude_organizations = self._excluded_values(
+            resolved.organization,
+            use_slug=True,
+        )
+        exclude_media_types = self._excluded_file_type_values(
+            resolved.file_type
+        )
+        if exclude_organizations:
+            fuzzy.exclude_organizations = list(dict.fromkeys(
+                list(fuzzy.exclude_organizations or []) + exclude_organizations
+            ))
+        if exclude_media_types:
+            fuzzy.exclude_media_types = list(dict.fromkeys(
+                list(fuzzy.exclude_media_types or []) + exclude_media_types
+            ))
+        return fuzzy
 
     def _alternative_llm_reason(self, query, blocks):
         if len(re.findall(r"\S+", query or "")) > self._any_of_limit(
@@ -2188,11 +2370,13 @@ class MediaSearchV2View(APIView):
 
         return get_search_llm_setting(None, setting)
 
-    def _search_text_from_any_of_clauses(self, query):
+    def _search_text_from_any_of_clauses(self, query, resolver=None):
+        resolver = resolver or self._resolve_query_filters
+        _, trailing_semantic = self._split_trailing_semantic_clause(query)
         clauses = self._split_any_of_clauses(query)
-        search_texts = []
+        search_texts = [trailing_semantic] if trailing_semantic else []
         for clause in clauses:
-            search_text = self._resolve_query_filters(clause).search_text
+            search_text = resolver(clause).search_text
             if search_text and search_text not in search_texts:
                 search_texts.append(search_text)
         if not search_texts:

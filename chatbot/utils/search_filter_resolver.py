@@ -6,13 +6,15 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process
 
+from chatbot.models.enums import FileTypeChoices
+
 OrgEntry = Tuple[str, str, List[str]]
 
 GENERIC_FILE_TYPE_NOUNS = frozenset({
     "document", "documents", "doc", "docs", "file", "files",
 })
 COORDINATION_WORDS = frozenset({"or"})
-NEGATION_PLACEHOLDERS = frozenset({"anything", "nothing"})
+NEGATION_PLACEHOLDERS = frozenset({"anything", "nothing", "neither", "nor"})
 FILTER_SCOPE_WORDS = frozenset({"anyone", "anywhere", "only", "uploaded"})
 NEGATION_SCOPE_BREAKERS = (
     "about", "regarding", "related to", "covering", "from", "on",
@@ -255,6 +257,9 @@ def resolve_query_exact(
     organization_vocabulary: Optional[Dict[str, List[str]]] = None,
     file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
 ) -> ResolvedFilters:
+    if re.search(r"\bdoes\s+not\s+exist\b", query or "", flags=re.IGNORECASE):
+        return ResolvedFilters(search_text=clean_search_text(query or ""))
+
     remaining = query or ""
     results = {
         "organization": [],
@@ -274,6 +279,7 @@ def resolve_query_exact(
                 file_type_vocabulary,
                 existing_matches=matches,
             ))
+            matches = _without_topic_file_type_matches(remaining, matches)
             matches.sort(
                 key=lambda match: remaining.lower().find(
                     match.matched_span.lower()
@@ -286,6 +292,8 @@ def resolve_query_exact(
     candidates = {}
     for field_name in ("organization", "file_type"):
         existing_matches = results.get(field_name, [])
+        if field_name == "file_type" and existing_matches:
+            continue
         threshold = _confidence_threshold(field_name)
         fuzzy_matches = matchers[field_name].find_all_fuzzy(
             remaining,
@@ -597,7 +605,7 @@ def _contextual_doc_matches(
         return []
 
     doc_slug = None
-    display_value = "DOC"
+    display_value = FileTypeChoices.DOC.label
     for slug, aliases in vocabulary.items():
         normalized = {str(value).strip().lower() for value in aliases or []}
         if ".doc" in normalized and ".docx" not in normalized:
@@ -605,7 +613,7 @@ def _contextual_doc_matches(
             display_value = next(
                 (str(value) for value in aliases or []
                  if str(value).strip().lower() == "doc"),
-                "DOC",
+                FileTypeChoices.DOC.label,
             )
             break
     if not doc_slug:
@@ -646,6 +654,39 @@ def _contextual_doc_matches(
             negated=_is_negated(query.lower(), start),
         ))
     return matches
+
+
+def _without_topic_file_type_matches(
+    query: str,
+    matches: List[MatchResult],
+) -> List[MatchResult]:
+    if not query or not matches:
+        return matches
+
+    protected_spans = []
+    for match in re.finditer(
+        r"\b(?:about|regarding|related to|covering|on)\b\s+([^,;]+)",
+        query,
+        flags=re.IGNORECASE,
+    ):
+        protected_spans.append(match.span(1))
+
+    if not protected_spans:
+        return matches
+
+    filtered = []
+    lowered = query.lower()
+    for match in matches:
+        start = lowered.find(match.matched_span.lower())
+        if start == -1:
+            filtered.append(match)
+            continue
+        end = start + len(match.matched_span)
+        if any(start >= span_start and end <= span_end
+               for span_start, span_end in protected_spans):
+            continue
+        filtered.append(match)
+    return filtered
 
 
 def _entries_from_vocabulary(vocabulary) -> List[OrgEntry]:
@@ -865,6 +906,9 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
         return False
 
     preceding_text = lowered_query[:match_start]
+    if re.search(r"\bneither\b", preceding_text):
+        return True
+
     words = re.findall(r"[a-z0-9']+", preceding_text)
     if not words:
         return False

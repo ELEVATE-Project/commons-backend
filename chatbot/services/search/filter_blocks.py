@@ -17,6 +17,8 @@ here — callers stay one-liners.
 
 from dataclasses import dataclass, field
 
+from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
+
 @dataclass
 class FilterBlock:
     """
@@ -110,7 +112,7 @@ def carry_shared_positive_qualifiers(blocks):
     exclusion is ever moved between branches.
     """
     normalized = [block.normalized() for block in blocks if not block.is_empty()]
-    if len(normalized) < 2:
+    if len(normalized) < MIN_ANY_OF_BRANCHES:
         return normalized
 
     for source_index in (0, len(normalized) - 1):
