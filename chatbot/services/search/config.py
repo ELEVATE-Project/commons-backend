@@ -103,9 +103,13 @@ SETTINGS = {
     # organization filtering, so it is opted into once that matcher is trusted.
     'llm_org_use_fuzzy_candidates': (
         'AI_SEARCH_LLM_ORG_USE_FUZZY_CANDIDATES', False, _boolean),
+    # Skip expensive OR extraction for long natural-language queries.
     'any_of_max_query_words': ('SEARCH_FILTER_ANY_OF_MAX_QUERY_WORDS', 40, _positive_int),
+    # Cap how many OR branches the LLM may return for one search.
     'any_of_max_alternatives': ('SEARCH_FILTER_ANY_OF_MAX_ALTERNATIVES', 4, _positive_int),
+    # Cap organization filters inside each OR branch to avoid over-narrowing.
     'any_of_max_organizations': ('SEARCH_FILTER_ANY_OF_MAX_ORGANIZATIONS', 2, _positive_int),
+    # Keep exclusion-heavy branches rare because they broaden quickly.
     'any_of_max_exclusions': ('SEARCH_FILTER_ANY_OF_MAX_EXCLUSIONS', 1, _positive_int),
 }
 

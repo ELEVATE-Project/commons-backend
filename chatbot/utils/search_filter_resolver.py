@@ -6,19 +6,40 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process
 
+from chatbot.constants.search import (
+    COORDINATION_WORDS,
+    FILE_TYPE_FIELD,
+    FILTER_SCOPE_WORDS,
+    GENERIC_FILE_TYPE_NOUNS,
+    NEGATION_PLACEHOLDERS,
+    NEGATION_SCOPE_BREAKERS,
+    ORGANIZATION_FIELD,
+)
+from chatbot.constants.search_regex import (
+    ALNUM_BOUNDARY_PATTERN,
+    ALNUM_TOKEN_PATTERN,
+    COORDINATION_AFTER_PATTERN,
+    COORDINATION_BEFORE_PATTERN,
+    DOC_EXPLICIT_CONTEXT_PATTERN,
+    DOC_WORD_PATTERN,
+    DOES_NOT_EXIST_PATTERN,
+    EXACT_SPAN_PATTERN_TEMPLATE,
+    EXTENSION_BOUNDARY_PATTERN_TEMPLATE,
+    EXTENSION_PATTERN,
+    FLEXIBLE_NAME_SEPARATOR_PATTERN,
+    LOWER_ALNUM_TOKEN_PATTERN,
+    LOWER_TOKEN_PATTERN,
+    NEITHER_PATTERN,
+    ONLY_PATTERN,
+    PUNCTUATION_SEPARATOR_PATTERN,
+    TOKEN_PATTERN,
+    TOPIC_PROTECTED_SPAN_PATTERN,
+    WHITESPACE_PATTERN,
+    WORD_BOUNDARY_PATTERN_TEMPLATE,
+)
 from chatbot.models.enums import FileTypeChoices
 
 OrgEntry = Tuple[str, str, List[str]]
-
-GENERIC_FILE_TYPE_NOUNS = frozenset({
-    "document", "documents", "doc", "docs", "file", "files",
-})
-COORDINATION_WORDS = frozenset({"or"})
-NEGATION_PLACEHOLDERS = frozenset({"anything", "nothing", "neither", "nor"})
-FILTER_SCOPE_WORDS = frozenset({"anyone", "anywhere", "only", "uploaded"})
-NEGATION_SCOPE_BREAKERS = (
-    "about", "regarding", "related to", "covering", "from", "on",
-)
 
 
 @dataclass(frozen=True)
@@ -168,7 +189,7 @@ class CategoryMatcher:
     def _generate_candidates(self, query: str) -> List[str]:
         candidates = set()
         query = _strip_noise_phrases(query)
-        tokens = re.findall(r"[A-Za-z0-9']+", query)
+        tokens = re.findall(TOKEN_PATTERN, query)
         lowered_tokens = [token.lower() for token in tokens]
         lowered_query = query.lower()
         candidate_stopwords = _candidate_stopwords()
@@ -257,23 +278,23 @@ def resolve_query_exact(
     organization_vocabulary: Optional[Dict[str, List[str]]] = None,
     file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
 ) -> ResolvedFilters:
-    if re.search(r"\bdoes\s+not\s+exist\b", query or "", flags=re.IGNORECASE):
+    if re.search(DOES_NOT_EXIST_PATTERN, query or "", flags=re.IGNORECASE):
         return ResolvedFilters(search_text=clean_search_text(query or ""))
 
     remaining = query or ""
     results = {
-        "organization": [],
-        "file_type": [],
+        ORGANIZATION_FIELD: [],
+        FILE_TYPE_FIELD: [],
     }  # type: Dict[str, List[MatchResult]]
     matchers = _build_matchers(
         organization_vocabulary=organization_vocabulary,
         file_type_vocabulary=file_type_vocabulary,
     )
 
-    for field_name in ("organization", "file_type"):
+    for field_name in (ORGANIZATION_FIELD, FILE_TYPE_FIELD):
         matcher = matchers[field_name]
         matches = matcher.find_all_exact(remaining)
-        if field_name == "file_type":
+        if field_name == FILE_TYPE_FIELD:
             matches.extend(_contextual_doc_matches(
                 remaining,
                 file_type_vocabulary,
@@ -290,9 +311,9 @@ def resolve_query_exact(
             remaining = _strip_all(remaining, matches)
 
     candidates = {}
-    for field_name in ("organization", "file_type"):
+    for field_name in (ORGANIZATION_FIELD, FILE_TYPE_FIELD):
         existing_matches = results.get(field_name, [])
-        if field_name == "file_type" and existing_matches:
+        if field_name == FILE_TYPE_FIELD and existing_matches:
             continue
         threshold = _confidence_threshold(field_name)
         fuzzy_matches = matchers[field_name].find_all_fuzzy(
@@ -336,8 +357,8 @@ def resolve_query_exact(
     confidence = (min(scores) / 100.0) if scores else 0.0
 
     return ResolvedFilters(
-        organization=results["organization"],
-        file_type=results["file_type"],
+        organization=results[ORGANIZATION_FIELD],
+        file_type=results[FILE_TYPE_FIELD],
         search_text=clean_search_text(remaining),
         confidence=confidence,
         candidates=candidates,
@@ -378,7 +399,9 @@ def count_negation_cues(query: str) -> int:
     cues = sorted(_negation_words(), key=len, reverse=True)
     if not query or not cues:
         return 0
-    pattern = r"(?<!\w)(?:" + "|".join(re.escape(cue) for cue in cues) + r")(?!\w)"
+    pattern = EXACT_SPAN_PATTERN_TEMPLATE.format(
+        "(?:" + "|".join(re.escape(cue) for cue in cues) + ")"
+    )
     return len(re.findall(pattern, query, flags=re.IGNORECASE))
 
 
@@ -386,8 +409,8 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
     return {
         "query": query,
         "resolved": {
-            "organization": [_match_to_dict(match) for match in resolved.organization],
-            "file_type": [_match_to_dict(match) for match in resolved.file_type],
+            ORGANIZATION_FIELD: [_match_to_dict(match) for match in resolved.organization],
+            FILE_TYPE_FIELD: [_match_to_dict(match) for match in resolved.file_type],
         },
         "search_text": resolved.search_text,
         "confidence": resolved.confidence,
@@ -399,7 +422,7 @@ def clean_search_text(text: str) -> str:
     if not text or not text.strip():
         return ""
 
-    working = re.sub(r"[,;]+", " ", text.lower())
+    working = re.sub(PUNCTUATION_SEPARATOR_PATTERN, " ", text.lower())
     for phrase in _noise_phrases():
         working = working.replace(phrase, " ")
     for phrase in _negation_words():
@@ -421,7 +444,7 @@ def clean_search_text(text: str) -> str:
 
 def derive_auto_aliases(display_name: str, include_leading_word: bool = True) -> List[str]:
     spaced_compound = _split_alnum_boundaries(display_name)
-    words = [word for word in re.findall(r"[A-Za-z0-9]+", spaced_compound)]
+    words = [word for word in re.findall(ALNUM_TOKEN_PATTERN, spaced_compound)]
     if not words:
         return []
 
@@ -464,7 +487,7 @@ def _derive_suffix_trimmed_aliases(words: List[str]) -> List[str]:
 def _name_variants(name: str) -> List[str]:
     variants = []
     for variant in (name, _split_alnum_boundaries(name), _tokenized_name(name)):
-        variant = re.sub(r"\s+", " ", variant).strip()
+        variant = re.sub(WHITESPACE_PATTERN, " ", variant).strip()
         if variant and variant.lower() not in {item.lower() for item in variants}:
             variants.append(variant)
     return variants
@@ -481,21 +504,32 @@ def _normalized_excluded_aliases(aliases: Iterable[str]) -> set:
 
 
 def _tokenized_name(name: str) -> str:
-    return " ".join(re.findall(r"[A-Za-z0-9]+", _split_alnum_boundaries(name)))
+    return " ".join(re.findall(ALNUM_TOKEN_PATTERN, _split_alnum_boundaries(name)))
 
 
 def _compile_gazetteer_pattern(name: str):
     normalized = _split_alnum_boundaries(name.lower()).strip()
-    if re.fullmatch(r"\.[a-z0-9]+", normalized):
-        return re.compile(r"(?<![a-z0-9])" + re.escape(normalized) + r"\b")
+    if re.fullmatch(EXTENSION_PATTERN, normalized):
+        return re.compile(
+            EXTENSION_BOUNDARY_PATTERN_TEMPLATE.format(re.escape(normalized))
+        )
 
-    tokens = re.findall(r"[a-z0-9]+", normalized)
+    tokens = re.findall(LOWER_ALNUM_TOKEN_PATTERN, normalized)
     if not tokens:
-        return re.compile(r"\b" + re.escape(name.lower()) + r"\b")
+        return re.compile(
+            WORD_BOUNDARY_PATTERN_TEMPLATE.format(re.escape(name.lower()))
+        )
     if len(tokens) == 1:
-        return re.compile(r"\b" + re.escape(tokens[0]) + r"\b")
-    flexible_separator = r"[\s\-_./]*"
-    return re.compile(r"\b" + flexible_separator.join(re.escape(token) for token in tokens) + r"\b")
+        return re.compile(
+            WORD_BOUNDARY_PATTERN_TEMPLATE.format(re.escape(tokens[0]))
+        )
+    return re.compile(
+        WORD_BOUNDARY_PATTERN_TEMPLATE.format(
+            FLEXIBLE_NAME_SEPARATOR_PATTERN.join(
+                re.escape(token) for token in tokens
+            )
+        )
+    )
 
 
 def _candidate_stopwords() -> set:
@@ -515,13 +549,18 @@ def _auto_alias_excluded_words() -> set:
 def _strip_noise_phrases(text: str) -> str:
     working = text
     for phrase in _noise_phrases():
-        working = re.sub(r"\b" + re.escape(phrase) + r"\b", " ", working, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", working).strip()
+        working = re.sub(
+            WORD_BOUNDARY_PATTERN_TEMPLATE.format(re.escape(phrase)),
+            " ",
+            working,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(WHITESPACE_PATTERN, " ", working).strip()
 
 
 def _split_alnum_boundaries(value: str) -> str:
-    with_digit_boundaries = re.sub(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", value)
-    return re.sub(r"\s+", " ", with_digit_boundaries).strip()
+    with_digit_boundaries = re.sub(ALNUM_BOUNDARY_PATTERN, " ", value)
+    return re.sub(WHITESPACE_PATTERN, " ", with_digit_boundaries).strip()
 
 
 def _clean_fuzzy_candidate(candidate: str) -> str:
@@ -546,12 +585,12 @@ def _build_matchers(
     file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, CategoryMatcher]:
     return {
-        "organization": CategoryMatcher(
+        ORGANIZATION_FIELD: CategoryMatcher(
             _organization_entries(organization_vocabulary),
             auto_alias=True,
             auto_alias_leading_word=False,
         ),
-        "file_type": CategoryMatcher(
+        FILE_TYPE_FIELD: CategoryMatcher(
             _file_type_entries(file_type_vocabulary),
             auto_alias=False,
             excluded_aliases=_excluded_file_type_aliases(),
@@ -582,7 +621,7 @@ def _with_explicit_file_type_context(entries: List[OrgEntry]) -> List[OrgEntry]:
         contextual_aliases = list(aliases)
         for alias in aliases:
             normalized = str(alias).strip().lower()
-            if re.fullmatch(r"\.[a-z0-9]+", normalized):
+            if re.fullmatch(EXTENSION_PATTERN, normalized):
                 contextual_aliases.append(f"{normalized[1:]} format")
         contextual_entries.append(
             (display_name, slug, list(dict.fromkeys(contextual_aliases)))
@@ -622,7 +661,7 @@ def _contextual_doc_matches(
     existing_matches = list(existing_matches or [])
     has_other_file_type = any(match.slug != doc_slug for match in existing_matches)
     matches = []
-    for occurrence in re.finditer(r"\bdoc\b", query, flags=re.IGNORECASE):
+    for occurrence in re.finditer(DOC_WORD_PATTERN, query, flags=re.IGNORECASE):
         start, end = occurrence.span()
         if any(
             query.lower().find(match.matched_span.lower()) <= start <
@@ -634,13 +673,13 @@ def _contextual_doc_matches(
 
         suffix = query[end:]
         explicit_context = bool(re.match(
-            r"\s+(?:file|files|format|formats)\b",
+            DOC_EXPLICIT_CONTEXT_PATTERN,
             suffix,
             flags=re.IGNORECASE,
         ))
         coordinated = has_other_file_type and bool(
-            re.search(r"(?:,|\b(?:or|and)\b)\s*$", query[:start], re.IGNORECASE)
-            or re.match(r"\s*(?:,|\b(?:or|and)\b)", suffix, re.IGNORECASE)
+            re.search(COORDINATION_BEFORE_PATTERN, query[:start], re.IGNORECASE)
+            or re.match(COORDINATION_AFTER_PATTERN, suffix, re.IGNORECASE)
         )
         if not (explicit_context or coordinated):
             continue
@@ -665,7 +704,7 @@ def _without_topic_file_type_matches(
 
     protected_spans = []
     for match in re.finditer(
-        r"\b(?:about|regarding|related to|covering|on)\b\s+([^,;]+)",
+        TOPIC_PROTECTED_SPAN_PATTERN,
         query,
         flags=re.IGNORECASE,
     ):
@@ -729,7 +768,7 @@ def _organization_confidence_threshold() -> int:
 
 
 def _confidence_threshold(field_name: str) -> int:
-    if field_name == "organization":
+    if field_name == ORGANIZATION_FIELD:
         return _organization_confidence_threshold()
     return _int_env(
         f"SEARCH_FILTER_{field_name.upper()}_CONFIDENCE_THRESHOLD",
@@ -897,19 +936,22 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
     local_segment = lowered_query[segment_start:segment_end]
     local_prefix = lowered_query[segment_start:match_start]
     if (
-        re.search(r"\bonly\b", local_segment)
+        re.search(ONLY_PATTERN, local_segment)
         and not any(
-            re.search(r"(?<!\w)" + re.escape(cue) + r"(?!\w)", local_prefix)
+            re.search(
+                EXACT_SPAN_PATTERN_TEMPLATE.format(re.escape(cue)),
+                local_prefix,
+            )
             for cue in (_negation_words() | {"nothing"})
         )
     ):
         return False
 
     preceding_text = lowered_query[:match_start]
-    if re.search(r"\bneither\b", preceding_text):
+    if re.search(NEITHER_PATTERN, preceding_text):
         return True
 
-    words = re.findall(r"[a-z0-9']+", preceding_text)
+    words = re.findall(LOWER_TOKEN_PATTERN, preceding_text)
     if not words:
         return False
     window_size = _negation_window_words()
@@ -919,14 +961,14 @@ def _is_negated(lowered_query: str, match_start: int) -> bool:
     window_words = words[-window_size:]
     found_cues = []
     for cue in (_negation_words() | {"nothing"}):
-        cue_words = re.findall(r"[a-z0-9']+", cue.lower())
+        cue_words = re.findall(LOWER_TOKEN_PATTERN, cue.lower())
         cue_index = _find_last_word_sequence(window_words, cue_words)
         if cue_index != -1:
             found_cues.append((cue_index, cue_words))
 
     trigger_words = set(_trigger_words())
     scope_breakers = [
-        re.findall(r"[a-z0-9']+", breaker)
+        re.findall(LOWER_TOKEN_PATTERN, breaker)
         for breaker in NEGATION_SCOPE_BREAKERS
         if breaker not in trigger_words
     ]
@@ -986,7 +1028,7 @@ def _strip_span(query: str, span: str) -> str:
     if not span:
         return query
     match = re.search(
-        r"(?<!\w)" + re.escape(span) + r"(?!\w)",
+        EXACT_SPAN_PATTERN_TEMPLATE.format(re.escape(span)),
         query,
         flags=re.IGNORECASE,
     )

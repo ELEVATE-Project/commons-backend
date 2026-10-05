@@ -967,6 +967,12 @@ class MediaSearchV2View(APIView):
                     fuzzy,
                 )
             fuzzy.llm_reason = alternative_llm_reason
+            if alternative_llm_reason:
+                logger.info(
+                    'ai_search: alternative LLM reason %s for query %r',
+                    alternative_llm_reason,
+                    query,
+                )
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
@@ -1083,7 +1089,7 @@ class MediaSearchV2View(APIView):
                 exclude_media_types = []
             resolved.diagnostics['any_of_source'] = 'deterministic'
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
-            fuzzy, deterministic_any_of
+            fuzzy, deterministic_any_of, resolved.diagnostics
         )
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
@@ -1300,6 +1306,7 @@ class MediaSearchV2View(APIView):
                 'exclude_media_types': getattr(fuzzy, 'exclude_media_types', None) or [],
                 'semantic_query': getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
                 'candidates': fuzzy.candidates,
+                'alternative_llm_reason': fuzzy.llm_reason,
             },
         )
 
@@ -2033,9 +2040,12 @@ class MediaSearchV2View(APIView):
             ],
         }
 
-    def _rapidfuzz_filter_metadata(self, fuzzy, any_of_blocks=None):
+    def _rapidfuzz_filter_metadata(
+        self, fuzzy, any_of_blocks=None, diagnostics=None
+    ):
         fuzzy = fuzzy or FuzzyFilterResult()
-        return {
+        diagnostics = diagnostics or {}
+        metadata = {
             'organizations': list(fuzzy.organizations or []),
             'media_types': [str(value) for value in fuzzy.media_types or []],
             'exclude_organizations': list(fuzzy.exclude_organizations or []),
@@ -2047,6 +2057,9 @@ class MediaSearchV2View(APIView):
                 for block in any_of_blocks or []
             ],
         }
+        if diagnostics.get('llm_used') and diagnostics.get('llm_decision'):
+            metadata['llm_reason'] = diagnostics['llm_decision']
+        return metadata
 
     def _filter_block_payload(self, block):
         if isinstance(block, dict):
@@ -2204,24 +2217,13 @@ class MediaSearchV2View(APIView):
             return False
 
         has_org_only = any(
-            block.organizations
-            and not block.media_types
-            and not block.exclude_organizations
-            and not block.exclude_media_types
-            for block in blocks
+            block.has_positive_axes(organizations=True) for block in blocks
         )
         has_type_only = any(
-            block.media_types
-            and not block.organizations
-            and not block.exclude_organizations
-            and not block.exclude_media_types
-            for block in blocks
+            block.has_positive_axes(media_types=True) for block in blocks
         )
         has_both = any(
-            block.organizations
-            and block.media_types
-            and not block.exclude_organizations
-            and not block.exclude_media_types
+            block.has_positive_axes(organizations=True, media_types=True)
             for block in blocks
         )
         return has_both and (has_org_only or has_type_only)

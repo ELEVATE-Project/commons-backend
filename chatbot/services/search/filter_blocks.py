@@ -18,6 +18,8 @@ here — callers stay one-liners.
 from dataclasses import dataclass, field
 
 from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
+from chatbot.services.search.utils.lists import unique
+
 
 @dataclass
 class FilterBlock:
@@ -34,14 +36,14 @@ class FilterBlock:
     exclude_media_types: list = field(default_factory=list)
 
     def __post_init__(self):
-        self.exclude_organizations = _unique(self.exclude_organizations)
-        self.exclude_media_types = _unique(self.exclude_media_types)
+        self.exclude_organizations = unique(self.exclude_organizations)
+        self.exclude_media_types = unique(self.exclude_media_types)
         self.organizations = [
-            value for value in _unique(self.organizations)
+            value for value in unique(self.organizations)
             if value not in self.exclude_organizations
         ]
         self.media_types = [
-            value for value in _unique(self.media_types)
+            value for value in unique(self.media_types)
             if value not in self.exclude_media_types
         ]
 
@@ -55,13 +57,22 @@ class FilterBlock:
         return not (self.organizations or self.media_types
                     or self.exclude_organizations or self.exclude_media_types)
 
+    def has_positive_axes(self, organizations=False, media_types=False):
+        """True when exactly these positive axes are present, with no exclusions."""
+        return (
+            bool(self.organizations) == organizations
+            and bool(self.media_types) == media_types
+            and not self.exclude_organizations
+            and not self.exclude_media_types
+        )
+
     def normalized(self):
         """Return a copy with empty and duplicate values removed."""
         return FilterBlock(
-            organizations=_unique(self.organizations),
-            media_types=_unique(self.media_types),
-            exclude_organizations=_unique(self.exclude_organizations),
-            exclude_media_types=_unique(self.exclude_media_types),
+            organizations=unique(self.organizations),
+            media_types=unique(self.media_types),
+            exclude_organizations=unique(self.exclude_organizations),
+            exclude_media_types=unique(self.exclude_media_types),
         )
 
     def with_expanded_media_types(self, type_vocabulary):
@@ -150,25 +161,9 @@ def carry_shared_positive_qualifiers(blocks):
     return normalized
 
 
-def _unique(values):
-    return list(dict.fromkeys(value for value in values or [] if value))
-
-
-def _has_exclusions(block):
-    return bool(block.exclude_organizations or block.exclude_media_types)
-
-
 def _is_org_only(block):
-    return bool(
-        block.organizations
-        and not block.media_types
-        and not _has_exclusions(block)
-    )
+    return block.has_positive_axes(organizations=True)
 
 
 def _is_media_type_only(block):
-    return bool(
-        block.media_types
-        and not block.organizations
-        and not _has_exclusions(block)
-    )
+    return block.has_positive_axes(media_types=True)

@@ -1,5 +1,18 @@
 from chatbot.models.enums import FileTypeChoices
 
+FILE_TYPE_FIELD = 'file_type'
+ORGANIZATION_FIELD = 'organization'
+
+GENERIC_FILE_TYPE_NOUNS = frozenset({
+    'document', 'documents', 'doc', 'docs', 'file', 'files',
+})
+COORDINATION_WORDS = frozenset({'or'})
+NEGATION_PLACEHOLDERS = frozenset({'anything', 'nothing', 'neither', 'nor'})
+FILTER_SCOPE_WORDS = frozenset({'anyone', 'anywhere', 'only', 'uploaded'})
+NEGATION_SCOPE_BREAKERS = (
+    'about', 'regarding', 'related to', 'covering', 'from', 'on',
+)
+
 # Generic file-type categories that map to multiple canonical types.
 # Kept separate from one-to-one aliases; categories are used only as prompt hints.
 # Spreadsheet maps to XLS/XLSX, while CSV is matched only when explicitly requested.
