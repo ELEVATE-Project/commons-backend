@@ -6,9 +6,7 @@ def env_quote:
   gsub("\\\\"; "\\\\")
   | gsub("\""; "\\\"")
   | gsub("\\$"; "\\$")
-  | gsub("`"; "\\`")
-  | gsub("\n"; "\\n")
-  | gsub("\r"; "\\r");
+  | gsub("`"; "\\`");
 
 to_entries[]
 | .key as $k
