@@ -541,3 +541,14 @@ class LanguageOperationChoices(models.TextChoices):
 class OperationTypeChoices(models.TextChoices):
     LLM = 'llm', _('LLM')
     NON_LLM = 'non_llm', _('Non-LLM')
+
+
+class ThemeStatus(models.TextChoices):
+    DRAFT = 'draft', _('Draft')
+    PUBLISHED = 'published', _('Published')
+
+
+class SecondaryThemeMatchType(models.TextChoices):
+    MATCHED = 'matched', _('Matched existing theme')
+    DEDUPLICATED = 'deduplicated', _('Generated name resolved to existing theme')
+    CREATED = 'created', _('New theme created')

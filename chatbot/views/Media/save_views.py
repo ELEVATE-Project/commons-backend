@@ -16,6 +16,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.knowledge_service.base_task_utils import determine_media_type_from_url
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.duplicate_detector import DuplicateDetector
+from chatbot.utils.knowledge_service.theme_classification_service import enqueue_theme_classification
 from django.core.files.base import ContentFile
 import base64
 from django.utils.text import slugify
@@ -444,6 +445,8 @@ class BatchMediaSaveView(View):
             except Exception as tag_kv_error:
                 print(f"Warning: Tag/KV processing failed for {filename}: {tag_kv_error}")
 
+            theme_task_id = enqueue_theme_classification(media.id)
+
             # Step 5: Wait for vector DB save
             vector_result = {'successful': True, 'result': 'No vector task'}
             if vector_task_id:
@@ -463,6 +466,7 @@ class BatchMediaSaveView(View):
                         'vector_db_saved': False,
                         'partial_success': True,
                         'vector_task_id': vector_task_id,
+                        'theme_task_id': theme_task_id,
                         'subdocument_results': [],
                         'image_results': []
                     }
@@ -571,6 +575,7 @@ class BatchMediaSaveView(View):
                 'vector_db_saved': vector_result['successful'],
                 'vector_wait_time': vector_result.get('wait_time', 0),
                 'vector_task_id': vector_task_id,
+                'theme_task_id': theme_task_id,
                 'subdocument_results': subdocument_results,
                 'source_document_results': source_document_results,
                 'image_results': image_results
