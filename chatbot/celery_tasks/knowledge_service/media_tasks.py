@@ -1,7 +1,8 @@
 from celery import shared_task
 import os
 from chatbot.models import LLMProvider
-from chatbot.utils.database_util import update_single_file, delete_single_file, upsert_single_file
+from chatbot.utils.database_util import update_single_file, delete_single_file, upsert_single_file, \
+    update_document_theme
 import logging
 
 from chatbot.utils.knowledge_service.openai_vector_store.vector_store_utils import upload_file_to_openai, \
@@ -9,6 +10,25 @@ from chatbot.utils.knowledge_service.openai_vector_store.vector_store_utils impo
 
 logger = logging.getLogger('django')
 S3_BASE_URL = os.getenv('S3_MEDIA_URL')
+THEME_SYNC_MAX_RETRIES = 5
+THEME_SYNC_RETRY_BASE_SECONDS = 15
+DOCUMENT_NOT_INDEXED_MARKER = 'No documents found'
+
+
+class ThemeSyncDecision:
+    DONE = 'done'
+    RETRY = 'retry'
+    FAIL = 'fail'
+
+
+def decide_theme_sync(status_code, response_text):
+    if 200 <= status_code < 300:
+        return ThemeSyncDecision.DONE
+    if status_code == 404 and DOCUMENT_NOT_INDEXED_MARKER in (response_text or ''):
+        return ThemeSyncDecision.RETRY
+    if status_code in (408, 429) or status_code >= 500:
+        return ThemeSyncDecision.RETRY
+    return ThemeSyncDecision.FAIL
 
 
 def prepare_vector_db_data(media_id, company_slug=None):
@@ -186,3 +206,42 @@ def generate_media_preview(self, media_id):
                 os.unlink(temp_file.name)
             except Exception as e:
                 logger.info(f"Could not delete temp file: {str(e)}")
+
+
+@shared_task(bind=True, max_retries=THEME_SYNC_MAX_RETRIES)
+def sync_media_theme_to_vector_db(self, media_id):
+    from chatbot.models.media_models import Media
+
+    log_prefix = f"[ThemeClassifier] media_id={media_id}"
+    media = Media.objects.select_related('organization').filter(id=media_id).first()
+    if not media:
+        logger.warning(f"{log_prefix} vector theme sync skipped: media not found")
+        return None
+
+    theme_code = media.primary_theme_id
+    if not theme_code:
+        logger.info(f"{log_prefix} vector theme sync skipped: no primary theme")
+        return None
+
+    company_slug = media.organization.slug if media.organization else None
+    attempt = self.request.retries + 1
+    status_code, response_text = update_document_theme(media_id, theme_code, company_slug)
+    decision = decide_theme_sync(status_code, response_text)
+
+    if decision == ThemeSyncDecision.DONE:
+        logger.info(f"{log_prefix} vector theme synced theme={theme_code!r} status={status_code} attempt={attempt}")
+        return status_code
+
+    if decision == ThemeSyncDecision.RETRY and self.request.retries < self.max_retries:
+        countdown = THEME_SYNC_RETRY_BASE_SECONDS * (2 ** self.request.retries)
+        logger.warning(
+            f"{log_prefix} vector theme sync pending theme={theme_code!r} status={status_code} "
+            f"attempt={attempt} retry_in={countdown}s response={(response_text or '')[:200]!r}"
+        )
+        raise self.retry(countdown=countdown)
+
+    logger.error(
+        f"{log_prefix} vector theme sync failed theme={theme_code!r} status={status_code} "
+        f"attempt={attempt} response={(response_text or '')[:300]!r}"
+    )
+    return status_code
