@@ -1,6 +1,7 @@
 import requests
 import os
 from typing import List, Dict, Any, Optional
+from chatbot.constants.constants import DEFAULT_METADATA_SEARCH_TOP_K
 from chatbot.llm_models.llm_script import handle_bedrock_model
 
 DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
@@ -115,9 +116,42 @@ def query_text_search(query: str, priority: str = "P1", limit: int = 10):
         }
 
 
+def build_metadata_search_payload(
+    query: str = None,
+    top_k: int = DEFAULT_METADATA_SEARCH_TOP_K,
+    filter_score: int = 0,
+    detail_filter_score: Optional[Dict[str, Any]] = None,
+    categories: List[str] = None,
+    organizations: List[str] = None,
+    resource_type: List[str] = None,
+    file_type: List[str] = None,
+    exclude_organizations: List[str] = None,
+    exclude_file_type: List[str] = None,
+    any_of: List[Dict[str, Any]] = None,
+):
+    data = {
+        "top_k": top_k,
+        "filter_score": filter_score,
+        "detail_filter_score": detail_filter_score,
+    }
+
+    optional_fields = {
+        "query": query,
+        "categories": categories,
+        "organizations": organizations,
+        "resource_type": resource_type,
+        "file_type": file_type,
+        "exclude_organizations": exclude_organizations,
+        "exclude_file_type": exclude_file_type,
+        "any_of": any_of,
+    }
+    data.update({key: value for key, value in optional_fields.items() if value})
+    return data
+
+
 def query_database_with_metadata(
     query: str = None,
-    top_k: int = 20,
+    top_k: int = DEFAULT_METADATA_SEARCH_TOP_K,
     filter_score: int = 0,
     detail_filter_score: Optional[Dict[str, Any]] = None,
     categories: List[str] = None,
@@ -146,32 +180,19 @@ def query_database_with_metadata(
         "accept": "application/json",
     }
     
-    # Build request payload
-    data = {
-        "top_k": top_k,
-        "filter_score": filter_score,
-        "detail_filter_score": detail_filter_score
-    }
-
-    # Add query only if provided
-    if query:
-        data["query"] = query
-    
-    # Add optional filters if provided
-    if categories:
-        data["categories"] = categories
-    if organizations:
-        data["organizations"] = organizations
-    if resource_type:
-        data["resource_type"] = resource_type
-    if file_type:
-        data["file_type"] = file_type
-    if exclude_organizations:
-        data["exclude_organizations"] = exclude_organizations
-    if exclude_file_type:
-        data["exclude_file_type"] = exclude_file_type
-    if any_of:
-        data["any_of"] = any_of
+    data = build_metadata_search_payload(
+        query=query,
+        top_k=top_k,
+        filter_score=filter_score,
+        detail_filter_score=detail_filter_score,
+        categories=categories,
+        organizations=organizations,
+        resource_type=resource_type,
+        file_type=file_type,
+        exclude_organizations=exclude_organizations,
+        exclude_file_type=exclude_file_type,
+        any_of=any_of,
+    )
 
     print(f"[query_database_with_metadata] Request Data: {data}")
     

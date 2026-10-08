@@ -17,7 +17,8 @@ here — callers stay one-liners.
 
 from dataclasses import dataclass, field
 
-from chatbot.services.search.vocabularies import expand_aliases
+from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
+from chatbot.services.search.utils.lists import unique
 
 
 @dataclass
@@ -34,6 +35,18 @@ class FilterBlock:
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self.exclude_organizations = unique(self.exclude_organizations)
+        self.exclude_media_types = unique(self.exclude_media_types)
+        self.organizations = [
+            value for value in unique(self.organizations)
+            if value not in self.exclude_organizations
+        ]
+        self.media_types = [
+            value for value in unique(self.media_types)
+            if value not in self.exclude_media_types
+        ]
+
     def is_empty(self):
         """
         True when this block filters on nothing.
@@ -44,6 +57,24 @@ class FilterBlock:
         return not (self.organizations or self.media_types
                     or self.exclude_organizations or self.exclude_media_types)
 
+    def has_positive_axes(self, organizations=False, media_types=False):
+        """True when exactly these positive axes are present, with no exclusions."""
+        return (
+            bool(self.organizations) == organizations
+            and bool(self.media_types) == media_types
+            and not self.exclude_organizations
+            and not self.exclude_media_types
+        )
+
+    def normalized(self):
+        """Return a copy with empty and duplicate values removed."""
+        return FilterBlock(
+            organizations=unique(self.organizations),
+            media_types=unique(self.media_types),
+            exclude_organizations=unique(self.exclude_organizations),
+            exclude_media_types=unique(self.exclude_media_types),
+        )
+
     def with_expanded_media_types(self, type_vocabulary):
         """
         The same block with its media types widened to every stored spelling.
@@ -53,6 +84,8 @@ class FilterBlock:
         one would silently miss the other. The flat fields already get this
         treatment in media_api_views; blocks need it just as much.
         """
+        from chatbot.services.search.vocabularies import expand_aliases
+
         return FilterBlock(
             organizations=list(self.organizations),
             media_types=expand_aliases(self.media_types, type_vocabulary),
@@ -79,3 +112,58 @@ class FilterBlock:
             if values:
                 payload[key] = list(values)
         return payload
+
+
+def carry_shared_positive_qualifiers(blocks):
+    """Carry one edge branch's shared positive qualifier across alternatives.
+
+    Handles compact forms such as ``PDF from A or B`` and ``A or B PDFs``.
+    Only a first or last branch that names both axes can donate a value, every
+    other branch must name exactly the complementary positive axis, and no
+    exclusion is ever moved between branches.
+    """
+    normalized = [block.normalized() for block in blocks if not block.is_empty()]
+    if len(normalized) < MIN_ANY_OF_BRANCHES:
+        return normalized
+
+    for source_index in (0, len(normalized) - 1):
+        source = normalized[source_index]
+        others = [
+            block for index, block in enumerate(normalized)
+            if index != source_index
+        ]
+        if source.organizations and source.media_types and all(
+            _is_org_only(block) for block in others
+        ):
+            return [
+                FilterBlock(
+                    organizations=block.organizations,
+                    media_types=(block.media_types or source.media_types),
+                    exclude_organizations=block.exclude_organizations,
+                    exclude_media_types=block.exclude_media_types,
+                ).normalized()
+                for block in normalized
+            ]
+
+        if source.organizations and source.media_types and all(
+            _is_media_type_only(block) for block in others
+        ):
+            return [
+                FilterBlock(
+                    organizations=(block.organizations or source.organizations),
+                    media_types=block.media_types,
+                    exclude_organizations=block.exclude_organizations,
+                    exclude_media_types=block.exclude_media_types,
+                ).normalized()
+                for block in normalized
+            ]
+
+    return normalized
+
+
+def _is_org_only(block):
+    return block.has_positive_axes(organizations=True)
+
+
+def _is_media_type_only(block):
+    return block.has_positive_axes(media_types=True)
