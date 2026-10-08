@@ -4365,6 +4365,73 @@ async function trackVectorDbBatchProgress(vectorDbTasks, totalFiles) {
     });
 }
 
+const MEDIA_LIST_URL = "{% url 'admin:chatbot_media_changelist' %}";
+const THEME_MAPPING_TIMEOUT_MS = 120000;
+const THEME_MAPPING_POLL_MS = 2000;
+
+async function trackThemeMappingProgress(taskIds) {
+    return new Promise((resolve) => {
+        const pending = new Set(taskIds);
+        const startedAt = Date.now();
+
+        const checkProgress = async () => {
+            for (const taskId of Array.from(pending)) {
+                try {
+                    const response = await fetch("{% url 'admin:chatbot_media_vector_db_task_status' %}", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrftoken,
+                        },
+                        body: JSON.stringify({ task_id: taskId })
+                    });
+                    const result = await response.json();
+                    if (result.success && result.ready) {
+                        pending.delete(taskId);
+                    }
+                } catch (error) {
+                    console.error(`Error checking theme mapping task ${taskId}:`, error);
+                }
+            }
+
+            const completed = taskIds.length - pending.size;
+            showLoading(`Mapping primary and secondary themes... ${completed}/${taskIds.length} complete`);
+
+            if (pending.size === 0) {
+                resolve({ timedOut: false });
+                return;
+            }
+            if (Date.now() - startedAt >= THEME_MAPPING_TIMEOUT_MS) {
+                resolve({ timedOut: true });
+                return;
+            }
+            setTimeout(checkProgress, THEME_MAPPING_POLL_MS);
+        };
+
+        checkProgress();
+    });
+}
+
+function hasFailedSubdocuments(subdocResults) {
+    return (subdocResults || []).some(subdoc =>
+        !subdoc.success || hasFailedSubdocuments(subdoc.nested_subdocument_results)
+    );
+}
+
+function allSavesSucceeded(results) {
+    return results.length > 0 && results.every(result =>
+        result.success && !hasFailedSubdocuments(result.subdocument_results)
+    );
+}
+
+async function waitForThemeMapping(results) {
+    const taskIds = results.map(result => result.theme_task_id).filter(Boolean);
+    if (taskIds.length === 0) {
+        return { timedOut: false };
+    }
+    return trackThemeMappingProgress(taskIds);
+}
+
 // ============================================
 // SECTION 5: STEP 3 - SAVE FUNCTIONS
 // ============================================
@@ -4557,16 +4624,30 @@ let saveResults = [];
 document.getElementById('saveBtn').addEventListener('click', async () => {
     collectFormData();
     showLoading('Saving to database...');
+    let redirecting = false;
 
     try {
         const results = await saveToDatabase(extractedData);
         saveResults = results;
+
+        if (allSavesSucceeded(results)) {
+            const themeMapping = await waitForThemeMapping(results);
+            showLoading(themeMapping.timedOut
+                ? 'Files saved. Theme mapping is still running in the background; redirecting to Medias...'
+                : 'Files saved and themes mapped. Redirecting to Medias...');
+            redirecting = true;
+            window.location.href = MEDIA_LIST_URL;
+            return;
+        }
+
         displayResults(results);
         updateStepIndicator(3);
     } catch (error) {
         showStatus('Error saving data: ' + error.message, 'error');
     } finally {
-        hideLoading();
+        if (!redirecting) {
+            hideLoading();
+        }
     }
 });
 
