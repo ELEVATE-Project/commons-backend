@@ -1,5 +1,18 @@
 #!/bin/sh
+# jq's @sh uses the shell-only `'\''` apostrophe escape, so values containing
+# apostrophes are double-quoted instead.
+jq -r '
+def env_quote:
+  gsub("\\\\"; "\\\\")
+  | gsub("\""; "\\\"")
+  | gsub("\\$"; "\\$")
+  | gsub("`"; "\\`");
 
-tr -d '\n' |
-grep -o '"[A-Za-z_][A-Za-z_0-9]*"\s*:\s*\("[^"]*"\|[0-9.]*\|true\|false\|null\)' |
-sed 's/"\([^"]*\)"\s*:\s*"\?\([^"]*\)"\?/\1="\2"/'
+to_entries[]
+| .key as $k
+| (.value | if type == "string" then . else tojson end) as $v
+| if $v | contains("\u0027")
+  then "\($k)=\"\($v | env_quote)\""
+  else "\($k)=\($v | @sh)"
+  end
+'

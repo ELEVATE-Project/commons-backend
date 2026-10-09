@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from django.core.cache import cache
 from json_repair import repair_json
 
+from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
 from chatbot.services.search.config import get_search_llm_setting
 from chatbot.services.search.prompts import (
     SYSTEM_PROMPT,
@@ -361,7 +362,7 @@ def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected):
             return []
         blocks.append(block)
 
-    if len(blocks) < 2:
+    if len(blocks) < MIN_ANY_OF_BRANCHES:
         # One alternative is not a choice: it is an AND, which the flat fields
         # already express. Nothing to gain, and the vector service rejects it.
         if blocks:

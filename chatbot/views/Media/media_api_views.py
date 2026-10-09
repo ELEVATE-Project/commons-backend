@@ -1,5 +1,6 @@
 import json_repair
 import logging
+import re
 from dataclasses import dataclass, field
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -13,8 +14,16 @@ from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
     MediaListSerializer, MediaDetailSerializer, MediaSearchResultSerializer
 )
+from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
+from chatbot.utils.search_filter_resolver import (
+    clean_search_text,
+    count_negation_cues,
+    included_values,
+    resolve_query_exact,
+    to_response_dict,
+)
 from django.contrib.postgres.search import TrigramSimilarity
 from django.db.models import (
     Count, Q, Value, FloatField, OuterRef, Subquery, TextField,
@@ -38,8 +47,12 @@ class FuzzyFilterResult:
     """
     organizations: list = None
     media_types: list = None
+    exclude_organizations: list = None
+    exclude_media_types: list = None
+    query: str = None
     confidence: float = 0.0
     candidates: dict = field(default_factory=dict)
+    llm_reason: str = None
 
 
 @dataclass
@@ -47,9 +60,8 @@ class ResolvedFilters:
     """
     What the search should actually run with, plus how each part was decided.
 
-    ``diagnostics`` is the debug trail, surfaced to callers as
-    ``search_metadata.filter_resolution``. Named for what it is rather than
-    "metadata", which already means the Qdrant payload elsewhere in search.
+    ``diagnostics`` is the internal debug trail. Named for what it is rather
+    than "metadata", which already means the Qdrant payload elsewhere in search.
 
     The ``exclude_*`` lists are negated conditions ("except Shikshalokam").
     They are a separate axis from the positive lists, not the absence of one.
@@ -853,6 +865,7 @@ class MediaSearchV2View(APIView):
     
     def get(self, request, format=None):
         query = request.query_params.get('q', '').strip()
+        vector_search_requested = bool(query)
         
         try:
             # Change default from 1 billion to a safe number like 100
@@ -924,13 +937,49 @@ class MediaSearchV2View(APIView):
                 request.query_params.get('file_type', '')
             )
         media_types = self._normalize_media_types(media_types)
+
+        fuzzy = None
+        any_of = []
+        resolved_filters = self._resolve_query_filters(query) if query else None
+        if resolved_filters:
+            print(
+                "[MediaSearchV2View] Resolved search filters:::::::::::::",
+                to_response_dict(query, resolved_filters),
+            )
+            any_of = self._build_any_of_filters(
+                query, resolved_filters=resolved_filters
+            )
+            alternative_llm_reason = self._alternative_llm_reason(query, any_of)
+            fuzzy = self._fuzzy_result_from_resolved_filters(
+                resolved_filters,
+                include_flat_filters=not any_of,
+                raw_query=query,
+                semantic_query=(
+                    self._search_text_from_any_of_clauses(query)
+                    if any_of else resolved_filters.search_text
+                ),
+            )
+            if any_of:
+                fuzzy = self._apply_trailing_global_filter_clause(query, fuzzy)
+            if not any_of:
+                fuzzy = self._absorb_redundant_org_file_type_alternatives(
+                    query,
+                    fuzzy,
+                )
+            fuzzy.llm_reason = alternative_llm_reason
+            if alternative_llm_reason:
+                logger.info(
+                    'ai_search: alternative LLM reason %s for query %r',
+                    alternative_llm_reason,
+                    query,
+                )
         
         # Determine ordering: score for search, user choice otherwise
         ordering_param = request.query_params.get(
             'ordering', ''
         ).strip()
         
-        if query:
+        if vector_search_requested or query:
             # Use score-based ordering for search queries
             ordering = 'score'
         else:
@@ -939,7 +988,7 @@ class MediaSearchV2View(APIView):
         
         ordering_field, ordering_reverse = self._parse_ordering(ordering)
 
-        if query:
+        if vector_search_requested or query:
             return self._get_vector_search_response(
                 request=request,
                 query=query,
@@ -951,6 +1000,8 @@ class MediaSearchV2View(APIView):
                 organizations=organizations,
                 resource_types=resource_types,
                 media_types=media_types,
+                fuzzy=fuzzy,
+                any_of=any_of,
             )
 
         # Normalize score ordering (only valid for search) to created_at for database queries
@@ -984,51 +1035,116 @@ class MediaSearchV2View(APIView):
         organizations,
         resource_types,
         media_types,
+        fuzzy=None,
+        any_of=None,
     ):
+        raw_query = query
         # Fetch large batch for proper sorting and pagination
         top_k = max(1000, offset + limit * 2)
         from chatbot.models import CompanyBot
         company_bot = CompanyBot.objects.filter(route='/sg_search_bot').first()
         filter_score = company_bot.filter_score if company_bot else 0
 
-        other_params = company_bot.other_params if company_bot.other_params else {}
+        other_params = (
+            company_bot.other_params
+            if company_bot and company_bot.other_params else {}
+        )
         if other_params and isinstance(other_params, str):
             other_params = json_repair.repair_json(other_params, return_objects=True)
         detail_filter_score = other_params.get("detail_filter_score", None)
 
-        # Resolve the natural-language query into filters. Explicit filters from
-        # the UI are passed through untouched and always win.
-        # Placeholder until the RapidFuzz resolver lands in this file: swap for
-        # `fuzzy = self._resolve_fuzzy_filters(query)`.
-        fuzzy = None
+        explicit_organizations = list(organizations or [])
+        explicit_media_types = list(media_types or [])
         resolved = self._resolve_search_filters(
             query,
             fuzzy=fuzzy,
             explicit_filters={
-                'organizations': organizations,
-                'media_types': media_types,
+                'organizations': explicit_organizations,
+                'media_types': explicit_media_types,
             },
         )
         # Not `resolved.query or query`: an empty residual is meaningful and
         # becomes a filters-only listing below.
         query = resolved.query
+        if not query:
+            ordering = ordering_param if ordering_param else '-created_at'
         organizations = resolved.organizations
         media_types = resolved.media_types
-        exclude_organizations = resolved.exclude_organizations
-        exclude_media_types = resolved.exclude_media_types
+        exclude_organizations = list(resolved.exclude_organizations)
+        exclude_media_types = list(resolved.exclude_media_types)
+        resolved_any_of = list(resolved.any_of or [])
+        deterministic_any_of = list(any_of or [])
+
+        combined_any_of = resolved_any_of or deterministic_any_of
+        if deterministic_any_of and not resolved_any_of:
+            if not explicit_organizations:
+                organizations = []
+            if not explicit_media_types:
+                media_types = []
+            _, trailing_global_filter = self._split_trailing_global_filter_clause(
+                raw_query
+            )
+            if not trailing_global_filter:
+                exclude_organizations = []
+                exclude_media_types = []
+            resolved.diagnostics['any_of_source'] = 'deterministic'
+        rapidfuzz_filters = self._rapidfuzz_filter_metadata(
+            fuzzy, deterministic_any_of, resolved.diagnostics
+        )
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
         print(f"[MediaSearchV2View] resolved media_types: {media_types}")
         print(f"[MediaSearchV2View] filter_resolution diagnostics: {resolved.diagnostics}")
 
-        # Nothing left to embed once the LLM reduced the query to filters only,
-        # so serve it from the same PostgreSQL path a filters-only request uses.
+        # Imported locally, like the AI-search chain elsewhere in this view, so a
+        # broken import degrades one search instead of the whole media API.
+        from chatbot.services.search.vocabularies import (
+            expand_aliases, file_type_vocabulary)
+
+        # Widened to every spelling the payload uses: metadata.type holds both
+        # 'application/pdf' and a bare 'pdf' depending on how a doc was ingested.
+        type_vocabulary = file_type_vocabulary()
+        qdrant_file_types = expand_aliases(media_types, type_vocabulary)
+        qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
+        # Each alternative needs the same widening; named any_of_blocks because
+        # any_of is already the Q-builder at the top of this module. Driven off
+        # the same combined_any_of the PostgreSQL branch uses, so the two
+        # backends can never be handed a different set of alternatives.
+        any_of_blocks = []
+        for block in combined_any_of:
+            expanded_block = dict(self._filter_block_payload(block))
+            for key in ("file_type", "exclude_file_type"):
+                values = expanded_block.get(key)
+                if values:
+                    expanded_block[key] = expand_aliases(values, type_vocabulary)
+            any_of_blocks.append(expanded_block)
+
+        vector_service_payload = {
+            "query": query if query else None,
+            "top_k": top_k,
+            "filter_score": filter_score,
+            "detail_filter_score": detail_filter_score,
+            "categories": tags if tags else None,
+            "organizations": organizations if organizations else None,
+            "resource_type": resource_types if resource_types else None,
+            "file_type": qdrant_file_types if qdrant_file_types else None,
+            "exclude_organizations": (
+                exclude_organizations if exclude_organizations else None
+            ),
+            "exclude_file_type": (
+                qdrant_exclude_file_types if qdrant_exclude_file_types else None
+            ),
+            "any_of": any_of_blocks if any_of_blocks else None,
+        }
+
+        # Nothing left to embed once the query reduced to filters only, so serve
+        # it from the same PostgreSQL path a filters-only request uses.
         # Exclusions and alternatives count too: "all files except PDF" leaves no
         # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
             tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types or resolved.any_of)
+            or exclude_organizations or exclude_media_types or combined_any_of)
         if not query and filters_present:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
@@ -1046,41 +1162,13 @@ class MediaSearchV2View(APIView):
                 media_types=media_types,
                 exclude_organizations=exclude_organizations,
                 exclude_media_types=exclude_media_types,
-                any_of_blocks=resolved.any_of,
+                any_of_blocks=combined_any_of,
                 diagnostics=resolved.diagnostics,
+                rapidfuzz_filters=rapidfuzz_filters,
             )
 
-        # Imported locally, like the AI-search chain elsewhere in this view, so a
-        # broken import degrades one search instead of the whole media API.
-        from chatbot.services.search.vocabularies import (
-            expand_aliases, file_type_vocabulary)
-
-        # Widened to every spelling the payload uses: metadata.type holds both
-        # 'application/pdf' and a bare 'pdf' depending on how a doc was ingested.
-        type_vocabulary = file_type_vocabulary()
-        qdrant_file_types = expand_aliases(media_types, type_vocabulary)
-        qdrant_exclude_file_types = expand_aliases(exclude_media_types, type_vocabulary)
-        # Each alternative needs the same widening; named any_of_blocks because
-        # any_of is already the Q-builder at the top of this module.
-        any_of_blocks = [
-            block.with_expanded_media_types(type_vocabulary).as_payload()
-            for block in resolved.any_of
-        ]
-
         # Query vector database
-        vector_response = query_database_with_metadata(
-            query=query if query else None,
-            top_k=top_k,
-            filter_score=filter_score,
-            detail_filter_score=detail_filter_score,
-            categories=tags if tags else None,
-            organizations=organizations if organizations else None,
-            resource_type=resource_types if resource_types else None,
-            file_type=qdrant_file_types if qdrant_file_types else None,
-            exclude_organizations=exclude_organizations if exclude_organizations else None,
-            exclude_file_type=qdrant_exclude_file_types if qdrant_exclude_file_types else None,
-            any_of=any_of_blocks if any_of_blocks else None
-        )
+        vector_response = query_database_with_metadata(**vector_service_payload)
 
         print(f"[MediaSearchV2View] vector_response error: {vector_response.get('error')}")
         print(f"[MediaSearchV2View] vector_response result count: {len(vector_response.get('results', []))}")
@@ -1095,10 +1183,13 @@ class MediaSearchV2View(APIView):
                 "next": None,
                 "previous": None,
                 "results": [],
+                # Tells "vector service is down" apart from "filter matched
+                # nothing" — both return zero results.
                 "search_metadata": {
                     "query": query,
-                    "vector_db_error": True
-                }
+                    "vector_db_error": True,
+                    "rapidfuzz_filters": rapidfuzz_filters,
+                },
             }, status=error_status)
 
         all_results = vector_response.get('results', [])
@@ -1143,18 +1234,34 @@ class MediaSearchV2View(APIView):
             "results": serializer.data,
             "search_metadata": {
                 "query": query,
+                # Vector path only — the test scripts detect the backend by
+                # whether this key exists. Never add it to the DB response.
                 "top_k": top_k,
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
                 "search_config": vector_response.get('search_config', {}),
-                # How each filter was decided. Without this it is invisible why
-                # a natural-language search returned what it did — in particular
-                # "the LLM was skipped" and "the LLM found nothing" look
-                # identical from the results alone.
+                # Whether acronym search is on, whether the query was read as an
+                # acronym, and what it expanded to. Older vector builds (and
+                # requests without query text) send null, so fall back to {}.
+                "acronym_info": vector_response.get('acronym_info') or {},
+                # How each filter was decided. Without it, "LLM was skipped" and
+                # "LLM found nothing" look identical from the results alone.
                 "filter_resolution": resolved.diagnostics,
-            }
+                "rapidfuzz_filters": rapidfuzz_filters,
+                # Canonical filters applied by the search. Storage aliases are
+                # expanded only at the Qdrant call boundary above.
+                "applied_filters": self.get_applied_search_filters(
+                    tags=tags,
+                    organizations=organizations,
+                    resource_types=resource_types,
+                    file_types=media_types,
+                    exclude_organizations=exclude_organizations,
+                    exclude_file_types=exclude_media_types,
+                    any_of_blocks=combined_any_of,
+                ),
+            },
         }, status=status.HTTP_200_OK)
 
     def _resolve_search_filters(self, raw_query, fuzzy=None, explicit_filters=None):
@@ -1183,7 +1290,7 @@ class MediaSearchV2View(APIView):
         # getattr, not attribute access: the deterministic resolver may not carry
         # exclusions yet, and an absent field must read as "found none".
         resolved = ResolvedFilters(
-            query=raw_query,
+            query=getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
             organizations=explicit_orgs or (fuzzy.organizations or []),
             media_types=explicit_types or (fuzzy.media_types or []),
             exclude_organizations=getattr(fuzzy, 'exclude_organizations', None) or [],
@@ -1199,6 +1306,11 @@ class MediaSearchV2View(APIView):
                     'fuzzy' if fuzzy.media_types else 'none'),
                 'organizations': explicit_orgs or (fuzzy.organizations or []),
                 'media_types': explicit_types or (fuzzy.media_types or []),
+                'exclude_organizations': getattr(fuzzy, 'exclude_organizations', None) or [],
+                'exclude_media_types': getattr(fuzzy, 'exclude_media_types', None) or [],
+                'semantic_query': getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
+                'candidates': fuzzy.candidates,
+                'alternative_llm_reason': fuzzy.llm_reason,
             },
         )
 
@@ -1220,7 +1332,12 @@ class MediaSearchV2View(APIView):
             all_explicit = bool(explicit_orgs and explicit_types)
 
             should_call, reason = self._should_call_llm(
-                mode, fuzzy.confidence, threshold, all_explicit)
+                mode,
+                fuzzy.confidence,
+                threshold,
+                all_explicit,
+                force_reason=fuzzy.llm_reason,
+            )
 
             # llm_decision records which branch was taken, for both outcomes. It
             # is deliberately not called llm_skipped: on failure the reason
@@ -1246,9 +1363,36 @@ class MediaSearchV2View(APIView):
                 'llm_error_code': getattr(exc, 'code', None),
             })
 
+        self._normalize_resolved_polarity(resolved)
         return resolved
 
-    def _should_call_llm(self, mode, confidence, threshold, all_explicit):
+    def _normalize_resolved_polarity(self, resolved):
+        from chatbot.services.search.filter_blocks import FilterBlock
+
+        normalized = FilterBlock(
+            organizations=resolved.organizations,
+            media_types=resolved.media_types,
+            exclude_organizations=resolved.exclude_organizations,
+            exclude_media_types=resolved.exclude_media_types,
+        )
+        resolved.organizations = normalized.organizations
+        resolved.media_types = normalized.media_types
+        resolved.exclude_organizations = normalized.exclude_organizations
+        resolved.exclude_media_types = normalized.exclude_media_types
+        resolved.any_of = [
+            block.normalized() if hasattr(block, 'normalized') else block
+            for block in resolved.any_of
+        ]
+        resolved.diagnostics.update({
+            'organizations': resolved.organizations,
+            'media_types': resolved.media_types,
+            'exclude_organizations': resolved.exclude_organizations,
+            'exclude_media_types': resolved.exclude_media_types,
+        })
+
+    def _should_call_llm(
+        self, mode, confidence, threshold, all_explicit, force_reason=None,
+    ):
         """Return whether LLM should run and why."""
         from chatbot.services.search.config import MODE_ALWAYS, MODE_OFF
 
@@ -1256,6 +1400,8 @@ class MediaSearchV2View(APIView):
             return False, 'mode_off'
         if mode == MODE_ALWAYS:
             return True, 'mode_always'
+        if force_reason:
+            return True, force_reason
         if all_explicit:
             return False, 'filters_explicit'
         if confidence >= threshold:
@@ -1282,6 +1428,29 @@ class MediaSearchV2View(APIView):
 
         self._apply_llm_filters(resolved, llm, explicit_orgs, explicit_types)
 
+    def _remove_unconfirmed_fuzzy_values(self, resolved, field_name):
+        """
+        Drop the fuzzy guesses the model was shown and chose not to confirm.
+
+        Only fuzzy matches become candidates, so an exact match is never
+        dropped. Values are subtracted rather than cleared, so a query that
+        mixes an exact match with a bad guess keeps the exact one.
+        """
+        resolved_values = getattr(resolved, field_name) or []
+        fuzzy_candidate_values = set(
+            (resolved.diagnostics.get('candidates') or {}).get(field_name) or [])
+        if not resolved_values or not fuzzy_candidate_values:
+            return resolved_values
+
+        confirmed_values = [
+            value for value in resolved_values
+            if value not in fuzzy_candidate_values
+        ]
+        if len(confirmed_values) != len(resolved_values):
+            resolved.diagnostics[f'{field_name}_source'] = 'fuzzy_unconfirmed'
+            resolved.diagnostics[field_name] = confirmed_values
+        return confirmed_values
+
     def _apply_llm_filters(self, resolved, llm, explicit_orgs, explicit_types):
         """Merge LLM filters without overriding explicit UI filters."""
         resolved.diagnostics.update({
@@ -1297,11 +1466,17 @@ class MediaSearchV2View(APIView):
             resolved.organizations = llm.organizations
             resolved.diagnostics['organizations_source'] = 'llm'
             resolved.diagnostics['organizations'] = llm.organizations
+        elif not explicit_orgs:
+            resolved.organizations = self._remove_unconfirmed_fuzzy_values(
+                resolved, 'organizations')
 
         if not explicit_types and llm.media_types is not None:
             resolved.media_types = llm.media_types
             resolved.diagnostics['media_types_source'] = 'llm'
             resolved.diagnostics['media_types'] = llm.media_types
+        elif not explicit_types:
+            resolved.media_types = self._remove_unconfirmed_fuzzy_values(
+                resolved, 'media_types')
 
         # Exclusions have no explicit-UI counterpart, so there is nothing to
         # outrank them; None still means the model gave no opinion.
@@ -1321,8 +1496,8 @@ class MediaSearchV2View(APIView):
         resolved.diagnostics['exclude_organizations'] = resolved.exclude_organizations
         resolved.diagnostics['exclude_media_types'] = resolved.exclude_media_types
 
-        resolved.query = llm.semantic_query
-        resolved.diagnostics['semantic_query'] = llm.semantic_query
+        resolved.query = self._clean_filter_search_text(llm.semantic_query)
+        resolved.diagnostics['semantic_query'] = resolved.query
 
     def _get_database_list_response(
         self,
@@ -1340,6 +1515,7 @@ class MediaSearchV2View(APIView):
         exclude_media_types=None,
         any_of_blocks=None,
         diagnostics=None,
+        rapidfuzz_filters=None,
     ):
         queryset = self._build_database_queryset()
         queryset = self._apply_database_filters(
@@ -1353,18 +1529,17 @@ class MediaSearchV2View(APIView):
             any_of_blocks=any_of_blocks,
         )
 
-        # The PostgreSQL counterpart of query_database_with_metadata's payload
-        # log: which filter got which values on this request.
-        print("[MediaSearchV2View] database filters: " + str({
-            'tags': list(tags or []),
-            'organizations': list(organizations or []),
-            'resource_types': list(resource_types or []),
-            'media_types': [str(value) for value in media_types or []],
-            'exclude_organizations': list(exclude_organizations or []),
-            'exclude_media_types': [
-                str(value) for value in exclude_media_types or []],
-            'any_of': [block.as_payload() for block in any_of_blocks or []],
-        }))
+        # Built once, then logged and returned, so the two can never disagree.
+        applied_filters = self.get_applied_search_filters(
+            tags=tags,
+            organizations=organizations,
+            resource_types=resource_types,
+            file_types=media_types,
+            exclude_organizations=exclude_organizations,
+            exclude_file_types=exclude_media_types,
+            any_of_blocks=any_of_blocks,
+        )
+        print("[MediaSearchV2View] database filters: " + str(applied_filters))
 
         total_results = queryset.count()
 
@@ -1396,13 +1571,18 @@ class MediaSearchV2View(APIView):
             "previous": previous_url,
             "results": serializer.data,
             "search_metadata": {
+                # Always empty: this path only runs when nothing is left to
+                # embed. No top_k either — its absence marks the DB backend.
                 "query": '',
                 "offset": offset,
                 "limit": limit,
                 "ordering": ordering,
                 "returned_results": len(serializer.data),
+                # Empty for a plain listing, which resolves no filters at all.
                 "filter_resolution": diagnostics or {},
-            }
+                "rapidfuzz_filters": rapidfuzz_filters or {},
+                "applied_filters": applied_filters,
+            },
         }, status=status.HTTP_200_OK)
 
     def _build_database_queryset(self):
@@ -1507,22 +1687,50 @@ class MediaSearchV2View(APIView):
             any_of_conditions = Q()
             for block in any_of_blocks:
                 block_conditions = Q()
+                if isinstance(block, dict):
+                    block_organizations = block.get('organizations') or []
+                    block_media_types = (
+                        block.get('media_types') or block.get('file_type') or []
+                    )
+                    block_exclude_organizations = (
+                        block.get('exclude_organizations') or []
+                    )
+                    block_exclude_media_types = (
+                        block.get('exclude_media_types')
+                        or block.get('exclude_file_type')
+                        or []
+                    )
+                else:
+                    block_organizations = block.organizations
+                    block_media_types = block.media_types
+                    block_exclude_organizations = block.exclude_organizations
+                    block_exclude_media_types = block.exclude_media_types
                 
-                if block.organizations:
+                if block_organizations:
                     org_q = Q()
-                    for org in block.organizations:
+                    for org in block_organizations:
                         org_q |= Q(organization__slug__iexact=org)
                     block_conditions &= org_q
                 
-                if block.media_types:
-                    block_conditions &= Q(overridden_media_type__in=block.media_types)
+                if block_media_types:
+                    block_conditions &= Q(overridden_media_type__in=block_media_types)
                 
-                if block.exclude_organizations:
-                    block_conditions &= ~any_of('organization__slug__iexact', block.exclude_organizations)
+                if block_exclude_organizations:
+                    block_conditions &= ~any_of(
+                        'organization__slug__iexact',
+                        block_exclude_organizations,
+                    )
                 
-                if block.exclude_media_types:
-                    block_conditions &= ~Q(overridden_media_type__in=block.exclude_media_types)
-                
+                if block_exclude_media_types:
+                    block_conditions &= ~Q(
+                        overridden_media_type__in=block_exclude_media_types
+                    )
+
+                # A block that recognised nothing is an empty Q(), which matches
+                # every row and would cancel the whole alternative set.
+                if not block_conditions:
+                    continue
+
                 any_of_conditions |= block_conditions
             
             queryset = queryset.filter(any_of_conditions)
@@ -1735,6 +1943,489 @@ class MediaSearchV2View(APIView):
             item.strip() for item in param_value.split(',')
             if item.strip()
         ]
+
+    def _resolve_query_filters(self, query):
+        from chatbot.services.search.vocabularies import (
+            file_type_vocabulary,
+            organization_vocabulary,
+        )
+        return resolve_query_exact(
+            query,
+            organization_vocabulary=organization_vocabulary(),
+            file_type_vocabulary=file_type_vocabulary(),
+        )
+
+    def _fuzzy_result_from_resolved_filters(
+        self,
+        resolved_filters,
+        include_flat_filters=True,
+        raw_query=None,
+        semantic_query=None,
+    ):
+        semantic_query_provided = semantic_query is not None
+        semantic_query = self._clean_filter_search_text(
+            resolved_filters.search_text if semantic_query is None
+            else semantic_query
+        )
+        if not semantic_query_provided and not semantic_query and raw_query:
+            semantic_query = self._semantic_query_without_filter_spans(
+                raw_query, resolved_filters
+            )
+        return FuzzyFilterResult(
+            organizations=included_values(
+                resolved_filters.organization, use_slug=True
+            ) if include_flat_filters else [],
+            media_types=self._included_file_type_values(
+                resolved_filters.file_type
+            ) if include_flat_filters else [],
+            exclude_organizations=self._excluded_values(
+                resolved_filters.organization, use_slug=True
+            ) if include_flat_filters else [],
+            exclude_media_types=self._excluded_file_type_values(
+                resolved_filters.file_type
+            ) if include_flat_filters else [],
+            query=semantic_query,
+            confidence=resolved_filters.confidence,
+            candidates={
+                "organizations": resolved_filters.candidates.get(
+                    "organization", []
+                ),
+                "media_types": resolved_filters.candidates.get(
+                    "file_type", []
+                ),
+            },
+        )
+
+    def _semantic_query_without_filter_spans(self, raw_query, resolved_filters):
+        remaining = raw_query or ""
+        for match in (
+            list(resolved_filters.organization)
+            + list(resolved_filters.file_type)
+        ):
+            span = getattr(match, "matched_span", "")
+            if not span:
+                continue
+            remaining = re.sub(
+                r"(?<!\w)" + re.escape(span) + r"(?!\w)",
+                " ",
+                remaining,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return self._clean_filter_search_text(clean_search_text(remaining))
+
+    def get_applied_search_filters(
+        self,
+        tags=None,
+        organizations=None,
+        resource_types=None,
+        file_types=None,
+        exclude_organizations=None,
+        exclude_file_types=None,
+        any_of_blocks=None,
+    ):
+        """
+        Report canonical applied filters for the log and search_metadata.
+
+        Storage-specific aliases are expanded only at datastore query boundaries.
+        str() keeps enum media types serialisable.
+        """
+        return {
+            'tags': list(tags or []),
+            'organizations': list(organizations or []),
+            'resource_types': list(resource_types or []),
+            'media_types': [str(value) for value in file_types or []],
+            'exclude_organizations': list(exclude_organizations or []),
+            'exclude_media_types': [
+                str(value) for value in exclude_file_types or []],
+            'any_of': [
+                self._filter_block_payload(block)
+                for block in any_of_blocks or []
+            ],
+        }
+
+    def _rapidfuzz_filter_metadata(
+        self, fuzzy, any_of_blocks=None, diagnostics=None
+    ):
+        fuzzy = fuzzy or FuzzyFilterResult()
+        diagnostics = diagnostics or {}
+        metadata = {
+            'organizations': list(fuzzy.organizations or []),
+            'media_types': [str(value) for value in fuzzy.media_types or []],
+            'exclude_organizations': list(fuzzy.exclude_organizations or []),
+            'exclude_media_types': [
+                str(value) for value in fuzzy.exclude_media_types or []
+            ],
+            'any_of': [
+                self._filter_block_payload(block)
+                for block in any_of_blocks or []
+            ],
+        }
+        if diagnostics.get('llm_used') and diagnostics.get('llm_decision'):
+            metadata['llm_reason'] = diagnostics['llm_decision']
+        return metadata
+
+    def _filter_block_payload(self, block):
+        if isinstance(block, dict):
+            return block
+        return block.as_payload()
+
+    def _excluded_values(self, matches, use_slug=False):
+        values = []
+        for match in matches:
+            if not match.negated:
+                continue
+            values.append(match.slug if use_slug and match.slug else match.display_value)
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _included_file_type_values(self, matches):
+        values = []
+        for match in matches:
+            if match.negated:
+                continue
+            values.append(self._file_type_payload_value(match))
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _excluded_file_type_values(self, matches):
+        values = []
+        for match in matches:
+            if not match.negated:
+                continue
+            values.append(self._file_type_payload_value(match))
+        return list(dict.fromkeys(value for value in values if value))
+
+    def _build_any_of_filters(self, query, resolved_filters=None, resolver=None):
+        from chatbot.services.search.filter_blocks import (
+            carry_shared_positive_qualifiers,
+        )
+
+        resolver = resolver or self._resolve_query_filters
+
+        # A shared negation applies to every item in an exclusion list:
+        # "everything except A or B" means NOT (A OR B), not
+        # "(not A) OR B". The full-query resolver preserves that scope, while
+        # splitting first would leave the second clause falsely positive.
+        resolved_filters = (
+            resolved_filters or resolver(query)
+        )
+        full_query_block = self._any_of_block_from_resolved_filters(
+            resolved_filters
+        )
+        if (
+            (full_query_block.exclude_organizations
+             or full_query_block.exclude_media_types)
+            and not (
+                full_query_block.organizations
+                or full_query_block.media_types
+            )
+        ):
+            return []
+        if (
+            full_query_block.exclude_organizations
+            and full_query_block.media_types
+            and not full_query_block.organizations
+        ):
+            return []
+
+        clauses = self._split_any_of_clauses(query)
+        if len(clauses) < MIN_ANY_OF_BRANCHES:
+            return []
+
+        blocks = []
+        for clause in clauses:
+            resolved = resolver(clause)
+            block = self._any_of_block_from_resolved_filters(resolved)
+            if not block.is_empty():
+                blocks.append(block)
+
+        # Fewer than two alternatives is an AND, which the flat fields already
+        # express, and the vector service rejects a one-entry any_of outright.
+        # Mirrors llm_extractor._resolve_any_of.
+        if len(blocks) < MIN_ANY_OF_BRANCHES:
+            return []
+
+        if self._should_keep_flat_cross_product(
+            full_query_block,
+            blocks,
+            clauses,
+        ):
+            return []
+
+        if self._comma_constraints_are_not_alternatives(query, blocks):
+            return []
+
+        if not any(self._has_unrestricted_org_scope(clause) for clause in clauses):
+            blocks = carry_shared_positive_qualifiers(blocks)
+
+        if self._alternatives_flatten_to_full_query(blocks):
+            return []
+        return blocks
+
+    def _split_any_of_clauses(self, query):
+        query, _ = self._split_trailing_semantic_clause(query)
+        query, _ = self._split_trailing_global_filter_clause(query)
+        # Commas define the outer alternatives in "A, B, or C". An OR inside
+        # one comma group remains there so a trailing qualifier can govern it:
+        # "DOC or DOCX from A, or CSV from B".
+        if ',' in (query or ''):
+            clauses = re.split(r"\s*,\s*", query)
+            return [
+                re.sub(r"^(?:or|and)\s+", "", clause.strip(), flags=re.I)
+                for clause in clauses
+                if re.sub(r"^(?:or|and)\s+", "", clause.strip(), flags=re.I)
+            ]
+        return [
+            clause.strip()
+            for clause in re.split(r"\bOR\b", query or "", flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+
+    def _comma_constraints_are_not_alternatives(self, query, blocks):
+        if ',' not in (query or ''):
+            return False
+
+        raw_parts = [
+            part.strip()
+            for part in re.split(r"\s*,\s*", query or "")
+            if part.strip()
+        ]
+        if len(raw_parts) != len(blocks):
+            return False
+
+        for index, (part, block) in enumerate(zip(raw_parts, blocks)):
+            if index == 0:
+                continue
+            if re.match(r"^(?:or|and)\b", part, flags=re.IGNORECASE):
+                continue
+            if (
+                (block.organizations and not block.media_types)
+                or (block.media_types and not block.organizations)
+                or (
+                    (block.exclude_organizations or block.exclude_media_types)
+                    and not (block.organizations or block.media_types)
+                )
+            ):
+                return True
+        return False
+
+    def _should_keep_flat_cross_product(self, full_query_block, blocks, clauses):
+        if any(self._has_unrestricted_org_scope(clause) for clause in clauses):
+            return False
+
+        if (
+            not full_query_block.organizations
+            or not full_query_block.media_types
+            or full_query_block.exclude_organizations
+            or full_query_block.exclude_media_types
+        ):
+            return False
+
+        has_org_only = any(
+            block.has_positive_axes(organizations=True) for block in blocks
+        )
+        has_type_only = any(
+            block.has_positive_axes(media_types=True) for block in blocks
+        )
+        has_both = any(
+            block.has_positive_axes(organizations=True, media_types=True)
+            for block in blocks
+        )
+        return has_both and (has_org_only or has_type_only)
+
+    def _split_trailing_semantic_clause(self, query):
+        match = re.search(
+            r",\s*(?:about|regarding|related to|covering|on)\s+(.+?)\s*$",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return query or "", ""
+        return (query[:match.start()].strip(), match.group(1).strip())
+
+    def _split_trailing_global_filter_clause(self, query):
+        match = re.search(
+            r",\s*(?:but\s+)?(?:nothing\s+from|excluding|exclude|not)\b.+$",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return query or "", ""
+        return (query[:match.start()].strip(), query[match.start() + 1:].strip())
+
+    def _has_unrestricted_org_scope(self, clause):
+        return bool(re.search(
+            r"\b(?:anyone|any organization|all organizations|anywhere)\b",
+            clause or "",
+            flags=re.IGNORECASE,
+        ))
+
+    def _alternatives_flatten_to_full_query(self, blocks):
+        if not blocks or any(
+            block.exclude_organizations or block.exclude_media_types
+            for block in blocks
+        ):
+            return False
+
+        organization_sets = {
+            tuple(sorted(block.organizations)) for block in blocks
+        }
+        media_type_sets = {
+            tuple(sorted(block.media_types)) for block in blocks
+        }
+        return len(organization_sets) == 1 or len(media_type_sets) == 1
+
+    def _absorb_redundant_org_file_type_alternatives(
+        self,
+        query,
+        fuzzy,
+        resolver=None,
+    ):
+        if not query or not fuzzy or not fuzzy.organizations or not fuzzy.media_types:
+            return fuzzy
+
+        resolver = resolver or self._resolve_query_filters
+        clauses = self._split_any_of_clauses(query)
+        if len(clauses) < MIN_ANY_OF_BRANCHES:
+            return fuzzy
+
+        blocks = []
+        for clause in clauses:
+            resolved = resolver(clause)
+            block = self._any_of_block_from_resolved_filters(resolved)
+            if not block.is_empty():
+                blocks.append(block)
+
+        org_only = {
+            org
+            for block in blocks
+            if (
+                block.organizations
+                and not block.media_types
+                and not block.exclude_organizations
+                and not block.exclude_media_types
+            )
+            for org in block.organizations
+        }
+        if not org_only:
+            return fuzzy
+
+        if any(
+            block.organizations
+            and block.media_types
+            and all(org in org_only for org in block.organizations)
+            for block in blocks
+        ):
+            fuzzy.media_types = []
+            fuzzy.query = ""
+        return fuzzy
+
+    def _apply_trailing_global_filter_clause(self, query, fuzzy, resolver=None):
+        _, trailing_filter = self._split_trailing_global_filter_clause(query)
+        if not trailing_filter:
+            return fuzzy
+
+        resolver = resolver or self._resolve_query_filters
+        resolved = resolver(trailing_filter)
+        exclude_organizations = self._excluded_values(
+            resolved.organization,
+            use_slug=True,
+        )
+        exclude_media_types = self._excluded_file_type_values(
+            resolved.file_type
+        )
+        if exclude_organizations:
+            fuzzy.exclude_organizations = list(dict.fromkeys(
+                list(fuzzy.exclude_organizations or []) + exclude_organizations
+            ))
+        if exclude_media_types:
+            fuzzy.exclude_media_types = list(dict.fromkeys(
+                list(fuzzy.exclude_media_types or []) + exclude_media_types
+            ))
+        return fuzzy
+
+    def _alternative_llm_reason(self, query, blocks):
+        if len(re.findall(r"\S+", query or "")) > self._any_of_limit(
+            'any_of_max_query_words'
+        ):
+            return 'complex_alternatives_query_length'
+
+        clauses = [
+            clause for clause in re.split(r"\bOR\b", query or "", flags=re.IGNORECASE)
+            if clause.strip()
+        ]
+        if len(clauses) <= 1:
+            return None
+        if len(clauses) > self._any_of_limit('any_of_max_alternatives'):
+            return 'complex_alternatives_count'
+
+        organizations = {
+            organization
+            for block in blocks
+            for organization in block.organizations
+        }
+        if len(organizations) > self._any_of_limit('any_of_max_organizations'):
+            return 'complex_alternatives_organizations'
+
+        exclusion_count = count_negation_cues(query)
+        if exclusion_count > self._any_of_limit('any_of_max_exclusions'):
+            return 'complex_alternatives_exclusions'
+        return None
+
+    def _any_of_limit(self, setting):
+        from chatbot.services.search.config import get_search_llm_setting
+
+        return get_search_llm_setting(None, setting)
+
+    def _search_text_from_any_of_clauses(self, query, resolver=None):
+        resolver = resolver or self._resolve_query_filters
+        _, trailing_semantic = self._split_trailing_semantic_clause(query)
+        clauses = self._split_any_of_clauses(query)
+        search_texts = [trailing_semantic] if trailing_semantic else []
+        for clause in clauses:
+            search_text = resolver(clause).search_text
+            if search_text and search_text not in search_texts:
+                search_texts.append(search_text)
+        if not search_texts:
+            return ""
+        if len(search_texts) == 1:
+            return search_texts[0]
+        return " ".join(search_texts)
+
+    def _any_of_block_from_resolved_filters(self, resolved_filters):
+        from chatbot.services.search.filter_blocks import FilterBlock
+
+        organizations = included_values(
+            resolved_filters.organization, use_slug=True
+        )
+        file_types = self._included_file_type_values(
+            resolved_filters.file_type
+        )
+        exclude_organizations = self._excluded_values(
+            resolved_filters.organization, use_slug=True
+        )
+        exclude_file_types = self._excluded_file_type_values(
+            resolved_filters.file_type
+        )
+
+        return FilterBlock(
+            organizations=organizations,
+            media_types=file_types,
+            exclude_organizations=exclude_organizations,
+            exclude_media_types=exclude_file_types,
+        ).normalized()
+
+    def _file_type_payload_value(self, match):
+        # The slug is the FileTypeChoices value, which is what both stores hold:
+        # Postgres in Media.media_type, and Qdrant in metadata.type via
+        # prepare_vector_db_data. Nothing writes a short 'application/docx'.
+        return match.slug
+
+    def _clean_filter_search_text(self, search_text):
+        cleaned = re.sub(r"[^\w\s]", " ", search_text or "").strip().lower()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        if cleaned in {"everything", "all", "anything", "and", "or"}:
+            return ""
+        return cleaned
 
     def _normalize_media_types(self, media_types):
         normalized = []
