@@ -10,24 +10,16 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import json_repair
 from jinja2 import Template
 
+from chatbot.constants.constants import (
+    CANDIDATE_DESCRIPTION_MAX_CHARS, DEFAULT_MAX_VALIDATION_RETRIES, DEFAULT_SUMMARY_MAX_CHARS,
+    MATCHED_SECONDARY_FIELD, MAX_SECONDARY_CANDIDATE_LIMIT, MAX_SECONDARY_THEME_COUNT, NEW_SECONDARY_FIELD,
+    PAYLOAD_LOG_PREVIEW_CHARS, SECONDARY_DESCRIPTION_MAX_CHARS, SECONDARY_THEME_MAX_WORDS, SECONDARY_THEME_MIN_WORDS,
+    STOP_WORDS, TYPED_VALUE_KEYS
+)
 from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.models.enums import ThemeStatus
 
 logger = logging.getLogger('django')
-
-SECONDARY_THEME_MIN_WORDS = 2
-SECONDARY_THEME_MAX_WORDS = 4
-MAX_SECONDARY_THEME_COUNT = 10
-MAX_SECONDARY_CANDIDATE_LIMIT = 500
-SECONDARY_DESCRIPTION_MAX_CHARS = 300
-CANDIDATE_DESCRIPTION_MAX_CHARS = 120
-DEFAULT_MAX_VALIDATION_RETRIES = 2
-DEFAULT_SUMMARY_MAX_CHARS = 3000
-TYPED_VALUE_KEYS = frozenset({'type', 'value'})
-PAYLOAD_LOG_PREVIEW_CHARS = 1000
-STOP_WORDS = frozenset({'and', 'or', 'of', 'the', 'a', 'an', 'for', 'in', 'on', 'to'})
-MATCHED_SECONDARY_FIELD = 'matched_secondary_themes'
-NEW_SECONDARY_FIELD = 'new_secondary_themes'
 
 
 class PartialMatchPolicy:
@@ -45,7 +37,7 @@ class ThemeOption:
 
 @dataclass(frozen=True)
 class SecondaryCandidate:
-    id: int
+    code: str
     name: str
     description: str = ''
 
@@ -69,7 +61,6 @@ class ClassifiedTheme:
     confidence: Optional[float]
     reasoning: str
     code: Optional[str] = None
-    theme_id: Optional[int] = None
     description: str = ''
 
 
@@ -187,13 +178,12 @@ def _parse_confidence(value: Any) -> Optional[float]:
     return confidence if 0.0 <= confidence <= 1.0 else None
 
 
-def _parse_theme_id(value: Any) -> Optional[int]:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return int(value) if float(value).is_integer() else None
-    match = re.fullmatch(r'\s*\[?\s*(\d+)\s*\]?\s*', str(value or ''))
-    return int(match.group(1)) if match else None
+def _parse_theme_code(value: Any) -> str:
+    if isinstance(value, (list, tuple)) and len(value) == 1:
+        value = value[0]
+    if not isinstance(value, str):
+        return ''
+    return _theme_key(value.strip().strip('[]"\'').strip())
 
 
 def _truncate(value: str, limit: int) -> str:
@@ -236,8 +226,7 @@ def preview_payload(payload: Any) -> str:
 
 def describe_theme(theme: ClassifiedTheme) -> str:
     confidence = f"{theme.confidence:.2f}" if theme.confidence is not None else '-'
-    theme_id = f"#{theme.theme_id}" if theme.theme_id is not None else ''
-    return f"{theme.name!r}{theme_id}@{confidence}"
+    return f"{(theme.code or theme.name)!r}@{confidence}"
 
 
 def normalize_tool_arguments(value: Any) -> Any:
@@ -338,7 +327,7 @@ class ThemeRules:
 class SecondaryMatchValidator:
 
     def __init__(self, candidates: Sequence[SecondaryCandidate], settings: SecondaryThemeSettings):
-        self.candidates = {candidate.id: candidate for candidate in candidates}
+        self.candidates = {_theme_key(candidate.code): candidate for candidate in candidates}
         self.settings = settings
 
     def validate(self, raw: Any) -> SectionResult:
@@ -348,45 +337,44 @@ class SecondaryMatchValidator:
             return SectionResult(rejected=[f'{MATCHED_SECONDARY_FIELD} missing; treated as no match'])
         if not isinstance(raw, list):
             return SectionResult(errors=[
-                f'{MATCHED_SECONDARY_FIELD} must be a list of objects with id, confidence and reason.'
+                f'{MATCHED_SECONDARY_FIELD} must be a list of objects with code, confidence and reason.'
             ])
 
         result = SectionResult()
         accepted: List[ClassifiedTheme] = []
-        seen_ids = set()
+        seen_codes = set()
         for item in raw:
             if not isinstance(item, dict):
                 result.rejected.append(f'non-object item {preview_payload(item)}')
                 continue
-            theme_id = _parse_theme_id(item.get('id'))
-            candidate = self.candidates.get(theme_id)
+            candidate = self.candidates.get(_parse_theme_code(item.get('code')))
             if candidate is None:
-                result.rejected.append(f'unknown id {item.get("id")!r}')
+                result.rejected.append(f'unknown code {item.get("code")!r}')
                 continue
-            if theme_id in seen_ids:
-                result.rejected.append(f'duplicate id {theme_id}')
+            if candidate.code in seen_codes:
+                result.rejected.append(f'duplicate code {candidate.code}')
                 continue
             confidence = _parse_confidence(item.get('confidence'))
             if confidence is None:
-                result.rejected.append(f'id {theme_id} {candidate.name!r} has no confidence between 0 and 1')
+                result.rejected.append(f'code {candidate.code} has no confidence between 0 and 1')
                 continue
             if confidence < self.settings.min_match_confidence:
                 result.rejected.append(
-                    f'id {theme_id} {candidate.name!r} confidence {confidence:.2f} '
+                    f'code {candidate.code} confidence {confidence:.2f} '
                     f'below {self.settings.min_match_confidence:.2f}'
                 )
                 continue
-            seen_ids.add(theme_id)
+            seen_codes.add(candidate.code)
             accepted.append(ClassifiedTheme(
                 name=candidate.name,
                 confidence=confidence,
                 reasoning=normalize_theme_name(item.get('reason') or item.get('reasoning')),
-                theme_id=candidate.id,
+                code=candidate.code,
             ))
 
         accepted.sort(key=lambda theme: theme.confidence, reverse=True)
         for extra in accepted[self.settings.count:]:
-            result.rejected.append(f'id {extra.theme_id} {extra.name!r} beyond the limit of {self.settings.count}')
+            result.rejected.append(f'code {extra.code} beyond the limit of {self.settings.count}')
         result.themes = accepted[:self.settings.count]
         return result
 
@@ -525,7 +513,7 @@ class ThemeClassifier(BedrockToolCaller):
             'secondary_theme_count': self.settings.count,
             'candidate_secondary_themes': [
                 {
-                    'id': candidate.id,
+                    'code': candidate.code,
                     'name': candidate.name,
                     'description': _truncate(candidate.description, CANDIDATE_DESCRIPTION_MAX_CHARS),
                 }

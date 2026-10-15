@@ -49,7 +49,7 @@ class Theme(models.Model):
 
 class ResourceTheme(models.Model):
     name = models.CharField(max_length=255)
-    code = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=100, primary_key=True)
     description = models.TextField(blank=True, default='')
     is_primary = models.BooleanField(default=False, db_index=True)
     status = models.CharField(
@@ -76,7 +76,9 @@ class ResourceTheme(models.Model):
 
 class MediaSecondaryTheme(models.Model):
     media = models.ForeignKey('Media', on_delete=models.CASCADE, related_name='secondary_theme_links')
-    theme = models.ForeignKey(ResourceTheme, on_delete=models.CASCADE, related_name='media_links')
+    theme = models.ForeignKey(
+        ResourceTheme, on_delete=models.CASCADE, db_column='theme_code', related_name='media_links'
+    )
     confidence = models.FloatField(
         null=True, blank=True, validators=[MinValueValidator(0.0), MaxValueValidator(1.0)]
     )
