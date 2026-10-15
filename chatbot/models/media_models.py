@@ -173,6 +173,7 @@ class Media(models.Model):
         'ResourceTheme', db_column='primary_theme_code', limit_choices_to={'is_primary': True},
         on_delete=models.SET_NULL, null=True, blank=True, related_name='primary_media'
     )
+    primary_theme_name = models.CharField(max_length=255, null=True, blank=True, editable=False)
     primary_theme_reasoning = models.TextField(null=True, blank=True)
     needs_review = models.BooleanField(default=False, db_index=True)
     external_file_id = models.CharField(

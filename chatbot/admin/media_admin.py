@@ -177,6 +177,7 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         if change and 'primary_theme' in form.changed_data:
+            obj.primary_theme_name = obj.primary_theme.name if obj.primary_theme else None
             obj.primary_theme_reasoning = None
             obj.needs_review = obj.primary_theme_id is None
         super().save_model(request, obj, form, change)

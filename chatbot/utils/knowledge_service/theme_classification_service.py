@@ -385,6 +385,7 @@ class MediaThemeClassificationService:
         with transaction.atomic():
             media = Media.objects.select_for_update().get(pk=self.media.pk)
             media.primary_theme_id = classification.primary.code
+            media.primary_theme_name = classification.primary.name
             media.primary_theme_reasoning = classification.primary.reasoning
             media.needs_review = classification.needs_review
             bulk_update_with_history([media], Media, MEDIA_THEME_FIELDS)

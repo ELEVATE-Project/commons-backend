@@ -1,6 +1,8 @@
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
+from django.db.models.signals import post_save, pre_delete
+from django.dispatch import receiver
 from simple_history.models import HistoricalRecords
 from chatbot.models import CompanyBot, ThemeType, ThemeStatus, SecondaryThemeMatchType
 
@@ -99,3 +101,19 @@ class MediaSecondaryTheme(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['media', 'theme'], name='media_secondary_theme_uniq'),
         ]
+
+
+@receiver(post_save, sender=ResourceTheme)
+def sync_media_primary_theme_name(sender, instance, **kwargs):
+    if not instance.is_primary:
+        return
+    from chatbot.models.media_models import Media
+    Media.objects.filter(primary_theme_id=instance.pk).exclude(primary_theme_name=instance.name).update(
+        primary_theme_name=instance.name
+    )
+
+
+@receiver(pre_delete, sender=ResourceTheme)
+def clear_media_primary_theme_name(sender, instance, **kwargs):
+    from chatbot.models.media_models import Media
+    Media.objects.filter(primary_theme_id=instance.pk).update(primary_theme_name=None)

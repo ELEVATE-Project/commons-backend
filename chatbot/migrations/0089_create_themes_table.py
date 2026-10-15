@@ -158,6 +158,7 @@ def media_theme_fields():
         for model_name in MEDIA_MODELS
         for field_name, field in (
             ('primary_theme', primary_theme_field(model_name)),
+            ('primary_theme_name', models.CharField(blank=True, editable=False, max_length=255, null=True)),
             ('primary_theme_reasoning', models.TextField(blank=True, null=True)),
             ('needs_review', models.BooleanField(db_index=True, default=False)),
         )

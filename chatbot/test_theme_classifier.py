@@ -594,6 +594,54 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
         self.assertEqual(outcome.secondary_themes, ('Phonics Instruction', 'Reading Fluency Tracking'))
 
 
+class PrimaryThemeNameTests(SimpleTestCase):
+
+    def test_classification_saves_the_primary_theme_name_with_its_code(self):
+        media = SimpleNamespace(pk=42, id=42)
+        media_model = MagicMock()
+        media_model.objects.select_for_update.return_value.get.return_value = media
+        classification = SimpleNamespace(
+            primary=ClassifiedTheme(name='System Thinking', code='System_Thinking', confidence=0.9, reasoning='Why.'),
+            matched_secondary=[], needs_review=False,
+        )
+        service = MediaThemeClassificationService(SimpleNamespace(id=42, pk=42, name='x'))
+        with patch.object(service_module, 'transaction'), \
+                patch.object(service_module, 'Media', media_model), \
+                patch.object(service_module, 'MediaSecondaryTheme'), \
+                patch.object(service_module, 'bulk_update_with_history') as bulk_update, \
+                patch.object(MediaThemeClassificationService, '_resolve_links', return_value=[]):
+            service.save_classification(classification, [], SecondaryThemeSettings())
+
+        self.assertEqual((media.primary_theme_id, media.primary_theme_name), ('System_Thinking', 'System Thinking'))
+        self.assertIn('primary_theme_name', bulk_update.call_args.args[2])
+
+    def media_rows(self):
+        media_model = MagicMock()
+        return media_model, patch('chatbot.models.media_models.Media', media_model)
+
+    def test_renaming_a_primary_theme_updates_its_media(self):
+        from chatbot.models.theme_models import sync_media_primary_theme_name
+        media_model, patched = self.media_rows()
+        with patched:
+            sync_media_primary_theme_name(None, SimpleNamespace(pk='System_Thinking', name='Systems Thinking',
+                                                                is_primary=True))
+            sync_media_primary_theme_name(None, SimpleNamespace(pk='Peer_Learning', name='Peer', is_primary=False))
+
+        media_model.objects.filter.assert_called_once_with(primary_theme_id='System_Thinking')
+        rows = media_model.objects.filter.return_value
+        rows.exclude.assert_called_once_with(primary_theme_name='Systems Thinking')
+        rows.exclude.return_value.update.assert_called_once_with(primary_theme_name='Systems Thinking')
+
+    def test_deleting_a_theme_clears_the_name_on_its_media(self):
+        from chatbot.models.theme_models import clear_media_primary_theme_name
+        media_model, patched = self.media_rows()
+        with patched:
+            clear_media_primary_theme_name(None, SimpleNamespace(pk='Movement'))
+
+        media_model.objects.filter.assert_called_once_with(primary_theme_id='Movement')
+        media_model.objects.filter.return_value.update.assert_called_once_with(primary_theme_name=None)
+
+
 class ResolveLinksTests(SimpleTestCase):
 
     def setUp(self):
@@ -822,7 +870,9 @@ class AddMediaThemeClassificationTests(SimpleTestCase):
     def test_manual_primary_theme_replaces_the_classifier_verdict(self):
         def save(primary_theme_id, changed):
             obj = SimpleNamespace(
-                primary_theme_id=primary_theme_id, primary_theme_reasoning='Classifier reasoning.',
+                primary_theme_id=primary_theme_id,
+                primary_theme=SimpleNamespace(name='School Governance') if primary_theme_id else None,
+                primary_theme_name='Teaching and Learning Practises', primary_theme_reasoning='Classifier reasoning.',
                 needs_review=True, tags=MagicMock(),
             )
             with patch('simple_history.admin.SimpleHistoryAdmin.save_model') as save_model:
@@ -831,11 +881,15 @@ class AddMediaThemeClassificationTests(SimpleTestCase):
             return obj
 
         manual = save('School_Governance', ['primary_theme'])
+        self.assertEqual(manual.primary_theme_name, 'School Governance')
         self.assertIsNone(manual.primary_theme_reasoning)
         self.assertFalse(manual.needs_review)
-        self.assertTrue(save(None, ['primary_theme']).needs_review)
+        cleared = save(None, ['primary_theme'])
+        self.assertIsNone(cleared.primary_theme_name)
+        self.assertTrue(cleared.needs_review)
 
         untouched = save('School_Governance', ['description'])
+        self.assertEqual(untouched.primary_theme_name, 'Teaching and Learning Practises')
         self.assertEqual(untouched.primary_theme_reasoning, 'Classifier reasoning.')
         self.assertTrue(untouched.needs_review)
 
