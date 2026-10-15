@@ -24,13 +24,12 @@ from chatbot.views.Media.google_drive_integration import (
     GoogleDriveFileImportView
 )
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company, get_user_profile
-from chatbot.constants.constants import ADMIN_THEME_WAIT_TIMEOUT_SECONDS
 from chatbot.utils.knowledge_service.theme_classification_service import (
-    ThemeMessageLevel, enqueue_theme_classification, theme_outcome_message, wait_for_theme_classification
+    ADMIN_THEME_WAIT_TIMEOUT_SECONDS, ThemeMessageLevel, enqueue_theme_classification, theme_outcome_message,
+    wait_for_theme_classification
 )
 
-THEME_CLASSIFICATION_INPUT_FIELDS = frozenset({'name', 'file', 'description', 'extracted_text', 'manual_tags'})
-THEME_SUMMARY_FIELDS = frozenset({'description', 'extracted_text'})
+THEME_CLASSIFICATION_INPUT_FIELDS = frozenset({'name', 'description', 'extracted_text', 'manual_tags'})
 THEME_MESSAGE_LEVELS = {
     ThemeMessageLevel.SUCCESS: messages.SUCCESS,
     ThemeMessageLevel.WARNING: messages.WARNING,
@@ -79,7 +78,7 @@ class MediaSecondaryThemeInline(admin.TabularInline):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('theme')
 
-    @admin.display(description='Status')
+    @admin.display(description='Theme status')
     def theme_status(self, obj):
         return obj.theme.get_status_display()
 
@@ -176,9 +175,6 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def save_model(self, request, obj, form, change):
-        if change and 'primary_theme' in form.changed_data:
-            obj.primary_theme_reasoning = None
-            obj.needs_review = obj.primary_theme_id is None
         super().save_model(request, obj, form, change)
 
         manual_tags = getattr(obj, '_manual_tags_to_set', [])
@@ -192,17 +188,13 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
         if self.needs_theme_classification(form, formsets, change):
-            changed = set(form.changed_data)
-            use_file_text = change and 'file' in changed and not THEME_SUMMARY_FIELDS & changed
             request.theme_classification = (
-                enqueue_theme_classification(form.instance.pk, use_file_text=use_file_text), form.instance.name
+                enqueue_theme_classification(form.instance.pk), form.instance.name
             )
 
     @staticmethod
     def needs_theme_classification(form, formsets, change):
         if form.instance.parent_id:
-            return False
-        if 'primary_theme' in form.changed_data:
             return False
         if not change:
             return True
@@ -253,12 +245,6 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
                 'fields': ('manual_tags',),
             }),
         ]
-
-        if obj and obj.pk and not obj.parent_id:
-            fieldsets.insert(1, ('Theme', {
-                'fields': ('primary_theme',),
-                'description': 'Mapped automatically on upload; pick another primary theme to override it.'
-            }))
 
         if obj and obj.pk:
             has_auto_tags = obj.tags.filter(

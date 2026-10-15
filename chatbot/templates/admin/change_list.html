@@ -53,13 +53,4 @@
 {% endif %}
 
 {% endif %}
-
-{# Export button for ResourceTheme model: only when the list is filtered to secondary themes #}
-{% if opts.model_name == 'resourcetheme' and request.GET.theme_type == 'secondary' %}
-<li style="padding-left: 5px; list-style-type: none">
-  <a href="{% url 'admin:chatbot_resourcetheme_export_csv' %}{{ cl.get_query_string }}" class="btn btn-info">
-    <i class="fas fa-file-csv"></i> {% trans 'Export CSV' %}
-  </a>
-</li>
-{% endif %}
 {% endblock %}

@@ -148,8 +148,8 @@ def seed_primary_themes(apps, schema_editor):
 
 def primary_theme_field(model_name):
     if model_name == 'historicalmedia':
-        return models.ForeignKey(blank=True, db_column='primary_theme_code', db_constraint=False, limit_choices_to={'is_primary': True}, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='chatbot.resourcetheme')
-    return models.ForeignKey(blank=True, db_column='primary_theme_code', limit_choices_to={'is_primary': True}, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='primary_media', to='chatbot.resourcetheme')
+        return models.ForeignKey(blank=True, db_column='primary_theme_code', db_constraint=False, limit_choices_to={'is_primary': True}, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='chatbot.resourcetheme', to_field='code')
+    return models.ForeignKey(blank=True, db_column='primary_theme_code', limit_choices_to={'is_primary': True}, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='primary_media', to='chatbot.resourcetheme', to_field='code')
 
 
 def media_theme_fields():
@@ -158,6 +158,7 @@ def media_theme_fields():
         for model_name in MEDIA_MODELS
         for field_name, field in (
             ('primary_theme', primary_theme_field(model_name)),
+            ('primary_theme_confidence', models.FloatField(blank=True, null=True)),
             ('primary_theme_reasoning', models.TextField(blank=True, null=True)),
             ('needs_review', models.BooleanField(db_index=True, default=False)),
         )
@@ -174,8 +175,9 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='ResourceTheme',
             fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=255)),
-                ('code', models.CharField(max_length=100, primary_key=True, serialize=False)),
+                ('code', models.CharField(max_length=100, unique=True)),
                 ('description', models.TextField(blank=True, default='')),
                 ('is_primary', models.BooleanField(db_index=True, default=False)),
                 ('status', models.CharField(choices=[('draft', 'Draft'), ('published', 'Published')], db_index=True, default='draft', max_length=20)),
@@ -202,7 +204,7 @@ class Migration(migrations.Migration):
                 ('match_type', models.CharField(blank=True, choices=[('matched', 'Matched existing theme'), ('deduplicated', 'Generated name resolved to existing theme'), ('created', 'New theme created')], db_index=True, max_length=20, null=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('media', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='secondary_theme_links', to='chatbot.media')),
-                ('theme', models.ForeignKey(db_column='theme_code', on_delete=django.db.models.deletion.CASCADE, related_name='media_links', to='chatbot.resourcetheme')),
+                ('theme', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='media_links', to='chatbot.resourcetheme')),
             ],
             options={
                 'verbose_name': 'Media Secondary Theme',
