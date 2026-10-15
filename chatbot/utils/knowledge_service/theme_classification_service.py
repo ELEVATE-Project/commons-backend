@@ -14,6 +14,12 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import F, FloatField, Func, Q, Value
 from simple_history.utils import bulk_update_with_history
 
+from chatbot.constants.constants import (
+    DOC_TEXT_EXTRACTOR_ROUTE, DOCUMENT_TYPE_KEY, EXTRACTION_PLACEHOLDER_PREFIX, KEY_ENTITIES_KEY, MEDIA_THEME_FIELDS,
+    MISCELLANEOUS_THEME_CODE, NEAR_DUPLICATE_NEIGHBOUR_FLOOR, NEAR_DUPLICATE_NEIGHBOUR_LIMIT, SEARCH_TEXT_MAX_CHARS,
+    SECONDARY_THEME_LOCK_KEY, THEME_CLASSIFIER_ROUTE, THEME_CODE_HASH_LENGTH, THEME_WAIT_MAX_POLL_SECONDS, TITLE_KEY,
+    VECTOR_THEME_SYNC_DELAY_SECONDS
+)
 from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.models import (
     CompanyBot, KeyValue, Media, MediaSecondaryTheme, ResourceTheme, SecondaryThemeMatchType, ThemeStatus
@@ -25,23 +31,6 @@ from chatbot.utils.knowledge_service.processor.theme_classifier import (
 )
 
 logger = logging.getLogger('django')
-
-THEME_CLASSIFIER_ROUTE = '/theme_classifier'
-DOC_TEXT_EXTRACTOR_ROUTE = '/tag_extractor'
-MISCELLANEOUS_THEME_CODE = 'Miscellaneous'
-EXTRACTION_PLACEHOLDER_PREFIX = 'Extracted from '
-TITLE_KEY = 'TITLE'
-DOCUMENT_TYPE_KEY = 'DOCUMENT_TYPE'
-KEY_ENTITIES_KEY = 'KEY ENTITIES'
-MEDIA_THEME_FIELDS = ['primary_theme', 'primary_theme_confidence', 'primary_theme_reasoning', 'needs_review']
-SEARCH_TEXT_MAX_CHARS = 2000
-THEME_CODE_HASH_LENGTH = 12
-NEAR_DUPLICATE_NEIGHBOUR_FLOOR = 0.3
-NEAR_DUPLICATE_NEIGHBOUR_LIMIT = 10
-SECONDARY_THEME_LOCK_KEY = 7401202605
-VECTOR_THEME_SYNC_DELAY_SECONDS = 10
-ADMIN_THEME_WAIT_TIMEOUT_SECONDS = 30
-THEME_WAIT_MAX_POLL_SECONDS = 3.0
 
 
 class ThemeClassificationStatus:
@@ -132,7 +121,7 @@ def load_secondary_candidates(document: DocumentMetadata,
         return [], 0
     queryset = ResourceTheme.objects.filter(
         is_primary=False, status__in=settings.candidate_statuses
-    ).only('id', 'name', 'description')
+    ).only('code', 'name', 'description')
     total = queryset.count()
     if total <= settings.candidate_limit:
         rows = queryset.order_by('name')
@@ -141,7 +130,7 @@ def load_secondary_candidates(document: DocumentMetadata,
             relevance=WordSimilarity(F('name'), Value(build_search_text(document)))
         ).order_by('-relevance', 'name')[:settings.candidate_limit]
     candidates = [
-        SecondaryCandidate(id=theme.id, name=theme.name, description=theme.description) for theme in rows
+        SecondaryCandidate(code=theme.code, name=theme.name, description=theme.description) for theme in rows
     ]
     return candidates, total
 
@@ -275,9 +264,10 @@ def build_document_metadata(media: Media) -> DocumentMetadata:
 
 class MediaThemeClassificationService:
 
-    def __init__(self, media: Media, invoke: Callable[..., Any] = handle_bedrock_model):
+    def __init__(self, media: Media, invoke: Callable[..., Any] = handle_bedrock_model, use_file_text: bool = False):
         self.media = media
         self.invoke = invoke
+        self.use_file_text = use_file_text
         self.log_prefix = f"[ThemeClassifier] media_id={media.id}"
 
     def run(self) -> ThemeClassificationOutcome:
@@ -298,14 +288,12 @@ class MediaThemeClassificationService:
             return self._flag_for_review(ThemeClassificationStatus.SKIPPED_NO_THEMES)
 
         document = build_document_metadata(self.media)
-        if not document.is_classifiable:
+        if self.use_file_text or not document.is_classifiable:
             file_text = extract_text_from_media_file(self.media)
             if file_text:
                 document = replace(document, summary=file_text)
-                logger.info(
-                    f"{self.log_prefix} no description or extracted text; "
-                    f"using {len(file_text)} chars read from the file"
-                )
+                reason = 'file replaced' if self.use_file_text else 'no description or extracted text'
+                logger.info(f"{self.log_prefix} {reason}; using {len(file_text)} chars read from the file")
         logger.info(
             f"{self.log_prefix} input title={document.title!r} document_type={document.document_type!r} "
             f"tags={list(document.tags)} key_entities={list(document.key_entities)} "
@@ -397,7 +385,6 @@ class MediaThemeClassificationService:
         with transaction.atomic():
             media = Media.objects.select_for_update().get(pk=self.media.pk)
             media.primary_theme_id = classification.primary.code
-            media.primary_theme_confidence = classification.primary.confidence
             media.primary_theme_reasoning = classification.primary.reasoning
             media.needs_review = classification.needs_review
             bulk_update_with_history([media], Media, MEDIA_THEME_FIELDS)
@@ -417,13 +404,13 @@ class MediaThemeClassificationService:
 
     def _resolve_links(self, matched: Sequence[ClassifiedTheme], generated: Sequence[ClassifiedTheme],
                        settings: SecondaryThemeSettings) -> List[SecondaryThemeLink]:
-        links: Dict[int, SecondaryThemeLink] = {}
-        existing = ResourceTheme.objects.in_bulk([theme.theme_id for theme in matched])
+        links: Dict[str, SecondaryThemeLink] = {}
+        existing = ResourceTheme.objects.in_bulk([theme.code for theme in matched])
         for classified in matched:
-            theme = existing.get(classified.theme_id)
+            theme = existing.get(classified.code)
             if theme is None or theme.is_primary:
                 logger.warning(
-                    f"{self.log_prefix} matched secondary theme_id={classified.theme_id} "
+                    f"{self.log_prefix} matched secondary code={classified.code!r} "
                     f"is no longer available; skipped"
                 )
                 continue
@@ -451,7 +438,7 @@ class MediaThemeClassificationService:
                 if theme.pk in links:
                     logger.info(
                         f"{self.log_prefix} generated {describe_theme(classified)} resolved to already linked "
-                        f"theme_id={theme.pk} name={theme.name!r}; skipped"
+                        f"code={theme.pk!r} name={theme.name!r}; skipped"
                     )
                     continue
                 links[theme.pk] = SecondaryThemeLink(
@@ -464,7 +451,7 @@ class MediaThemeClassificationService:
         for link in links:
             confidence = f"{link.confidence:.2f}" if link.confidence is not None else '-'
             logger.info(
-                f"{self.log_prefix} secondary theme match_type={link.match_type} theme_id={link.theme.pk} "
+                f"{self.log_prefix} secondary theme match_type={link.match_type} code={link.theme.pk!r} "
                 f"name={link.theme.name!r} status={link.theme.status} confidence={confidence} "
                 f"detail={link.detail!r} reason={link.reasoning!r}"
             )
@@ -488,11 +475,14 @@ class MediaThemeClassificationService:
         return ThemeClassificationOutcome(media_id=media.id, status=status, needs_review=True)
 
 
-def enqueue_theme_classification(media_id: int) -> str:
+def enqueue_theme_classification(media_id: int, use_file_text: bool = False) -> str:
     from chatbot.celery_tasks.knowledge_service.theme_tasks import classify_media_themes
 
     task_id = str(uuid.uuid4())
-    _queue_after_commit(classify_media_themes, media_id, 'classification task', task_id=task_id)
+    _queue_after_commit(
+        classify_media_themes, media_id, 'classification task', task_id=task_id,
+        kwargs={'use_file_text': use_file_text},
+    )
     return task_id
 
 

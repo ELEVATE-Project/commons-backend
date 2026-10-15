@@ -27,6 +27,10 @@ class MediaAdminForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        if 'primary_theme' in self.fields:
+            widget = self.fields['primary_theme'].widget
+            widget.can_add_related = widget.can_change_related = widget.can_delete_related = False
+
         # Manual tags: Include ALL manual tags from ALL organizations
         self.fields['manual_tags'].queryset = Tag.objects.filter(
             source_type=TagSourceChoices.MANUAL,

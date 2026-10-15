@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,9 +16,11 @@ from chatbot.celery_tasks.knowledge_service.media_tasks import (
 from chatbot.models import SecondaryThemeMatchType
 from chatbot.utils.database_util import update_document_theme, upsert_single_file
 from chatbot.utils.knowledge_service import theme_classification_service as service_module
+from chatbot.constants.constants import SECONDARY_DESCRIPTION_MAX_CHARS
 from chatbot.utils.knowledge_service.processor.theme_classifier import (
     ClassifiedTheme, DocumentMetadata, PartialMatchPolicy, SecondaryCandidate, SecondaryMatchValidator,
-    SecondaryThemeGenerator, SecondaryThemeSettings, ThemeClassifier, ThemeOption, ThemeRules, is_token_variant
+    SecondaryThemeGenerator, SecondaryThemeSettings, ThemeClassifier, ThemeOption, ThemeRules, describe_theme,
+    is_token_variant
 )
 from chatbot.utils.knowledge_service.theme_classification_service import (
     MediaThemeClassificationService, SecondaryThemeLink, ThemeClassificationStatus, _clean_summary, build_theme_code
@@ -36,9 +40,11 @@ THEMES = [
 FALLBACK = ThemeOption(code='Miscellaneous', name='Miscellaneous', description='Anything else.')
 
 CANDIDATES = [
-    SecondaryCandidate(id=11, name='Teacher Capacity Building', description='Training and coaching for teachers.'),
-    SecondaryCandidate(id=12, name='Inclusive Classroom Practices'),
-    SecondaryCandidate(id=13, name='Phonics Instruction', description='Teaching letter-sound relationships.'),
+    SecondaryCandidate(code='Teacher_Capacity_Building', name='Teacher Capacity Building',
+                       description='Training and coaching for teachers.'),
+    SecondaryCandidate(code='Inclusive_Classroom_Practices', name='Inclusive Classroom Practices'),
+    SecondaryCandidate(code='Phonics_Instruction', name='Phonics Instruction',
+                       description='Teaching letter-sound relationships.'),
 ]
 
 DOCUMENT = DocumentMetadata(
@@ -71,8 +77,8 @@ def classify_call(primary='foundational learning', matches=None, raw_matches=Non
         payload['matched_secondary_themes'] = raw_matches
     else:
         payload['matched_secondary_themes'] = [
-            {'id': theme_id, 'confidence': confidence, 'reason': 'Shown in the summary.'}
-            for theme_id, confidence in (matches or [])
+            {'code': code, 'confidence': confidence, 'reason': 'Shown in the summary.'}
+            for code, confidence in (matches or [])
         ]
     return {'toolUseId': 'tooluse_1', 'name': 'theme_classification', 'input': payload}
 
@@ -170,9 +176,38 @@ class ThemeRulesTests(SimpleTestCase):
         self.assertEqual(result.themes[0].description, 'Using sign language.')
         self.assertEqual(len(result.rejected), 3)
 
+    def test_secondary_descriptions_keep_a_full_definition_and_are_capped(self):
+        definition = ('Sign language use in classrooms so deaf and hard-of-hearing children can take part. ' * 7).strip()
+        raw = [
+            {'name': 'Sign Language Access', 'confidence': 0.8, 'description': definition[:600]},
+            {'name': 'Hearing Support Devices', 'confidence': 0.8, 'description': definition + ' ' + definition},
+        ]
+
+        themes = self.rules.validate_new_secondary(raw, needed=2).themes
+
+        self.assertEqual(themes[0].description, definition[:600].strip())
+        self.assertEqual(len(themes[1].description), SECONDARY_DESCRIPTION_MAX_CHARS)
+        self.assertTrue(themes[1].description.endswith('...'))
+
+    def test_generator_bot_asks_for_a_definition_within_the_stored_limit(self):
+        config = json.loads((SETUP_DIR / 'SecondaryThemeGeneratorBot.json').read_text())[0]
+        schema = json.loads(config['tool_context'])['toolConfig']['tools'][0]['toolSpec']['inputSchema']['json']
+        description = schema['properties']['new_secondary_themes']['items']['properties']['description']
+
+        self.assertEqual(description['maxLength'], SECONDARY_DESCRIPTION_MAX_CHARS)
+        self.assertIn('"Includes:"', config['context'])
+        self.assertNotIn('"description": "<one sentence>"', config['end_context'])
+
     def test_token_variants(self):
         self.assertTrue(is_token_variant('Formative Assessment', 'Formative Assessment Strategies'))
         self.assertFalse(is_token_variant('Teacher Capacity Building', 'Teacher Capacity Development'))
+
+    def test_logged_themes_show_their_code_or_name_until_one_exists(self):
+        matched = ClassifiedTheme(name='Phonics Instruction', code='Phonics_Instruction', confidence=0.9, reasoning='')
+        generated = ClassifiedTheme(name='Peer Learning Circles', confidence=0.8, reasoning='')
+
+        self.assertEqual(describe_theme(matched), "'Phonics_Instruction'@0.90")
+        self.assertEqual(describe_theme(generated), "'Peer Learning Circles'@0.80")
 
 
 class SecondaryMatchValidatorTests(SimpleTestCase):
@@ -180,41 +215,51 @@ class SecondaryMatchValidatorTests(SimpleTestCase):
     def validate(self, raw, **settings):
         return SecondaryMatchValidator(CANDIDATES, SecondaryThemeSettings(**settings)).validate(raw)
 
-    def test_ids_in_any_common_format_map_to_stored_names(self):
+    def test_codes_echoed_with_brackets_quotes_or_other_case_map_to_stored_themes(self):
         result = self.validate([
-            {'id': 13, 'confidence': 0.9, 'reason': 'Phonics drills.'},
-            {'id': '[11]', 'confidence': 0.8, 'reason': 'Teacher trackers.'},
+            {'code': 'Phonics_Instruction', 'confidence': 0.9, 'reason': 'Phonics drills.'},
+            {'code': ' [teacher_capacity_building] ', 'confidence': 0.8, 'reason': 'Teacher trackers.'},
+            {'code': ['Inclusive_Classroom_Practices'], 'confidence': 0.75, 'reason': 'Inclusion tips.'},
+        ], count=3)
+
+        self.assertTrue(result.is_valid)
+        self.assertEqual([(theme.code, theme.name) for theme in result.themes],
+                         [('Phonics_Instruction', 'Phonics Instruction'),
+                          ('Teacher_Capacity_Building', 'Teacher Capacity Building'),
+                          ('Inclusive_Classroom_Practices', 'Inclusive Classroom Practices')])
+
+    def test_unknown_duplicate_and_low_confidence_codes_are_dropped_without_error(self):
+        result = self.validate([
+            {'code': 'Invented_Theme', 'confidence': 0.9},
+            {'code': 'Phonics Instruction', 'confidence': 0.9},
+            {'code': 13, 'confidence': 0.9},
+            {'id': 'Phonics_Instruction', 'confidence': 0.9},
+            {'code': 'Phonics_Instruction', 'confidence': 0.9},
+            {'code': '"phonics_instruction"', 'confidence': 0.95},
+            {'code': 'Inclusive_Classroom_Practices', 'confidence': 0.5},
         ])
 
         self.assertTrue(result.is_valid)
-        self.assertEqual([(theme.theme_id, theme.name) for theme in result.themes],
-                         [(13, 'Phonics Instruction'), (11, 'Teacher Capacity Building')])
-
-    def test_unknown_duplicate_and_low_confidence_ids_are_dropped_without_error(self):
-        result = self.validate([
-            {'id': 99, 'confidence': 0.9},
-            {'id': 13, 'confidence': 0.9},
-            {'id': '13', 'confidence': 0.95},
-            {'id': 12, 'confidence': 0.5},
-        ])
-
-        self.assertTrue(result.is_valid)
-        self.assertEqual([theme.theme_id for theme in result.themes], [13])
-        self.assertEqual(len(result.rejected), 3)
+        self.assertEqual([theme.code for theme in result.themes], ['Phonics_Instruction'])
+        self.assertEqual(len(result.rejected), 6)
 
     def test_matches_are_capped_by_count_keeping_highest_confidence(self):
         result = self.validate([
-            {'id': 11, 'confidence': 0.75}, {'id': 12, 'confidence': 0.95}, {'id': 13, 'confidence': 0.85},
+            {'code': 'Teacher_Capacity_Building', 'confidence': 0.75},
+            {'code': 'Inclusive_Classroom_Practices', 'confidence': 0.95},
+            {'code': 'Phonics_Instruction', 'confidence': 0.85},
         ], count=2)
 
-        self.assertEqual([theme.theme_id for theme in result.themes], [12, 13])
+        self.assertEqual([theme.code for theme in result.themes], ['Inclusive_Classroom_Practices', 'Phonics_Instruction'])
 
     def test_missing_field_means_no_match_and_wrong_type_is_an_error(self):
         self.assertTrue(self.validate(None).is_valid)
-        self.assertFalse(self.validate('11, 12').is_valid)
+        self.assertFalse(self.validate('Phonics_Instruction, Teacher_Capacity_Building').is_valid)
 
-    def test_no_candidates_ignores_any_ids(self):
-        result = SecondaryMatchValidator([], SecondaryThemeSettings()).validate([{'id': 11, 'confidence': 0.9}])
+    def test_no_candidates_ignores_any_codes(self):
+        result = SecondaryMatchValidator([], SecondaryThemeSettings()).validate(
+            [{'code': 'Teacher_Capacity_Building', 'confidence': 0.9}]
+        )
 
         self.assertEqual(result.themes, [])
         self.assertTrue(result.is_valid)
@@ -229,20 +274,22 @@ class ThemeClassifierTests(SimpleTestCase):
         return ThemeClassifier(bot, THEMES, FALLBACK, invoke=invoke, candidates=candidates, settings=settings), invoke
 
     def test_primary_and_existing_secondary_matches_in_one_call(self):
-        classifier, invoke = self.build([classify_call(matches=[(13, 0.9), (11, 0.8)])])
+        classifier, invoke = self.build([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])])
 
         result = classifier.classify(DOCUMENT)
 
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.primary.code, 'Foundational_Learning')
-        self.assertEqual([theme.theme_id for theme in result.matched_secondary], [13, 11])
+        self.assertEqual([theme.code for theme in result.matched_secondary], ['Phonics_Instruction', 'Teacher_Capacity_Building'])
         prompt = rendered_prompt(invoke)
-        self.assertIn('[11] Teacher Capacity Building - Training and coaching for teachers.', prompt)
+        self.assertIn('[Teacher_Capacity_Building] Teacher Capacity Building - Training and coaching for teachers.',
+                      prompt)
+        self.assertIn('select by code only', prompt)
         self.assertIn('at most 2', prompt)
         self.assertEqual(tool_array_limit(invoke, 'matched_secondary_themes'), 2)
 
     def test_secondary_count_is_configurable(self):
-        classifier, invoke = self.build([classify_call(matches=[(13, 0.9)])], secondary_theme_count=5)
+        classifier, invoke = self.build([classify_call(matches=[('Phonics_Instruction', 0.9)])], secondary_theme_count=5)
 
         classifier.classify(DOCUMENT)
 
@@ -250,7 +297,7 @@ class ThemeClassifierTests(SimpleTestCase):
         self.assertEqual(tool_array_limit(invoke, 'matched_secondary_themes'), 5)
 
     def test_first_upload_without_candidates_tells_the_model_none_exist(self):
-        classifier, invoke = self.build([classify_call(matches=[(13, 0.9)])], candidates=[])
+        classifier, invoke = self.build([classify_call(matches=[('Phonics_Instruction', 0.9)])], candidates=[])
 
         result = classifier.classify(DOCUMENT)
 
@@ -260,14 +307,14 @@ class ThemeClassifierTests(SimpleTestCase):
     def test_malformed_matches_are_retried_once(self):
         classifier, invoke = self.build([
             classify_call(raw_matches='13, 11'),
-            classify_call(matches=[(13, 0.9)]),
+            classify_call(matches=[('Phonics_Instruction', 0.9)]),
         ])
 
         result = classifier.classify(DOCUMENT)
 
         self.assertEqual(invoke.call_count, 2)
         self.assertIn('must be a list', rendered_prompt(invoke))
-        self.assertEqual([theme.theme_id for theme in result.matched_secondary], [13])
+        self.assertEqual([theme.code for theme in result.matched_secondary], ['Phonics_Instruction'])
         self.assertFalse(result.needs_review)
 
     def test_malformed_matches_twice_keep_primary_and_fall_back_to_no_matches(self):
@@ -283,8 +330,8 @@ class ThemeClassifierTests(SimpleTestCase):
     def test_valid_primary_from_an_earlier_attempt_is_not_flagged_for_review(self):
         classifier, invoke = self.build([
             classify_call(raw_matches='13'),
-            classify_call(primary='Unknown', matches=[(13, 0.9)]),
-            classify_call(primary='Unknown', matches=[(13, 0.9)]),
+            classify_call(primary='Unknown', matches=[('Phonics_Instruction', 0.9)]),
+            classify_call(primary='Unknown', matches=[('Phonics_Instruction', 0.9)]),
         ])
 
         result = classifier.classify(DOCUMENT)
@@ -292,12 +339,12 @@ class ThemeClassifierTests(SimpleTestCase):
         self.assertEqual(invoke.call_count, 3)
         self.assertFalse(result.needs_review)
         self.assertEqual(result.primary.code, 'Foundational_Learning')
-        self.assertEqual([theme.theme_id for theme in result.matched_secondary], [13])
+        self.assertEqual([theme.code for theme in result.matched_secondary], ['Phonics_Instruction'])
 
     def test_unknown_primary_is_retried_with_feedback(self):
         classifier, invoke = self.build([
-            classify_call(primary='Teacher Wellbeing', matches=[(13, 0.9)]),
-            classify_call(matches=[(13, 0.9)]),
+            classify_call(primary='Teacher Wellbeing', matches=[('Phonics_Instruction', 0.9)]),
+            classify_call(matches=[('Phonics_Instruction', 0.9)]),
         ])
 
         result = classifier.classify(DOCUMENT)
@@ -308,32 +355,32 @@ class ThemeClassifierTests(SimpleTestCase):
 
     def test_primary_failures_fall_back_to_miscellaneous_and_keep_valid_matches(self):
         classifier, _ = self.build([
-            classify_call(primary='Unknown', matches=[(13, 0.9)]), None, RuntimeError('throttled'),
+            classify_call(primary='Unknown', matches=[('Phonics_Instruction', 0.9)]), None, RuntimeError('throttled'),
         ])
 
         result = classifier.classify(DOCUMENT)
 
         self.assertTrue(result.needs_review)
         self.assertEqual(result.primary.code, 'Miscellaneous')
-        self.assertEqual([theme.theme_id for theme in result.matched_secondary], [13])
+        self.assertEqual([theme.code for theme in result.matched_secondary], ['Phonics_Instruction'])
 
     def test_llama_typed_value_wrappers_are_unwrapped(self):
         wrapped = {'input': {
             'primary_theme': {'type': 'object', 'value': {'name': 'Inclusion', 'confidence': 0.8, 'reasoning': 'x'}},
-            'matched_secondary_themes': {'type': 'array', 'value': [{'id': 12, 'confidence': 0.9, 'reason': 'y'}]},
+            'matched_secondary_themes': {'type': 'array', 'value': [{'code': 'Inclusive_Classroom_Practices', 'confidence': 0.9, 'reason': 'y'}]},
         }}
         classifier, _ = self.build([wrapped])
 
         result = classifier.classify(DOCUMENT)
 
         self.assertEqual(result.primary.code, 'Inclusion')
-        self.assertEqual([theme.theme_id for theme in result.matched_secondary], [12])
+        self.assertEqual([theme.code for theme in result.matched_secondary], ['Inclusive_Classroom_Practices'])
 
 
 class SecondaryThemeGeneratorTests(SimpleTestCase):
 
     PRIMARY = ClassifiedTheme(name='Foundational Learning', code='Foundational_Learning', confidence=0.9, reasoning='')
-    MATCHED = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='', theme_id=13)]
+    MATCHED = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='', code='Phonics_Instruction')]
 
     def build(self, responses):
         invoke = MagicMock(side_effect=responses)
@@ -446,16 +493,16 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
         flag.assert_called_once_with(ThemeClassificationStatus.SKIPPED_NO_SUMMARY)
 
     def test_full_match_reuses_existing_themes_without_generation(self):
-        _, invoke, save = self.run_service([classify_call(matches=[(13, 0.9), (11, 0.8)])])
+        _, invoke, save = self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])])
 
         self.assertEqual(invoke.call_count, 1)
         classification, generated, _ = save.call_args.args
-        self.assertEqual([theme.theme_id for theme in classification.matched_secondary], [13, 11])
+        self.assertEqual([theme.code for theme in classification.matched_secondary], ['Phonics_Instruction', 'Teacher_Capacity_Building'])
         self.assertEqual(generated, [])
 
     def test_partial_match_generates_only_the_remaining_slots(self):
         _, invoke, save = self.run_service([
-            classify_call(matches=[(13, 0.9)]),
+            classify_call(matches=[('Phonics_Instruction', 0.9)]),
             generate_call(['Reading Fluency Tracking']),
         ])
 
@@ -474,7 +521,7 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
 
     def test_existing_only_policy_skips_generation_after_any_match(self):
         bot = load_bot(secondary_partial_match_policy='existing_only')
-        _, invoke, save = self.run_service([classify_call(matches=[(13, 0.9)])], classifier_bot=bot)
+        _, invoke, save = self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9)])], classifier_bot=bot)
 
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(save.call_args.args[1], [])
@@ -506,13 +553,13 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
         flag.assert_called_once_with(ThemeClassificationStatus.SKIPPED_NO_THEMES)
 
     def test_missing_generator_bot_still_saves_matches(self):
-        _, invoke, save = self.run_service([classify_call(matches=[(13, 0.9)])], generator=False)
+        _, invoke, save = self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9)])], generator=False)
 
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(len(save.call_args.args[0].matched_secondary), 1)
 
     def test_vector_theme_sync_is_queued_when_enabled(self):
-        self.run_service([classify_call(matches=[(13, 0.9), (11, 0.8)])],
+        self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])],
                          classifier_bot=load_bot(vector_theme_sync_enabled=True))
 
         self.vector_sync.assert_called_once_with(42)
@@ -520,12 +567,12 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
     def test_vector_theme_sync_is_off_by_default(self):
         bot = load_bot()
         bot.other_params.pop('vector_theme_sync_enabled', None)
-        self.run_service([classify_call(matches=[(13, 0.9), (11, 0.8)])], classifier_bot=bot)
+        self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])], classifier_bot=bot)
 
         self.vector_sync.assert_not_called()
 
     def test_vector_theme_sync_can_be_disabled(self):
-        self.run_service([classify_call(matches=[(13, 0.9), (11, 0.8)])],
+        self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])],
                          classifier_bot=load_bot(vector_theme_sync_enabled='false'))
 
         self.vector_sync.assert_not_called()
@@ -540,7 +587,7 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
             ),
         ]
         outcome, _, _ = self.run_service(
-            [classify_call(matches=[(13, 0.9)]), generate_call(['Reading Fluency Tracking'])], links=links
+            [classify_call(matches=[('Phonics_Instruction', 0.9)]), generate_call(['Reading Fluency Tracking'])], links=links
         )
 
         self.assertEqual(outcome.as_dict()['secondary_reuse'], {'matched': 1, 'deduplicated': 0, 'created': 1})
@@ -551,8 +598,10 @@ class ResolveLinksTests(SimpleTestCase):
 
     def setUp(self):
         self.service = MediaThemeClassificationService(SimpleNamespace(id=42, name='x'))
-        self.phonics = SimpleNamespace(pk=13, name='Phonics Instruction', is_primary=False, status='draft')
-        self.teacher = SimpleNamespace(pk=11, name='Teacher Capacity Building', is_primary=False, status='draft')
+        self.phonics = SimpleNamespace(pk='Phonics_Instruction', name='Phonics Instruction', is_primary=False,
+                                       status='draft')
+        self.teacher = SimpleNamespace(pk='Teacher_Capacity_Building', name='Teacher Capacity Building',
+                                       is_primary=False, status='draft')
 
     def resolve(self, matched, generated, resolved, count=2):
         resource_theme = MagicMock()
@@ -564,7 +613,8 @@ class ResolveLinksTests(SimpleTestCase):
         return links, lock
 
     def test_generated_name_resolving_to_an_already_linked_theme_is_not_linked_twice(self):
-        matched = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='', theme_id=13)]
+        matched = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='',
+                                   code='Phonics_Instruction')]
         generated = [
             ClassifiedTheme(name='Phonics Teaching', confidence=0.8, reasoning=''),
             ClassifiedTheme(name='Teacher Coaching', confidence=0.8, reasoning=''),
@@ -577,15 +627,41 @@ class ResolveLinksTests(SimpleTestCase):
 
         lock.assert_called_once()
         self.assertEqual([(link.theme.pk, link.match_type) for link in links],
-                         [(13, SecondaryThemeMatchType.MATCHED), (11, SecondaryThemeMatchType.DEDUPLICATED)])
+                         [('Phonics_Instruction', SecondaryThemeMatchType.MATCHED),
+                          ('Teacher_Capacity_Building', SecondaryThemeMatchType.DEDUPLICATED)])
 
     def test_matches_only_never_take_the_creation_lock(self):
-        matched = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='', theme_id=13)]
+        matched = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='',
+                                   code='Phonics_Instruction')]
 
         links, lock = self.resolve(matched, [], [])
 
         lock.assert_not_called()
         self.assertEqual(len(links), 1)
+
+    def test_matched_themes_are_looked_up_by_code(self):
+        matched = [ClassifiedTheme(name='Phonics Instruction', confidence=0.9, reasoning='', code='Phonics_Instruction')]
+        resource_theme = MagicMock()
+        resource_theme.objects.in_bulk.return_value = {self.phonics.pk: self.phonics}
+        with patch.object(service_module, 'ResourceTheme', resource_theme):
+            links = self.service._resolve_links(matched, [], SecondaryThemeSettings(count=2))
+
+        resource_theme.objects.in_bulk.assert_called_once_with(['Phonics_Instruction'])
+        self.assertEqual([link.theme.pk for link in links], ['Phonics_Instruction'])
+
+    def test_candidates_carry_their_code(self):
+        rows = [SimpleNamespace(code='Peer_Learning_Circles', name='Peer Learning Circles', description='Peers.'),
+                SimpleNamespace(code='Phonics_Instruction', name='Phonics Instruction', description='')]
+        resource_theme = MagicMock()
+        queryset = resource_theme.objects.filter.return_value.only.return_value
+        queryset.count.return_value = len(rows)
+        queryset.order_by.return_value = rows
+        with patch.object(service_module, 'ResourceTheme', resource_theme):
+            candidates, total = service_module.load_secondary_candidates(DOCUMENT, SecondaryThemeSettings())
+
+        resource_theme.objects.filter.return_value.only.assert_called_once_with('code', 'name', 'description')
+        self.assertEqual(total, 2)
+        self.assertEqual([candidate.code for candidate in candidates], ['Peer_Learning_Circles', 'Phonics_Instruction'])
 
 
 class VectorThemeSyncTests(SimpleTestCase):
@@ -699,6 +775,8 @@ class AddMediaThemeClassificationTests(SimpleTestCase):
         needs = self.admin.needs_theme_classification
         self.assertTrue(needs(self.form(changed=['description']), [], change=True))
         self.assertTrue(needs(self.form(changed=['manual_tags']), [], change=True))
+        self.assertTrue(needs(self.form(changed=['file']), [], change=True))
+        self.assertFalse(needs(self.form(changed=['primary_theme', 'file', 'description']), [], change=True))
         self.assertFalse(needs(self.form(changed=['display_mode', 'priority']), [], change=True))
         self.assertTrue(needs(self.form(), [self.formset('keyvalue', True)], change=True))
         self.assertFalse(needs(self.form(), [self.formset('image', True)], change=True))
@@ -709,8 +787,57 @@ class AddMediaThemeClassificationTests(SimpleTestCase):
                 patch('chatbot.admin.media_admin.enqueue_theme_classification', return_value='task-1') as enqueue:
             self.admin.save_related(request, self.form(), [], change=False)
 
-        enqueue.assert_called_once_with(5)
+        enqueue.assert_called_once_with(5, use_file_text=False)
         self.assertEqual(request.theme_classification, ('task-1', 'Guide'))
+
+    def test_replaced_file_is_classified_from_its_own_text_unless_the_summary_was_edited(self):
+        def use_file_text(changed, change=True):
+            with patch('django.contrib.admin.ModelAdmin.save_related'), \
+                    patch('chatbot.admin.media_admin.enqueue_theme_classification', return_value='t') as enqueue:
+                self.admin.save_related(SimpleNamespace(), self.form(changed=changed), [], change=change)
+            return enqueue.call_args.kwargs['use_file_text']
+
+        self.assertTrue(use_file_text(['file']))
+        self.assertTrue(use_file_text(['file', 'name', 'manual_tags']))
+        self.assertFalse(use_file_text(['file', 'description']))
+        self.assertFalse(use_file_text(['file', 'extracted_text']))
+        self.assertFalse(use_file_text(['description']))
+        self.assertFalse(use_file_text(['file'], change=False))
+
+    def fieldset_fields(self, obj):
+        with patch('chatbot.admin.media_admin.get_user_profile', return_value=None):
+            fieldsets = self.admin.get_fieldsets(SimpleNamespace(user=None), obj)
+        return [field for _, options in fieldsets for field in options['fields']]
+
+    def test_primary_theme_is_editable_only_on_edit_of_top_level_media(self):
+        def media(parent_id=None):
+            tags = MagicMock()
+            tags.filter.return_value.exists.return_value = False
+            return SimpleNamespace(pk=5, parent_id=parent_id, tags=tags)
+
+        self.assertIn('primary_theme', self.fieldset_fields(media()))
+        self.assertNotIn('primary_theme', self.fieldset_fields(None))
+        self.assertNotIn('primary_theme', self.fieldset_fields(media(parent_id=3)))
+
+    def test_manual_primary_theme_replaces_the_classifier_verdict(self):
+        def save(primary_theme_id, changed):
+            obj = SimpleNamespace(
+                primary_theme_id=primary_theme_id, primary_theme_reasoning='Classifier reasoning.',
+                needs_review=True, tags=MagicMock(),
+            )
+            with patch('simple_history.admin.SimpleHistoryAdmin.save_model') as save_model:
+                self.admin.save_model(SimpleNamespace(), obj, self.form(changed=changed), change=True)
+            save_model.assert_called_once()
+            return obj
+
+        manual = save('School_Governance', ['primary_theme'])
+        self.assertIsNone(manual.primary_theme_reasoning)
+        self.assertFalse(manual.needs_review)
+        self.assertTrue(save(None, ['primary_theme']).needs_review)
+
+        untouched = save('School_Governance', ['description'])
+        self.assertEqual(untouched.primary_theme_reasoning, 'Classifier reasoning.')
+        self.assertTrue(untouched.needs_review)
 
     def test_successful_save_waits_for_mapping_then_redirects_with_message(self):
         request = SimpleNamespace(theme_classification=('task-1', 'Guide'))
@@ -733,6 +860,109 @@ class AddMediaThemeClassificationTests(SimpleTestCase):
             self.admin.wait_for_theme_mapping(SimpleNamespace(), SimpleNamespace(status_code=302))
 
         wait.assert_not_called()
+
+
+class ResourceThemeAdminTests(SimpleTestCase):
+
+    def setUp(self):
+        from django.contrib import admin as django_admin
+        from chatbot.admin.theme_admin import ResourceThemeAdmin
+        from chatbot.models import ResourceTheme
+        self.theme_admin = ResourceThemeAdmin(ResourceTheme, django_admin.site)
+
+    def test_theme_type_filter_lists_primary_secondary_or_all(self):
+        from chatbot.admin.theme_admin import ResourceThemeTypeFilter
+        from chatbot.models import ResourceTheme
+
+        def filtered(value):
+            params = {'theme_type': [value]} if value else {}
+            queryset = MagicMock()
+            ResourceThemeTypeFilter(None, params, ResourceTheme, self.theme_admin).queryset(None, queryset)
+            return queryset.filter
+
+        filtered('primary').assert_called_once_with(is_primary=True)
+        filtered('secondary').assert_called_once_with(is_primary=False)
+        filtered('all').assert_not_called()
+        filtered(None).assert_not_called()
+
+    def test_export_requires_view_permission(self):
+        from django.core.exceptions import PermissionDenied
+        with patch.object(self.theme_admin, 'has_view_permission', return_value=False), \
+                self.assertRaises(PermissionDenied):
+            self.theme_admin.export_csv_view(SimpleNamespace(GET={}))
+
+    def export_mapping(self, user, links):
+        changelist_queryset = MagicMock()
+        link_queryset = MagicMock()
+        ordered = link_queryset.select_related.return_value.prefetch_related.return_value.order_by.return_value
+        ordered.__iter__.side_effect = lambda: iter(links)
+        ordered.filter.return_value.__iter__.side_effect = lambda: iter(links)
+        ordered.none.return_value.__iter__.side_effect = lambda: iter([])
+        secondary_theme = MagicMock()
+        secondary_theme.objects.filter.return_value = link_queryset
+        with patch.object(self.theme_admin, 'has_view_permission', return_value=True), \
+                patch.object(self.theme_admin, 'get_changelist_instance',
+                             return_value=SimpleNamespace(queryset=changelist_queryset)), \
+                patch('chatbot.admin.theme_admin.MediaSecondaryTheme', secondary_theme), \
+                patch('chatbot.admin.theme_admin.get_user_company', return_value=getattr(user, 'company', None)):
+            response = self.theme_admin.export_csv_view(SimpleNamespace(GET={}, user=user))
+        content = response.content.decode('utf-8')
+        self.assertTrue(content.startswith('﻿'))
+        changelist_queryset.filter.assert_called_once_with(is_primary=False)
+        return response, list(csv.reader(io.StringIO(content[1:]))), ordered
+
+    def mapping_link(self, media, theme_name, confidence):
+        return SimpleNamespace(media=media, theme=SimpleNamespace(name=theme_name), confidence=confidence)
+
+    def test_secondary_mapping_export_has_one_row_per_media_and_secondary_theme(self):
+        guide = SimpleNamespace(id=990, name='testing11.pdf', title_values=[SimpleNamespace(value='Testing 11')],
+                                primary_theme=SimpleNamespace(name='Foundational Learning'))
+        untitled = SimpleNamespace(id=1012, name='=cmd', title_values=[], primary_theme=None)
+        links = [self.mapping_link(guide, 'Playful Learning Environments', 0.8),
+                 self.mapping_link(guide, 'Child Centred Approach', 0.7),
+                 self.mapping_link(untitled, 'Peer Learning Circles', None)]
+        superuser = SimpleNamespace(is_superuser=True, has_perm=lambda perm: True)
+
+        response, rows, _ = self.export_mapping(superuser, links)
+
+        self.assertRegex(response['Content-Disposition'], r'filename="secondary_theme_mapping_\d{8}\.csv"')
+        self.assertEqual(rows, [
+            ['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Theme', 'AI Confidence Score'],
+            ['Testing 11', 'Foundational Learning', 'Playful Learning Environments', '0.80'],
+            ['Testing 11', 'Foundational Learning', 'Child Centred Approach', '0.70'],
+            ["'=cmd", '', 'Peer Learning Circles', ''],
+        ])
+
+    def test_secondary_mapping_export_is_limited_to_the_users_organization(self):
+        company = SimpleNamespace(id=7)
+        moderator = SimpleNamespace(is_superuser=False, has_perm=lambda perm: True, company=company)
+        _, _, ordered = self.export_mapping(moderator, [])
+        ordered.filter.assert_called_once_with(media__organization=company)
+
+        no_company = SimpleNamespace(is_superuser=False, has_perm=lambda perm: True)
+        _, rows, ordered = self.export_mapping(no_company, [])
+        ordered.none.assert_called_once()
+        self.assertEqual(rows, [['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Theme',
+                                 'AI Confidence Score']])
+
+    def test_secondary_mapping_export_requires_media_view_permission(self):
+        from django.core.exceptions import PermissionDenied
+        user = SimpleNamespace(is_superuser=False, has_perm=lambda perm: perm != 'chatbot.view_media')
+        with patch.object(self.theme_admin, 'has_view_permission', return_value=True), \
+                self.assertRaises(PermissionDenied):
+            self.theme_admin.export_csv_view(SimpleNamespace(GET={}, user=user))
+
+    def test_themes_cannot_be_added_from_the_admin(self):
+        self.assertFalse(self.theme_admin.has_add_permission(SimpleNamespace(user=SimpleNamespace(is_superuser=True))))
+
+    def test_code_and_description_are_read_only_on_edit_but_editable_on_add(self):
+        theme_admin = self.theme_admin
+
+        edit_fields = theme_admin.get_readonly_fields(None, SimpleNamespace(pk=4))
+        self.assertIn('code', edit_fields)
+        self.assertIn('description', edit_fields)
+        self.assertNotIn('name', edit_fields)
+        self.assertEqual(theme_admin.get_readonly_fields(None), ('created_at', 'updated_at'))
 
 
 class ThemeWaitAndMessageTests(SimpleTestCase):
@@ -825,6 +1055,39 @@ class FileTextFallbackTests(SimpleTestCase):
             service.run()
 
         flag.assert_called_once_with(ThemeClassificationStatus.SKIPPED_NO_SUMMARY)
+
+    def test_replaced_file_text_overrides_the_stale_description(self):
+        invoke = MagicMock(side_effect=[classify_call(matches=[])])
+        service = MediaThemeClassificationService(self.media, invoke=invoke, use_file_text=True)
+        bots = {'/theme_classifier': load_bot()}
+        with patch.object(service_module, 'build_document_metadata', return_value=DOCUMENT), \
+                patch.object(service_module, 'extract_text_from_media_file',
+                             return_value='School leadership and SMC planning handbook.') as read, \
+                patch.object(service_module, 'get_company_bot', side_effect=lambda route, company: bots.get(route)), \
+                patch.object(service_module, 'load_theme_options', return_value=(THEMES, FALLBACK)), \
+                patch.object(service_module, 'load_secondary_candidates', return_value=([], 0)), \
+                patch.object(MediaThemeClassificationService, 'save_classification', return_value=[]), \
+                patch.object(service_module, 'queue_vector_theme_sync'):
+            service.run()
+
+        read.assert_called_once_with(self.media)
+        prompt = rendered_prompt(invoke, 0)
+        self.assertIn('School leadership and SMC planning handbook.', prompt)
+        self.assertNotIn(DOCUMENT.summary, prompt)
+
+    def test_file_replacement_flag_reaches_the_celery_task_and_service(self):
+        from chatbot.celery_tasks.knowledge_service import theme_tasks
+        from chatbot.models import Media
+        with patch.object(service_module.transaction, 'on_commit', side_effect=lambda callback: callback()), \
+                patch.object(theme_tasks.classify_media_themes, 'apply_async') as apply_async:
+            task_id = service_module.enqueue_theme_classification(5, use_file_text=True)
+        apply_async.assert_called_once_with(args=(5,), task_id=task_id, kwargs={'use_file_text': True})
+
+        with patch.object(Media, 'objects') as objects, \
+                patch.object(service_module, 'MediaThemeClassificationService') as service_class:
+            objects.select_related.return_value.filter.return_value.first.return_value = self.media
+            theme_tasks.classify_media_themes(5, use_file_text=True)
+        service_class.assert_called_once_with(self.media, use_file_text=True)
 
     def media_with_file(self, name):
         handle = MagicMock()
