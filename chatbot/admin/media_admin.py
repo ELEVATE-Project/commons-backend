@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django import forms
 from django.shortcuts import render
 from django.http import HttpResponseRedirect
@@ -8,6 +8,7 @@ from chatbot.filter.custom_date_from_filter import CustomAdvanceDateFilter
 from chatbot.form.media.media_form import MediaAdminForm
 from chatbot.models import Tag, Profile, TagChoices, TagSourceChoices
 from chatbot.models.media_models import Media, KeyValue, MediaImage
+from chatbot.models.theme_models import MediaSecondaryTheme
 from chatbot.models.enums import FileDisplayMode, ProfileType
 from simple_history.admin import SimpleHistoryAdmin
 from chatbot.utils.knowledge_service.cache_manager import GetCachedItemView
@@ -23,6 +24,18 @@ from chatbot.views.Media.google_drive_integration import (
     GoogleDriveFileImportView
 )
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company, get_user_profile
+from chatbot.utils.knowledge_service.theme_classification_service import (
+    ADMIN_THEME_WAIT_TIMEOUT_SECONDS, ThemeMessageLevel, enqueue_theme_classification, theme_outcome_message,
+    wait_for_theme_classification
+)
+
+THEME_CLASSIFICATION_INPUT_FIELDS = frozenset({'name', 'description', 'extracted_text', 'manual_tags'})
+THEME_MESSAGE_LEVELS = {
+    ThemeMessageLevel.SUCCESS: messages.SUCCESS,
+    ThemeMessageLevel.WARNING: messages.WARNING,
+    ThemeMessageLevel.ERROR: messages.ERROR,
+    ThemeMessageLevel.INFO: messages.INFO,
+}
 
 
 class MediaOrganizationFilter(admin.SimpleListFilter):
@@ -55,6 +68,24 @@ class KeyValueInline(admin.TabularInline):
     extra = 1
 
 
+class MediaSecondaryThemeInline(admin.TabularInline):
+    model = MediaSecondaryTheme
+    extra = 0
+    fields = ('theme', 'theme_status', 'match_type', 'confidence', 'reasoning', 'created_at')
+    readonly_fields = fields
+    can_delete = False
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('theme')
+
+    @admin.display(description='Theme status')
+    def theme_status(self, obj):
+        return obj.theme.get_status_display()
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 class MediaImagesInline(admin.TabularInline):
     model = MediaImage
     extra = 1
@@ -67,8 +98,9 @@ class MediaImagesInline(admin.TabularInline):
 class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     form = MediaAdminForm
     list_display = (
-        'file_name', 'get_title', 'get_organization', 'media_type', 'source_provider',
-        'display_mode', 'parent__name', 'view_count', 'download_count', 'updated_at', 'created_at'
+        'file_name', 'get_title', 'primary_theme', 'get_secondary_themes', 'needs_review', 'get_organization',
+        'media_type', 'source_provider', 'display_mode', 'parent__name', 'view_count', 'download_count',
+        'updated_at', 'created_at'
     )
     list_filter = (
         CustomAdvanceDateFilter,
@@ -77,12 +109,14 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         MediaOrganizationFilter,
         'name',
         'media_type',
-        'company_bot'
+        'company_bot',
+        'primary_theme',
+        'needs_review'
     )
     search_fields = ('name', 'key_values__value')
     actions = ['export_selected', 'change_display_mode_action']
     list_export = ('csv', 'xlsx')
-    inlines = [KeyValueInline, MediaImagesInline]
+    inlines = [KeyValueInline, MediaImagesInline, MediaSecondaryThemeInline]
     raw_id_fields = ('company_bot', 'parent', 'organization')
     date_hierarchy = 'created_at'
     readonly_fields = ('view_count', 'download_count', 'thumbnail')
@@ -110,6 +144,10 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     get_title.short_description = 'Title'
     get_title.admin_order_field = 'key_values__value'
 
+    @admin.display(description='Secondary themes')
+    def get_secondary_themes(self, obj):
+        return ', '.join(link.theme.name for link in obj.secondary_theme_links.all()) or '-'
+
     def get_organization(self, obj):
         return obj.organization.name if obj.organization else "-"
 
@@ -119,8 +157,8 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     def get_queryset(self, request):
         """Optimize queries by prefetching related objects"""
         qs = super().get_queryset(request).select_related(
-            'organization', 'parent'
-        ).prefetch_related('key_values', 'tags')
+            'organization', 'parent', 'primary_theme'
+        ).prefetch_related('key_values', 'tags', 'secondary_theme_links__theme')
 
         if request.user.is_superuser:
             return qs
@@ -146,6 +184,41 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         print("auto_tags to preserve:", auto_tags)
 
         obj.tags.set(manual_tags + auto_tags)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if self.needs_theme_classification(form, formsets, change):
+            request.theme_classification = (
+                enqueue_theme_classification(form.instance.pk), form.instance.name
+            )
+
+    @staticmethod
+    def needs_theme_classification(form, formsets, change):
+        if form.instance.parent_id:
+            return False
+        if not change:
+            return True
+        if THEME_CLASSIFICATION_INPUT_FIELDS.intersection(form.changed_data):
+            return True
+        return any(formset.model is KeyValue and formset.has_changed() for formset in formsets)
+
+    def add_view(self, request, form_url='', extra_context=None):
+        response = super().add_view(request, form_url, extra_context)
+        return self.wait_for_theme_mapping(request, response)
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        response = super().change_view(request, object_id, form_url, extra_context)
+        return self.wait_for_theme_mapping(request, response)
+
+    def wait_for_theme_mapping(self, request, response):
+        pending = getattr(request, 'theme_classification', None)
+        if not pending or response.status_code != 302:
+            return response
+        task_id, media_name = pending
+        outcome = wait_for_theme_classification(task_id, ADMIN_THEME_WAIT_TIMEOUT_SECONDS)
+        level, message = theme_outcome_message(media_name, outcome)
+        self.message_user(request, message, THEME_MESSAGE_LEVELS[level])
+        return response
 
     def get_fieldsets(self, request, obj=None):
         # Check if user is a MODERATOR

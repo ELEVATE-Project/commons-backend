@@ -6,6 +6,7 @@ import os
 DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
 
 SEARCH_TOP_K = 3
+THEME_UPDATE_TIMEOUT_SECONDS = 30
 
 base_url = os.getenv('VECTOR_DB_BASE_URL')
 
@@ -44,6 +45,9 @@ def upsert_single_file(filename, file, metadata, media):
     # Add summary if available (from description)
     if hasattr(media, 'description') and media.description:
         payload['summary'] = media.description
+
+    if media.primary_theme_id:
+        payload['theme'] = media.primary_theme_id
     
     # Add tags if available
     if hasattr(media, 'tags'):
@@ -139,6 +143,9 @@ def update_single_file(media_id, filename, file, metadata, media):
     # Add summary if available (from description)
     if hasattr(media, 'description') and media.description:
         payload['summary'] = media.description
+
+    if media.primary_theme_id:
+        payload['theme'] = media.primary_theme_id
     
     # Add tags if available
     if hasattr(media, 'tags'):
@@ -157,3 +164,22 @@ def update_single_file(media_id, filename, file, metadata, media):
     response = requests.request("PUT", url, headers=headers, data=payload, files=files)
     print("updated: ", response.json())
     return response.status_code, response.text
+
+
+def update_document_theme(source_id, theme, company_slug=None):
+    url = f"{base_url}/api/documents/{source_id}/theme"
+    data = {'theme': theme}
+    if company_slug:
+        data['company_id'] = company_slug
+
+    try:
+        response = requests.patch(
+            url, headers={'accept': 'application/json'}, data=data, timeout=THEME_UPDATE_TIMEOUT_SECONDS
+        )
+        return response.status_code, response.text
+    except requests.exceptions.Timeout:
+        return 504, f"Request timeout after {THEME_UPDATE_TIMEOUT_SECONDS} seconds"
+    except requests.exceptions.ConnectionError as e:
+        return 503, f"Connection error: {str(e)}"
+    except Exception as e:
+        return 500, f"Unexpected error: {str(e)}"
