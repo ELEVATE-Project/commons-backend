@@ -968,7 +968,7 @@ class ResourceThemeAdminTests(SimpleTestCase):
     def mapping_link(self, media, theme_name, confidence):
         return SimpleNamespace(media=media, theme=SimpleNamespace(name=theme_name), confidence=confidence)
 
-    def test_secondary_mapping_export_has_one_row_per_media_and_secondary_theme(self):
+    def test_secondary_mapping_export_has_one_row_per_media_with_comma_separated_themes(self):
         guide = SimpleNamespace(id=990, name='testing11.pdf', title_values=[SimpleNamespace(value='Testing 11')],
                                 primary_theme=SimpleNamespace(name='Foundational Learning'))
         untitled = SimpleNamespace(id=1012, name='=cmd', title_values=[], primary_theme=None)
@@ -981,10 +981,9 @@ class ResourceThemeAdminTests(SimpleTestCase):
 
         self.assertRegex(response['Content-Disposition'], r'filename="secondary_theme_mapping_\d{8}\.csv"')
         self.assertEqual(rows, [
-            ['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Theme', 'AI Confidence Score'],
-            ['Testing 11', 'Foundational Learning', 'Playful Learning Environments', '0.80'],
-            ['Testing 11', 'Foundational Learning', 'Child Centred Approach', '0.70'],
-            ["'=cmd", '', 'Peer Learning Circles', ''],
+            ['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Themes', 'AI Confidence Scores'],
+            ['Testing 11', 'Foundational Learning', 'Playful Learning Environments, Child Centred Approach', '0.80, 0.70'],
+            ["'=cmd", '', 'Peer Learning Circles', '-'],
         ])
 
     def test_secondary_mapping_export_is_limited_to_the_users_organization(self):
@@ -996,8 +995,8 @@ class ResourceThemeAdminTests(SimpleTestCase):
         no_company = SimpleNamespace(is_superuser=False, has_perm=lambda perm: True)
         _, rows, ordered = self.export_mapping(no_company, [])
         ordered.none.assert_called_once()
-        self.assertEqual(rows, [['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Theme',
-                                 'AI Confidence Score']])
+        self.assertEqual(rows, [['Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Themes',
+                                 'AI Confidence Scores']])
 
     def test_secondary_mapping_export_requires_media_view_permission(self):
         from django.core.exceptions import PermissionDenied

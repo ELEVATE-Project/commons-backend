@@ -1,4 +1,5 @@
 import csv
+from itertools import groupby
 
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
@@ -14,7 +15,7 @@ from chatbot.utils.company_utils import get_user_company
 # from rangefilter.filters import DateTimeRangeFilter
 
 SECONDARY_MAPPING_EXPORT_FIELDS = (
-    'Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Theme', 'AI Confidence Score'
+    'Resource', 'Assigned Primary Theme', 'AI-Recommended Secondary Themes', 'AI Confidence Scores'
 )
 CSV_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
 def csv_safe(value):
@@ -116,14 +117,15 @@ class ResourceThemeAdmin(admin.ModelAdmin):
         response = csv_response(f'secondary_theme_mapping_{timezone.localdate():%Y%m%d}.csv')
         writer = csv.writer(response)
         writer.writerow(SECONDARY_MAPPING_EXPORT_FIELDS)
-        for link in links:
-            media = link.media
+        for _, media_links in groupby(links, key=lambda link: link.media.id):
+            media_links = list(media_links)
+            media = media_links[0].media
             title = media.title_values[0].value if media.title_values else ''
             writer.writerow([
                 csv_safe(title or media.name),
                 csv_safe(media.primary_theme.name if media.primary_theme else ''),
-                csv_safe(link.theme.name),
-                f'{link.confidence:.2f}' if link.confidence is not None else '',
+                csv_safe(', '.join(link.theme.name for link in media_links)),
+                ', '.join(f'{link.confidence:.2f}' if link.confidence is not None else '-' for link in media_links),
             ])
         return response
 
