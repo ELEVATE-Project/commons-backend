@@ -192,7 +192,7 @@ class BatchMediaSaveView(View):
                 return os.path.splitext(str(value))[0]
         return fallback_filename
 
-    def wait_for_vector_db_save_safe(self, task_id, timeout=30):
+    def wait_for_vector_db_save_safe(self, task_id, timeout=1200):
         """Enhanced waiting with better error handling"""
         import time
         from celery.result import AsyncResult
