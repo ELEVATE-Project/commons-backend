@@ -13,8 +13,8 @@ from chatbot.celery_tasks.knowledge_service.media_tasks import (
     ThemeSyncDecision, decide_theme_sync, sync_media_theme_to_vector_db
 )
 
-from chatbot.models import SecondaryThemeMatchType
-from chatbot.utils.database_util import update_document_theme, upsert_single_file
+from chatbot.models import LLMProvider, SecondaryThemeMatchType
+from chatbot.utils.database_util import is_document_indexed, update_single_file, upsert_single_file
 from chatbot.utils.knowledge_service import theme_classification_service as service_module
 from chatbot.constants.constants import SECONDARY_DESCRIPTION_MAX_CHARS
 from chatbot.utils.knowledge_service.processor.theme_classifier import (
@@ -564,12 +564,17 @@ class MediaThemeClassificationServiceTests(SimpleTestCase):
 
         self.vector_sync.assert_called_once_with(42)
 
-    def test_vector_theme_sync_is_off_by_default(self):
+    def test_vector_theme_sync_is_on_by_default(self):
         bot = load_bot()
         bot.other_params.pop('vector_theme_sync_enabled', None)
         self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])], classifier_bot=bot)
 
-        self.vector_sync.assert_not_called()
+        self.vector_sync.assert_called_once_with(42)
+
+    def test_bot_config_enables_vector_sync(self):
+        self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9)])])
+
+        self.vector_sync.assert_called_once_with(42)
 
     def test_vector_theme_sync_can_be_disabled(self):
         self.run_service([classify_call(matches=[('Phonics_Instruction', 0.9), ('Teacher_Capacity_Building', 0.8)])],
@@ -718,16 +723,15 @@ class VectorThemeSyncTests(SimpleTestCase):
         self.media = SimpleNamespace(
             id=7, priority='P1', name='Child-Centered Education in Action', description='Pedagogy guide.',
             media_type='application/pdf', organization=SimpleNamespace(slug='shikshalokamstaging'),
-            primary_theme_id='Teaching_Learning_Practises',
+            primary_theme_id='Teaching_Learning_Practises', company_bot=SimpleNamespace(provider='bedrock/converse'),
         )
 
     def test_retry_rules(self):
-        self.assertEqual(decide_theme_sync(200, '{}'), ThemeSyncDecision.DONE)
-        self.assertEqual(decide_theme_sync(404, '{"detail": "No documents found with source_id: 7"}'),
-                         ThemeSyncDecision.RETRY)
-        self.assertEqual(decide_theme_sync(503, 'Connection error'), ThemeSyncDecision.RETRY)
-        self.assertEqual(decide_theme_sync(404, '{"detail": "Not Found"}'), ThemeSyncDecision.FAIL)
-        self.assertEqual(decide_theme_sync(400, 'bad request'), ThemeSyncDecision.FAIL)
+        self.assertEqual(decide_theme_sync(200), ThemeSyncDecision.DONE)
+        self.assertEqual(decide_theme_sync(503), ThemeSyncDecision.RETRY)
+        self.assertEqual(decide_theme_sync(429), ThemeSyncDecision.RETRY)
+        self.assertEqual(decide_theme_sync(404), ThemeSyncDecision.FAIL)
+        self.assertEqual(decide_theme_sync(400), ThemeSyncDecision.FAIL)
 
     def test_upsert_sends_theme_code_with_title_and_summary(self):
         response = MagicMock(status_code=201)
@@ -749,48 +753,95 @@ class VectorThemeSyncTests(SimpleTestCase):
 
         self.assertNotIn('theme', request.call_args.kwargs['data'])
 
-    def test_update_document_theme_request(self):
-        with patch('chatbot.utils.database_util.requests.patch',
-                   return_value=MagicMock(status_code=200, text='{"updated": 3}')) as request:
-            status, _ = update_document_theme(7, 'Teaching_Learning_Practises', 'shikshalokamstaging')
+    def test_update_replaces_the_document_with_every_field(self):
+        response = MagicMock(status_code=200, text='{"created_count": 18}')
+        with patch('chatbot.utils.database_util.requests.request', return_value=response) as request:
+            status, _ = update_single_file(7, 'guide.pdf', b'%PDF', {'source': 'file'}, self.media)
 
         self.assertEqual(status, 200)
-        self.assertTrue(request.call_args.args[0].endswith('/api/documents/7/theme'))
-        self.assertEqual(request.call_args.kwargs['data'],
-                         {'theme': 'Teaching_Learning_Practises', 'company_id': 'shikshalokamstaging'})
+        method, url = request.call_args.args
+        self.assertEqual(method, 'PUT')
+        self.assertTrue(url.endswith('/api/documents/7'))
+        payload = request.call_args.kwargs['data']
+        self.assertEqual(
+            {key: payload[key] for key in ('title', 'summary', 'theme', 'priority', 'company_id')},
+            {'title': 'Child-Centered Education in Action', 'summary': 'Pedagogy guide.',
+             'theme': 'Teaching_Learning_Practises', 'priority': 'P1', 'company_id': 'shikshalokamstaging'},
+        )
+        self.assertEqual(request.call_args.kwargs['files'][0][1][:2], ('guide.pdf', b'%PDF'))
+        self.assertIn('timeout', request.call_args.kwargs)
 
-    def test_update_document_theme_connection_error_is_retryable(self):
-        with patch('chatbot.utils.database_util.requests.patch',
+    def test_update_failures_are_reported_not_raised(self):
+        with patch('chatbot.utils.database_util.requests.request',
                    side_effect=requests.exceptions.ConnectionError('refused')):
-            status, _ = update_document_theme(7, 'Inclusion')
+            status, _ = update_single_file(7, 'guide.pdf', b'%PDF', {}, self.media)
+        self.assertEqual(decide_theme_sync(status), ThemeSyncDecision.RETRY)
 
-        self.assertEqual(decide_theme_sync(status, ''), ThemeSyncDecision.RETRY)
+        html = MagicMock(status_code=502, text='<html>Bad Gateway</html>')
+        html.json.side_effect = ValueError('not json')
+        with patch('chatbot.utils.database_util.requests.request', return_value=html):
+            self.assertEqual(update_single_file(7, 'guide.pdf', b'%PDF', {}, self.media)[0], 502)
 
-    def run_task(self, status, text, media=None):
+    def test_document_indexed_check(self):
+        def verify(found, error=None):
+            response = MagicMock()
+            response.json.return_value = {'found': found}
+            with patch('chatbot.utils.database_util.requests.post', return_value=response, side_effect=error):
+                return is_document_indexed(7)
+
+        self.assertTrue(verify(['7']))
+        self.assertFalse(verify([]))
+        self.assertIsNone(verify([], error=requests.exceptions.ConnectionError('refused')))
+
+    def run_task(self, status=200, media=None, indexed=True, retries=0, error=None):
+        media = media or self.media
         media_model = MagicMock()
-        media_model.objects.select_related.return_value.filter.return_value.first.return_value = media or self.media
-        with patch('chatbot.models.media_models.Media', media_model), \
-                patch.object(media_tasks, 'update_document_theme', return_value=(status, text)) as update, \
-                patch.object(sync_media_theme_to_vector_db, 'retry', side_effect=RuntimeError('retry scheduled')):
-            return sync_media_theme_to_vector_db.run(7), update
+        media_model.objects.select_related.return_value.filter.return_value.first.return_value = media
+        sync_media_theme_to_vector_db.push_request(retries=retries)
+        try:
+            with patch('chatbot.models.media_models.Media', media_model), \
+                    patch.object(media_tasks, 'is_document_indexed', return_value=indexed), \
+                    patch.object(media_tasks, 'update_in_vector_db', return_value=status, side_effect=error) as update, \
+                    patch.object(sync_media_theme_to_vector_db, 'retry', side_effect=RuntimeError('retry scheduled')):
+                return sync_media_theme_to_vector_db.run(7), update
+        finally:
+            sync_media_theme_to_vector_db.pop_request()
 
-    def test_task_syncs_theme_code(self):
-        result, update = self.run_task(200, '{"updated": 3}')
+    def test_task_updates_the_whole_document_with_update_in_vector_db(self):
+        result, update = self.run_task(200)
 
         self.assertEqual(result, 200)
-        update.assert_called_once_with(7, 'Teaching_Learning_Practises', 'shikshalokamstaging')
+        update.assert_called_once_with(7, 'shikshalokamstaging')
 
-    def test_task_retries_when_document_not_indexed_yet(self):
+    def test_task_waits_for_the_first_indexing_of_a_new_upload(self):
         with self.assertRaisesMessage(RuntimeError, 'retry scheduled'):
-            self.run_task(404, '{"detail": "No documents found with source_id: 7"}')
+            self.run_task(indexed=False)
 
-    def test_task_does_not_retry_when_endpoint_missing(self):
-        result, _ = self.run_task(404, '{"detail": "Not Found"}')
+    def test_task_skips_a_document_still_missing_after_all_retries(self):
+        result, update = self.run_task(indexed=False, retries=sync_media_theme_to_vector_db.max_retries)
 
-        self.assertEqual(result, 404)
+        self.assertIsNone(result)
+        update.assert_not_called()
 
-    def test_task_skips_unclassified_media(self):
-        result, update = self.run_task(200, '', media=SimpleNamespace(primary_theme_id=None, organization=None))
+    def test_task_updates_when_the_index_cannot_be_checked(self):
+        result, update = self.run_task(200, indexed=None)
+
+        self.assertEqual(result, 200)
+        update.assert_called_once()
+
+    def test_task_retries_server_errors_but_not_client_errors(self):
+        with self.assertRaisesMessage(RuntimeError, 'retry scheduled'):
+            self.run_task(503)
+        self.assertEqual(self.run_task(400)[0], 400)
+
+    def test_task_logs_and_stops_when_the_document_cannot_be_prepared(self):
+        result, _ = self.run_task(error=AttributeError("'NoneType' object has no attribute 'slug'"))
+
+        self.assertIsNone(result)
+
+    def test_task_skips_media_indexed_in_openai(self):
+        media = SimpleNamespace(**{**vars(self.media), 'company_bot': SimpleNamespace(provider=LLMProvider.OPENAI)})
+        result, update = self.run_task(200, media=media)
 
         self.assertIsNone(result)
         update.assert_not_called()

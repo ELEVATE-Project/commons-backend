@@ -321,7 +321,7 @@ class MediaThemeClassificationService:
         ).classify(document, log_prefix=self.log_prefix)
         generated = self._generate_new_secondary(document, themes, fallback, classification, candidates, settings)
         links = self.save_classification(classification, generated, settings)
-        if is_enabled(other_params.get('vector_theme_sync_enabled'), default=False):
+        if is_enabled(other_params.get('vector_theme_sync_enabled'), default=True):
             queue_vector_theme_sync(self.media.id)
         else:
             logger.info(f"{self.log_prefix} vector theme sync disabled by vector_theme_sync_enabled")

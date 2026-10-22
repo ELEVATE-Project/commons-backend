@@ -47,3 +47,7 @@ PAYLOAD_LOG_PREVIEW_CHARS = 1000
 STOP_WORDS = frozenset({'and', 'or', 'of', 'the', 'a', 'an', 'for', 'in', 'on', 'to'})
 MATCHED_SECONDARY_FIELD = 'matched_secondary_themes'
 NEW_SECONDARY_FIELD = 'new_secondary_themes'
+THEME_MAPPING_TIMEOUT_MS = 120000
+THEME_MAPPING_POLL_MS = 2000
+VECTOR_DB_VERIFY_TIMEOUT_SECONDS = 30
+VECTOR_DB_UPLOAD_TIMEOUT_SECONDS = 300

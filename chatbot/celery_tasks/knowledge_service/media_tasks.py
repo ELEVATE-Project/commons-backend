@@ -2,7 +2,7 @@ from celery import shared_task
 import os
 from chatbot.models import LLMProvider
 from chatbot.utils.database_util import update_single_file, delete_single_file, upsert_single_file, \
-    update_document_theme
+    is_document_indexed
 import logging
 
 from chatbot.utils.knowledge_service.openai_vector_store.vector_store_utils import upload_file_to_openai, \
@@ -12,7 +12,6 @@ logger = logging.getLogger('django')
 S3_BASE_URL = os.getenv('S3_MEDIA_URL')
 THEME_SYNC_MAX_RETRIES = 5
 THEME_SYNC_RETRY_BASE_SECONDS = 15
-DOCUMENT_NOT_INDEXED_MARKER = 'No documents found'
 
 
 class ThemeSyncDecision:
@@ -21,11 +20,9 @@ class ThemeSyncDecision:
     FAIL = 'fail'
 
 
-def decide_theme_sync(status_code, response_text):
+def decide_theme_sync(status_code):
     if 200 <= status_code < 300:
         return ThemeSyncDecision.DONE
-    if status_code == 404 and DOCUMENT_NOT_INDEXED_MARKER in (response_text or ''):
-        return ThemeSyncDecision.RETRY
     if status_code in (408, 429) or status_code >= 500:
         return ThemeSyncDecision.RETRY
     return ThemeSyncDecision.FAIL
@@ -213,35 +210,44 @@ def sync_media_theme_to_vector_db(self, media_id):
     from chatbot.models.media_models import Media
 
     log_prefix = f"[ThemeClassifier] media_id={media_id}"
-    media = Media.objects.select_related('organization').filter(id=media_id).first()
+    media = Media.objects.select_related('organization', 'company_bot').filter(id=media_id).first()
     if not media:
-        logger.warning(f"{log_prefix} vector theme sync skipped: media not found")
+        logger.warning(f"{log_prefix} vector sync skipped: media not found")
+        return None
+    if media.company_bot and media.company_bot.provider == LLMProvider.OPENAI:
+        logger.info(f"{log_prefix} vector sync skipped: media is indexed in the OpenAI vector store")
+        return None
+
+    attempt = self.request.retries + 1
+    can_retry = self.request.retries < self.max_retries
+    countdown = THEME_SYNC_RETRY_BASE_SECONDS * (2 ** self.request.retries)
+    # update_in_vector_db replaces an existing document; a new upload's first indexing may still be running.
+    if is_document_indexed(media_id) is False:
+        if can_retry:
+            logger.info(f"{log_prefix} vector sync waiting for the first indexing attempt={attempt} retry_in={countdown}s")
+            raise self.retry(countdown=countdown)
+        logger.error(f"{log_prefix} vector sync failed: document is not in the vector DB, nothing to update")
         return None
 
     theme_code = media.primary_theme_id
-    if not theme_code:
-        logger.info(f"{log_prefix} vector theme sync skipped: no primary theme")
-        return None
-
     company_slug = media.organization.slug if media.organization else None
-    attempt = self.request.retries + 1
-    status_code, response_text = update_document_theme(media_id, theme_code, company_slug)
-    decision = decide_theme_sync(status_code, response_text)
+    try:
+        status_code = update_in_vector_db(media_id, company_slug)
+    except Exception as e:
+        logger.exception(f"{log_prefix} vector sync failed theme={theme_code!r}: {e}")
+        return None
+    decision = decide_theme_sync(status_code)
 
     if decision == ThemeSyncDecision.DONE:
-        logger.info(f"{log_prefix} vector theme synced theme={theme_code!r} status={status_code} attempt={attempt}")
+        logger.info(f"{log_prefix} vector sync done theme={theme_code!r} status={status_code} attempt={attempt}")
         return status_code
 
-    if decision == ThemeSyncDecision.RETRY and self.request.retries < self.max_retries:
-        countdown = THEME_SYNC_RETRY_BASE_SECONDS * (2 ** self.request.retries)
+    if decision == ThemeSyncDecision.RETRY and can_retry:
         logger.warning(
-            f"{log_prefix} vector theme sync pending theme={theme_code!r} status={status_code} "
-            f"attempt={attempt} retry_in={countdown}s response={(response_text or '')[:200]!r}"
+            f"{log_prefix} vector sync pending theme={theme_code!r} status={status_code} "
+            f"attempt={attempt} retry_in={countdown}s"
         )
         raise self.retry(countdown=countdown)
 
-    logger.error(
-        f"{log_prefix} vector theme sync failed theme={theme_code!r} status={status_code} "
-        f"attempt={attempt} response={(response_text or '')[:300]!r}"
-    )
+    logger.error(f"{log_prefix} vector sync failed theme={theme_code!r} status={status_code} attempt={attempt}")
     return status_code

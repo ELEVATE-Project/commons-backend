@@ -99,7 +99,7 @@ class MediaImagesInline(admin.TabularInline):
 class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     form = MediaAdminForm
     list_display = (
-        'file_name', 'get_title', 'primary_theme', 'get_secondary_themes', 'needs_review', 'get_organization',
+        'file_name', 'get_title', 'primary_theme', 'get_secondary_themes', 'get_organization',
         'media_type', 'source_provider', 'display_mode', 'parent__name', 'view_count', 'download_count',
         'updated_at', 'created_at'
     )

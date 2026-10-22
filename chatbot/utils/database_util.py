@@ -3,10 +3,12 @@ from datetime import datetime
 
 import requests
 import os
+
+from chatbot.constants.constants import VECTOR_DB_UPLOAD_TIMEOUT_SECONDS, VECTOR_DB_VERIFY_TIMEOUT_SECONDS
+
 DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
 
 SEARCH_TOP_K = 3
-THEME_UPDATE_TIMEOUT_SECONDS = 30
 
 base_url = os.getenv('VECTOR_DB_BASE_URL')
 
@@ -107,7 +109,7 @@ def delete_single_file(media_id, company_slug=None):
 
 
 def update_single_file(media_id, filename, file, metadata, media):
-    """Update a file in the vector database by deleting and re-uploading"""
+    """Replace an existing document in the vector database"""
     url = f"{base_url}/api/documents/{media_id}"
 
     if isinstance(metadata, dict):
@@ -161,25 +163,29 @@ def update_single_file(media_id, filename, file, metadata, media):
     }
 
     print("update payload: ", payload)
-    response = requests.request("PUT", url, headers=headers, data=payload, files=files)
-    print("updated: ", response.json())
-    return response.status_code, response.text
-
-
-def update_document_theme(source_id, theme, company_slug=None):
-    url = f"{base_url}/api/documents/{source_id}/theme"
-    data = {'theme': theme}
-    if company_slug:
-        data['company_id'] = company_slug
-
     try:
-        response = requests.patch(
-            url, headers={'accept': 'application/json'}, data=data, timeout=THEME_UPDATE_TIMEOUT_SECONDS
+        response = requests.request(
+            "PUT", url, headers=headers, data=payload, files=files, timeout=VECTOR_DB_UPLOAD_TIMEOUT_SECONDS
         )
-        return response.status_code, response.text
     except requests.exceptions.Timeout:
-        return 504, f"Request timeout after {THEME_UPDATE_TIMEOUT_SECONDS} seconds"
+        return 504, f"Request timeout after {VECTOR_DB_UPLOAD_TIMEOUT_SECONDS} seconds"
     except requests.exceptions.ConnectionError as e:
         return 503, f"Connection error: {str(e)}"
     except Exception as e:
         return 500, f"Unexpected error: {str(e)}"
+    print("updated: ", response.status_code, response.text[:500])
+    return response.status_code, response.text
+
+
+def is_document_indexed(source_id):
+    """True/False when the vector database answers, None when it cannot be asked"""
+    try:
+        response = requests.post(
+            f"{base_url}/api/documents/verify-sources", json={'source_ids': [str(source_id)]},
+            timeout=VECTOR_DB_VERIFY_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        return str(source_id) in response.json().get('found', [])
+    except Exception as e:
+        print(f"Could not verify source_id {source_id} in vector DB: {e}")
+        return None

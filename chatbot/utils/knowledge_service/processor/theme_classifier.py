@@ -542,7 +542,6 @@ class SecondaryThemeGenerator(BedrockToolCaller):
 
         tools = set_array_limit(self.tools, NEW_SECONDARY_FIELD, needed)
         blocked_names = [theme.name for theme in matched]
-        feedback: List[str] = []
         total_attempts = self.retries + 1
 
         for attempt in range(1, total_attempts + 1):
@@ -555,7 +554,6 @@ class SecondaryThemeGenerator(BedrockToolCaller):
                 'existing_secondary_themes': list(existing_names),
                 'needed': needed,
                 'document': self.document_context(document),
-                'feedback': feedback,
             }
             payload = self.request(context, log_prefix, attempt, tools=tools)
             if isinstance(payload, dict):
@@ -572,7 +570,6 @@ class SecondaryThemeGenerator(BedrockToolCaller):
                 )
                 return result.themes
 
-            feedback = result.errors
             logger.warning(
                 f"{log_prefix} generation attempt={attempt}/{total_attempts} invalid duration={duration:.1f}s "
                 f"errors={result.errors} payload={preview_payload(payload)}"

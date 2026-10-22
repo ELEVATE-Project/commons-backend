@@ -4366,8 +4366,8 @@ async function trackVectorDbBatchProgress(vectorDbTasks, totalFiles) {
 }
 
 const MEDIA_LIST_URL = "{% url 'admin:chatbot_media_changelist' %}";
-const THEME_MAPPING_TIMEOUT_MS = 120000;
-const THEME_MAPPING_POLL_MS = 2000;
+const THEME_MAPPING_TIMEOUT_MS = Number("{{ theme_mapping_timeout_ms }}");
+const THEME_MAPPING_POLL_MS = Number("{{ theme_mapping_poll_ms }}");
 
 async function trackThemeMappingProgress(taskIds) {
     return new Promise((resolve) => {
