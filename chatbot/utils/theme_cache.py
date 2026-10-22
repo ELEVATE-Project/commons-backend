@@ -4,24 +4,29 @@ from django.conf import settings
 from django.core.cache import cache
 
 THEME_LIST_CACHE_KEY = 'resource_themes:list:v1'
+PRIMARY_THEME_LIST_CACHE_KEY = 'resource_themes:primary:list:v1'
 
 
 def invalidate_theme_list_cache():
     if settings.REDIS_CACHE_ENABLED:
-        cache.delete(THEME_LIST_CACHE_KEY)
+        cache.delete_many([THEME_LIST_CACHE_KEY, PRIMARY_THEME_LIST_CACHE_KEY])
 
 
-def get_theme_list():
+def get_theme_list(primary_only=False):
+    cache_key = PRIMARY_THEME_LIST_CACHE_KEY if primary_only else THEME_LIST_CACHE_KEY
     if settings.REDIS_CACHE_ENABLED:
-        cached = cache.get(THEME_LIST_CACHE_KEY)
+        cached = cache.get(cache_key)
         if cached is not None:
             return cached
 
     from chatbot.serializer.theme_serializer import ResourceThemeSerializer
 
     model = apps.get_model('chatbot', 'ResourceTheme')
-    result = ResourceThemeSerializer(model.objects.order_by('id'), many=True).data
+    themes = model.objects.order_by('id')
+    if primary_only:
+        themes = themes.filter(is_primary=True)
+    result = ResourceThemeSerializer(themes, many=True).data
     payload = {'count': len(result), 'result': result}
     if settings.REDIS_CACHE_ENABLED:
-        cache.set(THEME_LIST_CACHE_KEY, payload, settings.THEME_CACHE_TTL)
+        cache.set(cache_key, payload, settings.THEME_CACHE_TTL)
     return payload

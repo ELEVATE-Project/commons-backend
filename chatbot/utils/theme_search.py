@@ -4,7 +4,7 @@ import re
 from rapidfuzz import fuzz, process
 
 from chatbot.utils.search_filter_resolver import (
-    _confidence_threshold, _is_negated, clean_search_text,
+    _confidence_threshold, _is_negated,
 )
 from chatbot.utils.theme_cache import get_theme_list
 
@@ -15,9 +15,11 @@ def resolve_theme_names(query):
     Match whole names against token windows: partial word matches must not
     turn a generic topic like "learning" into "Foundational Learning".
     Cached codes are never supplied to RapidFuzz.
+    Only primary themes are searchable, matching the media assignment filter.
     """
     names = list(dict.fromkeys(
-        theme['name'] for theme in get_theme_list()['result'] if theme.get('name')
+        theme['name'] for theme in get_theme_list(primary_only=True)['result']
+        if theme.get('name')
     ))
     if not names:
         return [], [], query
@@ -53,4 +55,4 @@ def resolve_theme_names(query):
     remaining = query
     for start, end, _, _ in reversed(accepted):
         remaining = remaining[:start] + ' ' + remaining[end:]
-    return included, excluded, clean_search_text(remaining) if accepted else query
+    return included, excluded, re.sub(r'\s+', ' ', remaining).strip() if accepted else query
