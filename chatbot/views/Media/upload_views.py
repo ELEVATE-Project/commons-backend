@@ -4,6 +4,7 @@ from django.utils.decorators import method_decorator
 from chatbot.models import Tag, FileTypeChoices, TagSourceChoices, TagChoices
 from chatbot.models.media_models import PriorityChoices
 import json
+from chatbot.constants.constants import THEME_MAPPING_POLL_MS, THEME_MAPPING_TIMEOUT_MS
 from chatbot.utils.company_utils import get_companies_for_display, get_user_company
 from chatbot.views.Media.admin_context import add_media_admin_context
 
@@ -38,6 +39,8 @@ class BatchMediaUploadView(TemplateView):
         # Restrict the organization dropdown based on the logged-in user's role.
         context['companies'] = get_companies_for_display(self.request.user)
         context['user_company'] = get_user_company(self.request.user)
+        context['theme_mapping_timeout_ms'] = THEME_MAPPING_TIMEOUT_MS
+        context['theme_mapping_poll_ms'] = THEME_MAPPING_POLL_MS
 
         try:
             existing_tags_query = Tag.objects.filter(
