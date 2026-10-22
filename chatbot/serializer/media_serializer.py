@@ -138,6 +138,11 @@ class MediaImageSerializer(serializers.ModelSerializer):
         return None
 
 
+class MediaPrimaryThemeSerializer(serializers.Serializer):
+    code = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+
+
 class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
 
     def to_representation(self, instance):
@@ -181,18 +186,23 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
         view_count = 0
         download_count = 0
         source_provider = None
+        primary_theme = None
 
         if media_id:
             try:
                 from chatbot.models.media_models import Media
-                media_obj = Media.objects.select_related('organization').prefetch_related(
+                media_obj = Media.objects.select_related('organization', 'primary_theme').prefetch_related(
                     'key_values',
                     'subdocuments',
                     'subdocuments__key_values'
                 ).only(
                     'id', 'file', 'media_type', 'organization__url', 'organization__slug', 'organization__name', 'organization__logo', 'display_mode',
-                    'description', 'thumbnail', 'priority', 'source_provider'
+                    'description', 'thumbnail', 'priority', 'source_provider', 'primary_theme',
+                    'primary_theme__code', 'primary_theme__name'
                 ).get(id=media_id)
+
+                if media_obj.primary_theme is not None:
+                    primary_theme = MediaPrimaryThemeSerializer(media_obj.primary_theme).data
 
                 source_child = media_obj.subdocuments.filter(
                     key_values__key__iregex=r'^document[_ ]type$',
@@ -269,6 +279,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
             'media_type': db_media_type,
             'media_type_display': db_media_type_display,
             'source_provider': source_provider,
+            'primary_theme': primary_theme,
             'created_at': created_at,
             'updated_at': updated_at,
             's3_url': url,
@@ -392,6 +403,7 @@ class MediaSearchResultSerializer(serializers.Serializer, S3UrlMixin):
 
 
 class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
+    primary_theme = MediaPrimaryThemeSerializer(read_only=True, allow_null=True)
     s3_url = serializers.SerializerMethodField()
     file = serializers.SerializerMethodField()
     tag_names = serializers.SerializerMethodField()
@@ -419,7 +431,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         model = Media
         fields = [
             'id', 'name', 'description', 'priority', 'priority_display',
-            'media_type', 'media_type_display', 'source_provider', 'created_at', 'updated_at',
+            'media_type', 'media_type_display', 'source_provider', 'primary_theme', 'created_at', 'updated_at',
             's3_url', 'file', 'tag_names', 'title', 'organization', 'organization_slug',
             'document_type', 'key_entities', 'file_size', 'organization_url', 'org_logo',
             'display_mode', 'display_mode_display',
@@ -537,6 +549,7 @@ class MediaListSerializer(serializers.ModelSerializer, S3UrlMixin):
         return obj.get_media_type_display()
 
 class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
+    primary_theme = MediaPrimaryThemeSerializer(read_only=True, allow_null=True)
     s3_url = serializers.SerializerMethodField()
     file = serializers.SerializerMethodField()
     tags = TagSerializer(many=True, read_only=True)
@@ -561,7 +574,7 @@ class MediaDetailSerializer(serializers.ModelSerializer, S3UrlMixin):
         fields = [
             'id', 'name', 'description', 'priority', 'priority_display',
             'media_type', 'media_type_display', 'extracted_text',
-            'file', 'url', 'source_provider', 'company_bot',
+            'file', 'url', 'source_provider', 'primary_theme', 'company_bot',
             'parent', 'parent_info', 'created_at', 'updated_at',
             's3_url', 'tags', 'title', 'organization', 'org_logo', 'document_type',
             'key_entities', 'key_values', 'images', 'children',

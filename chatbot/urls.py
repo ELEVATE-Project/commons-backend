@@ -17,6 +17,7 @@ from chatbot.views.location_views import get_location_view, get_ip_location_view
 from chatbot.views.Media.media_views import MediaSearchView
 from chatbot.views.Media.media_api_views import FetchThemeView, MediaSearchV2View
 from chatbot.views.profile_views import create_profile_views
+from chatbot.views.theme_views import ResourceThemeCreateView, ResourceThemeListView, ResourceThemeUpdateView
 from django.urls import path, include
 from chatbot.views import api_views
 from chatbot.views.bhashini_views import text_speech_view, speech_text, text_translation_view, text_transliterate_view
@@ -116,6 +117,11 @@ urlpatterns = [
     path("api/search/", MediaSearchView.as_view(), name="media-search"),
     path("fetch-theme", FetchThemeView.as_view(), name="fetch-theme-no-slash"),
     path("fetch-theme/", FetchThemeView.as_view(), name="fetch-theme"),
+
+    #themes related apis
+    path('api/themes/create', ResourceThemeCreateView.as_view(), name='theme-create'),
+    path('api/themes/update', ResourceThemeUpdateView.as_view(), name='theme-update'),
+    path('api/themes/list', ResourceThemeListView.as_view(), name='theme-list'),
 
     # path('admin/media/batch-upload/', BatchMediaUploadView.as_view(), name='batch_media_upload'),
     path('admin/media/batch-upload/', BatchMediaUploadView.as_view(), name='chatbot_media_batch_upload'),
