@@ -19,3 +19,7 @@ GOOGLE_DRIVE_ANYONE_PERMISSION_TYPE = 'anyone'
 DEFAULT_METADATA_SEARCH_TOP_K = 20
 MIN_ANY_OF_BRANCHES = 2
 MAX_BIGINT = (2 ** 63) - 1
+PORTAL_STATIC_PATH = '/chatbot/static/portal/'
+PORTAL_STATIC_PATH_PREFIXES = (PORTAL_STATIC_PATH.lstrip('/'), 'static/portal/')
+THEME_LIST_CACHE_KEY = 'resource_themes:list:v1'
+PRIMARY_THEME_LIST_CACHE_KEY = 'resource_themes:primary:list:v1'

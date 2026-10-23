@@ -809,7 +809,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
                 })
 
         themes = list(
-            ResourceTheme.objects.order_by('id').values('code', 'name')
+            ResourceTheme.objects.filter(is_primary=True).order_by('id').values('code', 'name')
         )
 
         return Response({

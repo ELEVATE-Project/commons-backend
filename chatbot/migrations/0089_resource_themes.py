@@ -10,6 +10,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Foundational_Learning',
         'name': 'Foundational Learning',
+        'icon': '/chatbot/static/portal/foundational-learning.svg',
         'description': (
             "The development of core literacy and numeracy competencies, typically in the early and primary grades. "
             "Covers curriculum, pedagogy, assessment, and practice resources aimed directly at building a child's "
@@ -21,6 +22,7 @@ PRIMARY_THEMES = [
     {
         'code': 'School_Governance',
         'name': 'School Governance',
+        'icon': '/chatbot/static/portal/school-governance.svg',
         'description': (
             "This theme is about the school as a functioning institution — who leads it, how decisions get made, "
             "how it plans and holds itself accountable, and how power and voice are distributed within it.\n"
@@ -34,6 +36,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Community_Engagement',
         'name': 'Community Engagement',
+        'icon': '/chatbot/static/portal/community-engagement.svg',
         'description': (
             "The involvement of parents, families, and the wider local community in a child's education and "
             "school life.\n\n"
@@ -47,6 +50,7 @@ PRIMARY_THEMES = [
     {
         'code': 'System_Thinking',
         'name': 'System Thinking',
+        'icon': '/chatbot/static/portal/system-thinking.svg',
         'description': (
             "System Thinking is about seeing and working on the structural, root-cause layer that sits above any "
             "single school, asking why a problem exists across many schools and what's systemically driving it, "
@@ -64,6 +68,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Teaching_Learning_Practises',
         'name': 'Teaching and Learning Practises',
+        'icon': '/chatbot/static/portal/teaching-and-learning-practises.svg',
         'description': (
             "This theme is about how teaching and learning happens inside the classroom. Everything around teacher "
             "capacity, pedagogy, and the practice of teaching and learning.\n\n"
@@ -79,6 +84,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Child_Rights',
         'name': 'Child Rights',
+        'icon': '/chatbot/static/portal/child-rights.svg',
         'description': (
             "Awareness, education, and protection grounded explicitly in a child's rights.\n\n"
             "What can fall under it: child rights curricula and awareness-building; child protection and "
@@ -91,6 +97,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Movement',
         'name': 'Movement',
+        'icon': '/chatbot/static/portal/movement.svg',
         'description': (
             "This theme is about the sector as a collective project — the work of building an ecosystem of aligned "
             "actors (organizations, teachers, students, communities) around a shared cause, and shifting narrative "
@@ -107,6 +114,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Inclusion',
         'name': 'Inclusion',
+        'icon': '/chatbot/static/portal/inclusion.svg',
         'description': (
             "Ensuring equitable access, participation, and belonging for children who face structural barriers to "
             "learning.\n"
@@ -123,6 +131,7 @@ PRIMARY_THEMES = [
     {
         'code': 'Miscellaneous',
         'name': 'Miscellaneous',
+        'icon': '/chatbot/static/portal/miscellaneous.svg',
         'description': (
             "if any resource cannot be mapped to the list of pre-existing/pre-defined primary themes, it can be "
             "mapped to a separate theme called “Miscellaneous.” This will include all resources that do not align "
@@ -140,6 +149,7 @@ def seed_primary_themes(apps, schema_editor):
             defaults={
                 'name': theme['name'],
                 'description': theme['description'],
+                'icon': theme['icon'],
                 'is_primary': True,
                 'status': PUBLISHED_STATUS,
             },
@@ -179,6 +189,8 @@ class Migration(migrations.Migration):
                 ('name', models.CharField(max_length=255)),
                 ('code', models.CharField(max_length=100, unique=True)),
                 ('description', models.TextField(blank=True, default='')),
+                ('media_count', models.PositiveIntegerField(default=0)),
+                ('icon', models.CharField(blank=True, default=None, max_length=1000, null=True)),
                 ('is_primary', models.BooleanField(db_index=True, default=False)),
                 ('status', models.CharField(choices=[('draft', 'Draft'), ('published', 'Published')], db_index=True, default='draft', max_length=20)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),

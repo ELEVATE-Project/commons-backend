@@ -3,8 +3,7 @@ from django.apps import apps
 from django.conf import settings
 from django.core.cache import cache
 
-THEME_LIST_CACHE_KEY = 'resource_themes:list:v1'
-PRIMARY_THEME_LIST_CACHE_KEY = 'resource_themes:primary:list:v1'
+from chatbot.constants.constants import PRIMARY_THEME_LIST_CACHE_KEY, THEME_LIST_CACHE_KEY
 
 
 def invalidate_theme_list_cache():

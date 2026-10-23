@@ -6,6 +6,7 @@ from django.utils.text import slugify
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
+from chatbot.constants.constants import PORTAL_STATIC_PATH, PORTAL_STATIC_PATH_PREFIXES
 from chatbot.models.theme_models import ResourceTheme
 
 
@@ -26,7 +27,7 @@ class ResourceThemeSerializer(serializers.Serializer):
             return None
 
         stored_path = obj.icon.lstrip('/')
-        for prefix in ('chatbot/static/portal/', 'static/portal/'):
+        for prefix in PORTAL_STATIC_PATH_PREFIXES:
             if stored_path.startswith(prefix):
                 relative_path = stored_path[len(prefix):]
                 break
@@ -125,7 +126,7 @@ class ResourceThemeCreateSerializer(serializers.ModelSerializer):
         )
         name = slugify(theme_name) or f'theme-{theme_id}'
         storage.save(f'{name}.svg', upload)
-        return f'/chatbot/static/portal/{name}.svg'
+        return f'{PORTAL_STATIC_PATH}{name}.svg'
 
 
 class ResourceThemeUpdateSerializer(ResourceThemeCreateSerializer):

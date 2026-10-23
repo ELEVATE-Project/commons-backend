@@ -3,6 +3,7 @@ from rest_framework import serializers, status
 from rest_framework.generics import CreateAPIView, UpdateAPIView, get_object_or_404
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
+from rest_framework.permissions import IsAdminUser
 from rest_framework.views import APIView
 
 from chatbot.constants.constants import MAX_BIGINT
@@ -18,6 +19,7 @@ class ResourceThemeCreateView(CreateAPIView):
     """Create a resource theme, defaulting to draft and non-primary."""
 
     serializer_class = ResourceThemeCreateSerializer
+    permission_classes = (IsAdminUser,)
     parser_classes = (JSONParser, MultiPartParser, FormParser)
 
     def perform_create(self, serializer):
@@ -29,6 +31,7 @@ class ResourceThemeUpdateView(UpdateAPIView):
     """Update a theme selected by exactly one query parameter: id or code."""
 
     serializer_class = ResourceThemeUpdateSerializer
+    permission_classes = (IsAdminUser,)
     parser_classes = (JSONParser, MultiPartParser, FormParser)
     queryset = ResourceTheme.objects.all()
 
