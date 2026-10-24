@@ -147,6 +147,8 @@ from chatbot.models import Company, CompanyBot, Voice, CompanyStateMachine, BotV
 BOT_JSON_FILES = [
     'SGCommonsSearchBot.json',
     'DocTextExtractorBot.json',
+    'ThemeClassifierBot.json',
+    'SecondaryThemeGeneratorBot.json',
 ]
 
 created_count = 0
