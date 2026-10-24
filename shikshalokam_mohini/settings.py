@@ -282,6 +282,7 @@ CACHES = {
 DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = os.environ.get('DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS', 'true').lower() == 'true'
 
 COMPANY_CACHE_TTL = int(os.environ.get('COMPANY_CACHE_TTL', 3600))
+THEME_CACHE_TTL = int(os.environ.get('THEME_CACHE_TTL', 3600))
 REDIS_CACHE_ENABLED = os.environ.get('REDIS_CACHE_ENABLED', 'true').lower() == 'true'
 
 # TAILWIND_APP_NAME = "theme"
