@@ -4370,37 +4370,34 @@ const THEME_MAPPING_TIMEOUT_MS = Number("{{ theme_mapping_timeout_ms }}");
 const THEME_MAPPING_POLL_MS = Number("{{ theme_mapping_poll_ms }}");
 
 async function trackThemeMappingProgress(taskIds) {
+    if (taskIds.length === 0) {
+        return { timedOut: false };
+    }
     return new Promise((resolve) => {
-        const pending = new Set(taskIds);
         const startedAt = Date.now();
 
         const checkProgress = async () => {
-            for (const taskId of Array.from(pending)) {
-                try {
-                    const response = await fetch("{% url 'admin:chatbot_media_vector_db_task_status' %}", {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': csrftoken,
-                        },
-                        body: JSON.stringify({ task_id: taskId })
-                    });
-                    const result = await response.json();
-                    if (result.success && result.ready) {
-                        pending.delete(taskId);
+            try {
+                const response = await fetch("{% url 'admin:chatbot_media_theme_mapping_status' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken,
+                    },
+                    body: JSON.stringify({ task_ids: taskIds })
+                });
+                const status = await response.json();
+                if (status.success) {
+                    showLoading(`Mapping primary and secondary themes... ${status.completed}/${status.total} complete`);
+                    if (status.done) {
+                        resolve({ timedOut: false });
+                        return;
                     }
-                } catch (error) {
-                    console.error(`Error checking theme mapping task ${taskId}:`, error);
                 }
+            } catch (error) {
+                console.error('Error checking theme mapping status:', error);
             }
 
-            const completed = taskIds.length - pending.size;
-            showLoading(`Mapping primary and secondary themes... ${completed}/${taskIds.length} complete`);
-
-            if (pending.size === 0) {
-                resolve({ timedOut: false });
-                return;
-            }
             if (Date.now() - startedAt >= THEME_MAPPING_TIMEOUT_MS) {
                 resolve({ timedOut: true });
                 return;
@@ -4410,26 +4407,6 @@ async function trackThemeMappingProgress(taskIds) {
 
         checkProgress();
     });
-}
-
-function hasFailedSubdocuments(subdocResults) {
-    return (subdocResults || []).some(subdoc =>
-        !subdoc.success || hasFailedSubdocuments(subdoc.nested_subdocument_results)
-    );
-}
-
-function allSavesSucceeded(results) {
-    return results.length > 0 && results.every(result =>
-        result.success && !hasFailedSubdocuments(result.subdocument_results)
-    );
-}
-
-async function waitForThemeMapping(results) {
-    const taskIds = results.map(result => result.theme_task_id).filter(Boolean);
-    if (taskIds.length === 0) {
-        return { timedOut: false };
-    }
-    return trackThemeMappingProgress(taskIds);
 }
 
 // ============================================
@@ -4483,7 +4460,7 @@ async function saveToDatabase(data) {
             await trackVectorDbBatchProgress(vectorDbTasks, totalItems);
         }
 
-        return result.results.map((res, index) => {
+        const results = result.results.map((res, index) => {
             // If save failed, ensure file_key is preserved
             if (!res.success && items[index]) {
                 res.file_key = res.file_key || items[index].file_key;
@@ -4494,6 +4471,12 @@ async function saveToDatabase(data) {
                 originalData: items[index]
             };
         });
+
+        return {
+            results,
+            allSucceeded: result.all_succeeded,
+            themeTaskIds: result.theme_task_ids || []
+        };
 
     } else {
         throw new Error(result.error || 'Failed to save data');
@@ -4627,11 +4610,11 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     let redirecting = false;
 
     try {
-        const results = await saveToDatabase(extractedData);
+        const { results, allSucceeded, themeTaskIds } = await saveToDatabase(extractedData);
         saveResults = results;
 
-        if (allSavesSucceeded(results)) {
-            const themeMapping = await waitForThemeMapping(results);
+        if (allSucceeded) {
+            const themeMapping = await trackThemeMappingProgress(themeTaskIds);
             showLoading(themeMapping.timedOut
                 ? 'Files saved. Theme mapping is still running in the background; redirecting to Medias...'
                 : 'Files saved and themes mapped. Redirecting to Medias...');

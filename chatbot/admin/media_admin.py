@@ -14,7 +14,7 @@ from simple_history.admin import SimpleHistoryAdmin
 from chatbot.utils.knowledge_service.cache_manager import GetCachedItemView
 from chatbot.views.Media.extract_views import BatchMediaExtractView, BatchMediaRetryExtractView
 from chatbot.views.Media.save_views import BatchMediaSaveView, BatchMediaRetrySaveView
-from chatbot.views.Media.status_views import BatchMediaTaskStatusView, VectorDBTaskStatusView
+from chatbot.views.Media.status_views import BatchMediaTaskStatusView, VectorDBTaskStatusView, ThemeMappingStatusView
 from chatbot.views.Media.upload_views import BatchMediaUploadView
 from chatbot.views.Media.drive_upload import DriveUploadView
 from chatbot.views.Media.google_drive_integration import (
@@ -391,6 +391,9 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             path('api/vector-db-task-status/',
                  self.admin_site.admin_view(VectorDBTaskStatusView.as_view()),
                  name='chatbot_media_vector_db_task_status'),
+            path('api/theme-mapping-status/',
+                 self.admin_site.admin_view(ThemeMappingStatusView.as_view()),
+                 name='chatbot_media_theme_mapping_status'),
             path('api/get-cached-item/',
                  self.admin_site.admin_view(GetCachedItemView.as_view()),
                  name='chatbot_media_get_cached_item'),

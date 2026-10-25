@@ -1,4 +1,14 @@
+import os
+import sys
 from collections import Counter
+from pathlib import Path
+
+import django
+
+if __name__ == '__main__':
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shikshalokam_mohini.settings')
+    django.setup()
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -94,3 +104,7 @@ class Command(BaseCommand):
             statuses[outcome.status] += 1
             self.stdout.write(f"media_id={media.id} status={outcome.status} primary={outcome.primary_theme}")
         self.stdout.write(self.style.SUCCESS(f"Done: {dict(statuses)}"))
+
+
+if __name__ == '__main__':
+    Command().run_from_argv([sys.argv[0], ''] + sys.argv[1:])
