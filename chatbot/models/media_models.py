@@ -169,6 +169,13 @@ class Media(models.Model):
     description = models.TextField(null=True, blank=True)
     extracted_text = models.TextField(null=True, blank=True)
     tags = models.ManyToManyField(Tag, related_name="medias")
+    primary_theme = models.ForeignKey(
+        'ResourceTheme', to_field='code', db_column='primary_theme_code', limit_choices_to={'is_primary': True},
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='primary_media'
+    )
+    primary_theme_confidence = models.FloatField(null=True, blank=True)
+    primary_theme_reasoning = models.TextField(null=True, blank=True)
+    needs_review = models.BooleanField(default=False, db_index=True)
     external_file_id = models.CharField(
         max_length=300, null=True, blank=True,
         help_text=(

@@ -14,7 +14,7 @@ from chatbot.models.media_models import Media, KeyValue
 from chatbot.serializer.media_serializer import (
     MediaListSerializer, MediaDetailSerializer, MediaSearchResultSerializer
 )
-from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
+from chatbot.constants.constants import MAX_BIGINT, MIN_ANY_OF_BRANCHES
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
@@ -235,11 +235,11 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'list':
             queryset = self._apply_content_exclusion_filter(queryset)
             queryset = queryset.select_related(
-                'organization', 'parent'
+                'organization', 'parent', 'primary_theme'
             ).prefetch_related('tags')
         elif self.action == 'retrieve':
             queryset = queryset.select_related(
-                'organization', 'parent'
+                'organization', 'parent', 'primary_theme'
             ).prefetch_related(
                 'tags', 'key_values', 'images', 'subdocuments'
             )
@@ -711,7 +711,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'])
     def master_list(self, request):
         # Return master list of filters
-        from chatbot.models import PriorityChoices
+        from chatbot.models import PriorityChoices, ResourceTheme
 
         queryset = self.filter_queryset(self.get_queryset())
 
@@ -808,13 +808,8 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
                     'count': count
                 })
 
-        tags = list(
-            Tag.objects
-            .filter(medias__in=queryset)
-            .values('id', 'name')
-            .annotate(count=Count('medias'))
-            .order_by('name')
-            .distinct()
+        themes = list(
+            ResourceTheme.objects.filter(is_primary=True).order_by('id').values('code', 'name')
         )
 
         return Response({
@@ -823,7 +818,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
             'media_types': media_types,
             'resource_types': resource_types,
             'priorities': priorities,
-            'tags': tags
+            'themes': themes
         })
 
     @action(detail=True, methods=['get'])
@@ -846,7 +841,7 @@ class MediaViewSet(viewsets.ReadOnlyModelViewSet):
                 display_mode=FileDisplayMode.VISIBLE
             ).exclude(id=media.id).distinct()
 
-        related = (siblings | similar_tags).distinct()[:20]
+        related = (siblings | similar_tags).select_related('primary_theme').distinct()[:20]
 
         serializer = MediaListSerializer(related, many=True, context={'request': request})
         return Response({
@@ -937,6 +932,16 @@ class MediaSearchV2View(APIView):
                 request.query_params.get('file_type', '')
             )
         media_types = self._normalize_media_types(media_types)
+
+        # Theme names come only from the shared cache and never from the LLM.
+        self.theme_names = []
+        self.exclude_theme_names = []
+        if query:
+            from chatbot.utils.theme_search import resolve_theme_names
+            names, excluded, remaining = resolve_theme_names(query)
+            if not request.query_params.get('theme', '').strip():
+                self.theme_names, self.exclude_theme_names = names, excluded
+            query = remaining
 
         fuzzy = None
         any_of = []
@@ -1055,14 +1060,22 @@ class MediaSearchV2View(APIView):
 
         explicit_organizations = list(organizations or [])
         explicit_media_types = list(media_types or [])
-        resolved = self._resolve_search_filters(
-            query,
-            fuzzy=fuzzy,
-            explicit_filters={
-                'organizations': explicit_organizations,
-                'media_types': explicit_media_types,
-            },
-        )
+        if not query and (self.theme_names or self.exclude_theme_names
+                          or request.query_params.get('theme')):
+            resolved = ResolvedFilters(
+                query='', organizations=explicit_organizations,
+                media_types=explicit_media_types,
+                diagnostics={'llm_used': False},
+            )
+        else:
+            resolved = self._resolve_search_filters(
+                query,
+                fuzzy=fuzzy,
+                explicit_filters={
+                    'organizations': explicit_organizations,
+                    'media_types': explicit_media_types,
+                },
+            )
         # Not `resolved.query or query`: an empty residual is meaningful and
         # becomes a filters-only listing below.
         query = resolved.query
@@ -1144,7 +1157,9 @@ class MediaSearchV2View(APIView):
         # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
             tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types or combined_any_of)
+            or exclude_organizations or exclude_media_types or combined_any_of
+            or self.theme_names or self.exclude_theme_names
+            or request.query_params.get('theme'))
         if not query and filters_present:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
@@ -1194,6 +1209,10 @@ class MediaSearchV2View(APIView):
 
         all_results = vector_response.get('results', [])
         all_results = self._apply_content_exclusion_filter_v2(all_results)
+
+        theme = request.query_params.get('theme', '').strip()
+        if theme or self.theme_names or self.exclude_theme_names:
+            all_results = self._apply_theme_filter(all_results, theme)
 
         if media_types:
             all_results = self._apply_media_type_filter(all_results, media_types)
@@ -1518,6 +1537,10 @@ class MediaSearchV2View(APIView):
         rapidfuzz_filters=None,
     ):
         queryset = self._build_database_queryset()
+        theme = request.query_params.get('theme', '').strip()
+        if theme:
+            queryset = queryset.filter(primary_theme_id=theme)
+        queryset = self._apply_theme_name_filters(queryset)
         queryset = self._apply_database_filters(
             queryset,
             tags=tags,
@@ -1634,7 +1657,7 @@ class MediaSearchV2View(APIView):
         )
 
         return queryset.select_related(
-            'organization', 'parent'
+            'organization', 'parent', 'primary_theme'
         ).prefetch_related(
             'tags', 'key_values', 'subdocuments', 'subdocuments__key_values'
         ).distinct()
@@ -1805,6 +1828,9 @@ class MediaSearchV2View(APIView):
         }
 
         # Add items to the dictionary
+        theme = request.query_params.get('theme', '').strip()
+        if theme:
+            query_params['theme'] = theme
         if query:
             query_params["q"] = query
         if ordering:
@@ -1834,6 +1860,33 @@ class MediaSearchV2View(APIView):
             previous_url = f"{base_url}?{urlencode(previous_params, doseq=True)}"
 
         return next_url, previous_url
+
+    def _apply_theme_name_filters(self, queryset):
+        names = getattr(self, 'theme_names', [])
+        excluded = getattr(self, 'exclude_theme_names', [])
+        if names:
+            queryset = queryset.filter(any_of('primary_theme__name__iexact', names))
+        if excluded:
+            queryset = queryset.exclude(any_of('primary_theme__name__iexact', excluded))
+        return queryset
+
+    def _apply_theme_filter(self, results, theme):
+        """Filter vector hits using primary theme assignments in the database."""
+        media_ids = set()
+        for result in results:
+            try:
+                media_id = int(result.get('source_id'))
+            except (TypeError, ValueError):
+                continue
+            if 0 < media_id <= MAX_BIGINT:
+                media_ids.add(media_id)
+        queryset = Media.objects.filter(pk__in=media_ids)
+        if theme:
+            queryset = queryset.filter(primary_theme_id=theme)
+        else:
+            queryset = self._apply_theme_name_filters(queryset)
+        matching_ids = set(str(pk) for pk in queryset.values_list('pk', flat=True))
+        return [result for result in results if str(result.get('source_id')) in matching_ids]
 
     def _apply_media_type_filter(self, results, requested_media_types):
         """
@@ -2031,6 +2084,8 @@ class MediaSearchV2View(APIView):
         str() keeps enum media types serialisable.
         """
         return {
+            'themes': list(getattr(self, 'theme_names', [])),
+            'exclude_themes': list(getattr(self, 'exclude_theme_names', [])),
             'tags': list(tags or []),
             'organizations': list(organizations or []),
             'resource_types': list(resource_types or []),
@@ -2050,6 +2105,8 @@ class MediaSearchV2View(APIView):
         fuzzy = fuzzy or FuzzyFilterResult()
         diagnostics = diagnostics or {}
         metadata = {
+            'themes': list(getattr(self, 'theme_names', [])),
+            'exclude_themes': list(getattr(self, 'exclude_theme_names', [])),
             'organizations': list(fuzzy.organizations or []),
             'media_types': [str(value) for value in fuzzy.media_types or []],
             'exclude_organizations': list(fuzzy.exclude_organizations or []),

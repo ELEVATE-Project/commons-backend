@@ -772,7 +772,7 @@ def _confidence_threshold(field_name: str) -> int:
         return _organization_confidence_threshold()
     return _int_env(
         f"SEARCH_FILTER_{field_name.upper()}_CONFIDENCE_THRESHOLD",
-        default_value=85,
+        default_value=90 if field_name == 'theme' else 85,
         min_value=0,
         max_value=100,
     )
