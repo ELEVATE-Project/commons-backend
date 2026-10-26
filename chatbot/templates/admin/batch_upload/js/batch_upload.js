@@ -4365,6 +4365,50 @@ async function trackVectorDbBatchProgress(vectorDbTasks, totalFiles) {
     });
 }
 
+const MEDIA_LIST_URL = "{% url 'admin:chatbot_media_changelist' %}";
+const THEME_MAPPING_TIMEOUT_MS = Number("{{ theme_mapping_timeout_ms }}");
+const THEME_MAPPING_POLL_MS = Number("{{ theme_mapping_poll_ms }}");
+
+async function trackThemeMappingProgress(taskIds) {
+    if (taskIds.length === 0) {
+        return { timedOut: false };
+    }
+    return new Promise((resolve) => {
+        const startedAt = Date.now();
+
+        const checkProgress = async () => {
+            try {
+                const response = await fetch("{% url 'admin:chatbot_media_theme_mapping_status' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken,
+                    },
+                    body: JSON.stringify({ task_ids: taskIds })
+                });
+                const status = await response.json();
+                if (status.success) {
+                    showLoading(`Mapping primary and secondary themes... ${status.completed}/${status.total} complete`);
+                    if (status.done) {
+                        resolve({ timedOut: false });
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking theme mapping status:', error);
+            }
+
+            if (Date.now() - startedAt >= THEME_MAPPING_TIMEOUT_MS) {
+                resolve({ timedOut: true });
+                return;
+            }
+            setTimeout(checkProgress, THEME_MAPPING_POLL_MS);
+        };
+
+        checkProgress();
+    });
+}
+
 // ============================================
 // SECTION 5: STEP 3 - SAVE FUNCTIONS
 // ============================================
@@ -4416,7 +4460,7 @@ async function saveToDatabase(data) {
             await trackVectorDbBatchProgress(vectorDbTasks, totalItems);
         }
 
-        return result.results.map((res, index) => {
+        const results = result.results.map((res, index) => {
             // If save failed, ensure file_key is preserved
             if (!res.success && items[index]) {
                 res.file_key = res.file_key || items[index].file_key;
@@ -4427,6 +4471,12 @@ async function saveToDatabase(data) {
                 originalData: items[index]
             };
         });
+
+        return {
+            results,
+            allSucceeded: result.all_succeeded,
+            themeTaskIds: result.theme_task_ids || []
+        };
 
     } else {
         throw new Error(result.error || 'Failed to save data');
@@ -4557,16 +4607,30 @@ let saveResults = [];
 document.getElementById('saveBtn').addEventListener('click', async () => {
     collectFormData();
     showLoading('Saving to database...');
+    let redirecting = false;
 
     try {
-        const results = await saveToDatabase(extractedData);
+        const { results, allSucceeded, themeTaskIds } = await saveToDatabase(extractedData);
         saveResults = results;
+
+        if (allSucceeded) {
+            const themeMapping = await trackThemeMappingProgress(themeTaskIds);
+            showLoading(themeMapping.timedOut
+                ? 'Files saved. Theme mapping is still running in the background; redirecting to Medias...'
+                : 'Files saved and themes mapped. Redirecting to Medias...');
+            redirecting = true;
+            window.location.href = MEDIA_LIST_URL;
+            return;
+        }
+
         displayResults(results);
         updateStepIndicator(3);
     } catch (error) {
         showStatus('Error saving data: ' + error.message, 'error');
     } finally {
-        hideLoading();
+        if (!redirecting) {
+            hideLoading();
+        }
     }
 });
 

@@ -542,6 +542,7 @@ class OperationTypeChoices(models.TextChoices):
     LLM = 'llm', _('LLM')
     NON_LLM = 'non_llm', _('Non-LLM')
 
+
 class ThemeStatus(models.TextChoices):
     DRAFT = 'draft', _('Draft')
     PUBLISHED = 'published', _('Published')

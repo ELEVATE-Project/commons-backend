@@ -438,3 +438,28 @@ class VectorDBTaskStatusView(View):
 
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class ThemeMappingStatusView(View):
+    """Check how many theme mapping tasks of a batch save have finished"""
+
+    def post(self, request):
+        try:
+            from celery.result import AsyncResult
+            task_ids = json.loads(request.body).get('task_ids') or []
+
+            if not isinstance(task_ids, list):
+                return JsonResponse({'success': False, 'error': 'task_ids must be a list'}, status=400)
+
+            completed = sum(AsyncResult(task_id).ready() for task_id in task_ids)
+
+            return JsonResponse({
+                'success': True,
+                'completed': completed,
+                'total': len(task_ids),
+                'done': completed == len(task_ids)
+            })
+
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
