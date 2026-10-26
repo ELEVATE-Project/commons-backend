@@ -8,7 +8,7 @@ logger = logging.getLogger('django')
 @shared_task
 def classify_media_themes(media_id, use_file_text=False):
     from chatbot.models import Media
-    from chatbot.utils.knowledge_service.theme_classification_service import MediaThemeClassificationService
+    from chatbot.utils.themes.theme_classification_service import MediaThemeClassificationService
 
     media = Media.objects.select_related('company_bot__company').filter(id=media_id).first()
     if not media:

@@ -24,7 +24,7 @@ from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.models import (
     CompanyBot, KeyValue, Media, MediaSecondaryTheme, ResourceTheme, SecondaryThemeMatchType, ThemeStatus
 )
-from chatbot.utils.knowledge_service.processor.theme_classifier import (
+from chatbot.utils.themes.theme_classifier import (
     ClassifiedTheme, DocumentMetadata, SecondaryCandidate, SecondaryThemeGenerator, SecondaryThemeSettings,
     ThemeClassification, ThemeClassifier, ThemeOption, describe_theme, is_token_variant, load_json_field,
     normalize_theme_name

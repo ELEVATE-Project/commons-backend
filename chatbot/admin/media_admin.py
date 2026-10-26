@@ -25,7 +25,7 @@ from chatbot.views.Media.google_drive_integration import (
 )
 from chatbot.utils.company_utils import get_company_queryset_for_user, get_user_company, get_user_profile
 from chatbot.constants.constants import ADMIN_THEME_WAIT_TIMEOUT_SECONDS
-from chatbot.utils.knowledge_service.theme_classification_service import (
+from chatbot.utils.themes.theme_classification_service import (
     ThemeMessageLevel, enqueue_theme_classification, theme_outcome_message, wait_for_theme_classification
 )
 

@@ -14,8 +14,8 @@ from django.core.management.base import BaseCommand, CommandError
 
 from chatbot.celery_tasks.knowledge_service.theme_tasks import classify_media_themes
 from chatbot.models import Media
-from chatbot.utils.knowledge_service.processor.theme_classifier import SecondaryThemeSettings, load_json_field
-from chatbot.utils.knowledge_service.theme_classification_service import (
+from chatbot.utils.themes.theme_classifier import SecondaryThemeSettings, load_json_field
+from chatbot.utils.themes.theme_classification_service import (
     MediaThemeClassificationService, get_company_bot, get_theme_classifier_bot, load_theme_options
 )
 # Same order as the Media admin list, so a partial run (--limit) fills in the top of its first page.

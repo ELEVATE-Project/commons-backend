@@ -7,16 +7,11 @@ SECONDARY_THEME_COUNT = 2 // is the maximum number of secondary themes per docum
 .venv/bin/python manage.py migrate
 
 ## 3. Import the themes bots
-  .venv/bin/python manage.py shell -c "
-import json
-from chatbot.models import Company, CompanyBot
-for path in ['setup/ThemeClassifierBot.json', 'setup/SecondaryThemeGeneratorBot.json']:
-    for data in json.load(open(path)):
-        company = Company.objects.get(slug=data.pop('company_slug'))
-        for key in ('voices', 'state_machines', 'bot_vernaculars'):
-            data.pop(key, None)
-        bot, created = CompanyBot.objects.update_or_create(route=data['route'], company=company, defaults=data)
-        print('created' if created else 'updated', bot.route, bot.company.slug) "
+.venv/bin/python chatbot/scripts/themes/import_theme_bots.py
+
+The bots are imported under the `shikshalokamstaging` company. If that company does not exist in this environment, pass an existing one:
+
+.venv/bin/python chatbot/scripts/themes/import_theme_bots.py --company-slug <company-slug>
 
 ## 4. Restart uvicorn and the Celery worker.
 Restart the app and upload a file in the app. Themes are mapped to it automatically:

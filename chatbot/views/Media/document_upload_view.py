@@ -8,7 +8,7 @@ from chatbot.models import Media, KeyValue, CompanyBot, Company, FileTypeChoices
 from shikshalokam.models.enums import PriorityChoices
 from django.core.files.base import ContentFile
 import chatbot.constants.constants as CONSTANTS
-from chatbot.utils.knowledge_service.theme_classification_service import enqueue_theme_classification
+from chatbot.utils.themes.theme_classification_service import enqueue_theme_classification
 
 
 @method_decorator(csrf_exempt, name='dispatch')

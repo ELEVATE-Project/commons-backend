@@ -16,7 +16,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.knowledge_service.base_task_utils import determine_media_type_from_url
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.duplicate_detector import DuplicateDetector
-from chatbot.utils.knowledge_service.theme_classification_service import enqueue_theme_classification
+from chatbot.utils.themes.theme_classification_service import enqueue_theme_classification
 from django.core.files.base import ContentFile
 import base64
 from django.utils.text import slugify
