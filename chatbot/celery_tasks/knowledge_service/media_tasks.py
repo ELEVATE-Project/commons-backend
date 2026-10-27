@@ -214,8 +214,8 @@ def sync_media_theme_to_vector_db(self, media_id):
     if not media:
         logger.warning(f"{log_prefix} vector sync skipped: media not found")
         return None
-    if media.company_bot and media.company_bot.provider == LLMProvider.OPENAI:
-        logger.info(f"{log_prefix} vector sync skipped: media is indexed in the OpenAI vector store")
+    if not (media.company_bot and media.company_bot.provider):
+        logger.warning(f"{log_prefix} vector sync skipped: media has no company bot or provider")
         return None
 
     attempt = self.request.retries + 1

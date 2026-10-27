@@ -1,8 +1,6 @@
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
-from django.db.models.signals import post_save, pre_delete
-from django.dispatch import receiver
 from simple_history.models import HistoricalRecords
 from chatbot.models import CompanyBot, ThemeType, ThemeStatus, SecondaryThemeMatchType
 
@@ -51,8 +49,10 @@ class Theme(models.Model):
 
 class ResourceTheme(models.Model):
     name = models.CharField(max_length=255)
-    code = models.CharField(max_length=100, primary_key=True)
+    code = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, default='')
+    media_count = models.PositiveIntegerField(default=0)
+    icon = models.CharField(max_length=1000, null=True, blank=True, default=None)
     is_primary = models.BooleanField(default=False, db_index=True)
     status = models.CharField(
         max_length=20, choices=ThemeStatus.choices, default=ThemeStatus.DRAFT, db_index=True
@@ -78,9 +78,7 @@ class ResourceTheme(models.Model):
 
 class MediaSecondaryTheme(models.Model):
     media = models.ForeignKey('Media', on_delete=models.CASCADE, related_name='secondary_theme_links')
-    theme = models.ForeignKey(
-        ResourceTheme, on_delete=models.CASCADE, db_column='theme_code', related_name='media_links'
-    )
+    theme = models.ForeignKey(ResourceTheme, on_delete=models.CASCADE, related_name='media_links')
     confidence = models.FloatField(
         null=True, blank=True, validators=[MinValueValidator(0.0), MaxValueValidator(1.0)]
     )
@@ -101,19 +99,3 @@ class MediaSecondaryTheme(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['media', 'theme'], name='media_secondary_theme_uniq'),
         ]
-
-
-@receiver(post_save, sender=ResourceTheme)
-def sync_media_primary_theme_name(sender, instance, **kwargs):
-    if not instance.is_primary:
-        return
-    from chatbot.models.media_models import Media
-    Media.objects.filter(primary_theme_id=instance.pk).exclude(primary_theme_name=instance.name).update(
-        primary_theme_name=instance.name
-    )
-
-
-@receiver(pre_delete, sender=ResourceTheme)
-def clear_media_primary_theme_name(sender, instance, **kwargs):
-    from chatbot.models.media_models import Media
-    Media.objects.filter(primary_theme_id=instance.pk).update(primary_theme_name=None)

@@ -16,7 +16,7 @@ from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
 from chatbot.utils.knowledge_service.base_task_utils import determine_media_type_from_url
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.duplicate_detector import DuplicateDetector
-from chatbot.utils.knowledge_service.theme_classification_service import enqueue_theme_classification
+from chatbot.utils.themes.theme_classification_service import enqueue_theme_classification
 from django.core.files.base import ContentFile
 import base64
 from django.utils.text import slugify
@@ -1152,7 +1152,9 @@ class BatchMediaSaveView(View):
                 'results': results,
                 'stats': stats,
                 'summary_message': summary_message,
-                'session_id': session_id
+                'session_id': session_id,
+                'all_succeeded': self.all_saves_succeeded(results),
+                'theme_task_ids': [r['theme_task_id'] for r in results if r.get('theme_task_id')]
             })
 
         except json.JSONDecodeError:
@@ -1190,6 +1192,20 @@ class BatchMediaSaveView(View):
                 message_parts.append(f"{stats['partial_success']} partial successes")
 
             return ", ".join(message_parts) + "."
+
+    def has_failed_subdocuments(self, subdocument_results):
+        """True when a subdocument at any nesting level failed to save"""
+        return any(
+            not subdoc.get('success') or self.has_failed_subdocuments(subdoc.get('nested_subdocument_results'))
+            for subdoc in subdocument_results or []
+        )
+
+    def all_saves_succeeded(self, results):
+        """True only when every file and all of its subdocuments saved"""
+        return bool(results) and all(
+            r['success'] and not self.has_failed_subdocuments(r.get('subdocument_results'))
+            for r in results
+        )
 
 
 @method_decorator(staff_member_required, name='dispatch')

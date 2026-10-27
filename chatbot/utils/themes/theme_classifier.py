@@ -124,7 +124,10 @@ class SecondaryThemeSettings:
             policy = defaults.partial_match_policy
         statuses = params.get('secondary_candidate_statuses')
         return cls(
-            count=_bounded_int(params.get('secondary_theme_count'), defaults.count, 0, MAX_SECONDARY_THEME_COUNT),
+            count=_bounded_int(
+                params.get('secondary_theme_count', os.getenv('SECONDARY_THEME_COUNT')), defaults.count, 0,
+                MAX_SECONDARY_THEME_COUNT
+            ),
             min_match_confidence=_bounded_float(
                 params.get('secondary_min_match_confidence'), defaults.min_match_confidence
             ),

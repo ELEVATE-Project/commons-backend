@@ -1,13 +1,25 @@
+import os
+import sys
 from collections import Counter
+from pathlib import Path
+
+import django
+
+if __name__ == '__main__':
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shikshalokam_mohini.settings')
+    django.setup()
 
 from django.core.management.base import BaseCommand, CommandError
 
 from chatbot.celery_tasks.knowledge_service.theme_tasks import classify_media_themes
 from chatbot.models import Media
-from chatbot.utils.knowledge_service.processor.theme_classifier import SecondaryThemeSettings, load_json_field
-from chatbot.utils.knowledge_service.theme_classification_service import (
+from chatbot.utils.themes.theme_classifier import SecondaryThemeSettings, load_json_field
+from chatbot.utils.themes.theme_classification_service import (
     MediaThemeClassificationService, get_company_bot, get_theme_classifier_bot, load_theme_options
 )
+# Same order as the Media admin list, so a partial run (--limit) fills in the top of its first page.
+NEWEST_FIRST = ('-created_at', '-id')
 
 
 class Command(BaseCommand):
@@ -20,7 +32,7 @@ class Command(BaseCommand):
                             help='Reclassify every matching media, including already classified ones.')
         parser.add_argument('--include-subdocuments', action='store_true',
                             help='Also classify subdocuments (media with a parent).')
-        parser.add_argument('--limit', type=int, help='Maximum number of media to process.')
+        parser.add_argument('--limit', type=int, help='Maximum number of media to process, newest first.')
         parser.add_argument('--interval', type=float, default=2.0,
                             help='Seconds between queued task start times, to avoid LLM throttling (default: 2.0).')
         parser.add_argument('--sync', action='store_true',
@@ -57,7 +69,7 @@ class Command(BaseCommand):
             ))
 
     def _build_queryset(self, options):
-        queryset = Media.objects.order_by('id')
+        queryset = Media.objects.order_by(*NEWEST_FIRST)
 
         if options['media_ids']:
             try:
@@ -84,7 +96,7 @@ class Command(BaseCommand):
 
     def _run_sync(self, media_ids):
         statuses = Counter()
-        for media in Media.objects.select_related('company_bot__company').filter(id__in=media_ids).order_by('id'):
+        for media in Media.objects.select_related('company_bot__company').filter(id__in=media_ids).order_by(*NEWEST_FIRST):
             try:
                 outcome = MediaThemeClassificationService(media).run()
             except Exception as e:
@@ -94,3 +106,7 @@ class Command(BaseCommand):
             statuses[outcome.status] += 1
             self.stdout.write(f"media_id={media.id} status={outcome.status} primary={outcome.primary_theme}")
         self.stdout.write(self.style.SUCCESS(f"Done: {dict(statuses)}"))
+
+
+if __name__ == '__main__':
+    Command().run_from_argv([sys.argv[0], ''] + sys.argv[1:])
