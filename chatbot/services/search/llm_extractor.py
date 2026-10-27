@@ -195,6 +195,8 @@ class LLMFilterResult:
     media_types: list = None
     exclude_organizations: list = None
     exclude_media_types: list = None
+    themes: list = None
+    exclude_themes: list = None
     any_of: list = field(default_factory=list)
     semantic_query: str = ''
     rejected: dict = field(default_factory=dict)
@@ -304,7 +306,8 @@ def _resolve_field(arguments, include_key, exclude_key, vocabulary, name, reject
     return include, exclude
 
 
-def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected):
+def _resolve_any_of(
+        arguments, org_vocabulary, type_vocabulary, theme_vocabulary, rejected):
     """
     Validate the model's alternatives, all or nothing.
 
@@ -347,12 +350,17 @@ def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected):
         media_types, exclude_media_types = _resolve_field(
             entry, 'file_types', 'exclude_file_types',
             type_vocabulary, 'media_types', entry_rejected)
+        themes, exclude_themes = _resolve_field(
+            entry, 'theme', 'exclude_theme',
+            theme_vocabulary, 'themes', entry_rejected)
 
         block = FilterBlock(
             organizations=organizations or [],
             media_types=media_types or [],
             exclude_organizations=exclude_organizations or [],
             exclude_media_types=exclude_media_types or [],
+            themes=themes or [],
+            exclude_themes=exclude_themes or [],
         )
         if entry_rejected or block.is_empty():
             logger.info(
@@ -439,13 +447,16 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     org_vocabulary = select_organization_vocabulary(
         bot, candidates=candidates.get('organizations'))
     type_vocabulary = file_type_vocabulary()
+    # Through the module, like organization_vocabulary below, so tests patch one place.
+    themes_vocabulary = vocabularies.theme_vocabulary()
 
     messages = [
         {'role': 'system', 'content': bot.context or SYSTEM_PROMPT},
         # Both halves of the prompt come from the bot row: context holds the
         # rules, pre_context the per-request layout.
         {'role': 'user', 'content': build_user_message(
-            raw_query, org_vocabulary, type_vocabulary, candidates,
+            raw_query, org_vocabulary, type_vocabulary,
+            theme=themes_vocabulary, candidates=candidates,
             template=bot.pre_context)},
     ]
 
@@ -500,22 +511,28 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     media_types, exclude_media_types = _resolve_field(
         arguments, 'file_types', 'exclude_file_types',
         type_vocabulary, 'media_types', rejected)
+    themes, exclude_themes = _resolve_field(
+        arguments, 'theme', 'exclude_theme',
+        themes_vocabulary, 'themes', rejected)
     any_of = _resolve_any_of(
-        arguments, org_vocabulary, type_vocabulary, rejected)
+        arguments, org_vocabulary, type_vocabulary, themes_vocabulary, rejected)
 
     result = LLMFilterResult(
         organizations=organizations,
         media_types=media_types,
         exclude_organizations=exclude_organizations,
         exclude_media_types=exclude_media_types,
+        themes=themes,
+        exclude_themes=exclude_themes,
         any_of=any_of,
         semantic_query=_residual_query(
             arguments.get('semantic_query'), raw_query,
             # Exclusions count as filters found: an exclusion-only request has
             # no residual either, and must not fall back to the raw query.
             # Alternatives count for the same reason.
-            bool(organizations or media_types
-                 or exclude_organizations or exclude_media_types or any_of)),
+            bool(organizations or media_types or themes
+                 or exclude_organizations or exclude_media_types
+                 or exclude_themes or any_of)),
         rejected=rejected,
         bot_route=bot.route,
         latency_ms=latency_ms,
