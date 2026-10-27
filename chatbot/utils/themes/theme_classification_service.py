@@ -406,7 +406,7 @@ class MediaThemeClassificationService:
     def _resolve_links(self, matched: Sequence[ClassifiedTheme], generated: Sequence[ClassifiedTheme],
                        settings: SecondaryThemeSettings) -> List[SecondaryThemeLink]:
         links: Dict[str, SecondaryThemeLink] = {}
-        existing = ResourceTheme.objects.in_bulk([theme.code for theme in matched])
+        existing = ResourceTheme.objects.in_bulk([theme.code for theme in matched], field_name='code')
         for classified in matched:
             theme = existing.get(classified.code)
             if theme is None or theme.is_primary:
