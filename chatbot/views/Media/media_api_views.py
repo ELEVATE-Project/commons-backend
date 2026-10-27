@@ -2084,8 +2084,7 @@ class MediaSearchV2View(APIView):
         str() keeps enum media types serialisable.
         """
         return {
-            'themes': list(getattr(self, 'theme_names', [])),
-            'exclude_themes': list(getattr(self, 'exclude_theme_names', [])),
+            **self._theme_filter_metadata(),
             'tags': list(tags or []),
             'organizations': list(organizations or []),
             'resource_types': list(resource_types or []),
@@ -2099,14 +2098,32 @@ class MediaSearchV2View(APIView):
             ],
         }
 
+    def _theme_filter_metadata(self):
+        """Represent matched theme names as codes in response metadata."""
+        theme_names = getattr(self, 'theme_names', [])
+        excluded_theme_names = getattr(self, 'exclude_theme_names', [])
+        theme_codes = {}
+        if theme_names or excluded_theme_names:
+            from chatbot.utils.theme_cache import get_theme_list
+
+            theme_codes = {
+                theme['name']: theme['code']
+                for theme in get_theme_list(primary_only=True)['result']
+            }
+        return {
+            'themes': [theme_codes[name] for name in theme_names if name in theme_codes],
+            'exclude_themes': [
+                theme_codes[name] for name in excluded_theme_names if name in theme_codes
+            ],
+        }
+
     def _rapidfuzz_filter_metadata(
         self, fuzzy, any_of_blocks=None, diagnostics=None
     ):
         fuzzy = fuzzy or FuzzyFilterResult()
         diagnostics = diagnostics or {}
         metadata = {
-            'themes': list(getattr(self, 'theme_names', [])),
-            'exclude_themes': list(getattr(self, 'exclude_theme_names', [])),
+            **self._theme_filter_metadata(),
             'organizations': list(fuzzy.organizations or []),
             'media_types': [str(value) for value in fuzzy.media_types or []],
             'exclude_organizations': list(fuzzy.exclude_organizations or []),
