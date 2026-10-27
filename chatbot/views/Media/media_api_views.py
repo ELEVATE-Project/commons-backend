@@ -18,6 +18,7 @@ from chatbot.constants.constants import MAX_BIGINT, MIN_ANY_OF_BRANCHES
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
+    _confidence_threshold,
     clean_search_text,
     count_negation_cues,
     included_values,
@@ -1079,6 +1080,17 @@ class MediaSearchV2View(APIView):
                     'media_types': explicit_media_types,
                 },
             )
+        # The theme-name shortcut above skips _resolve_search_filters, so neither
+        # the mode nor the threshold is checked; run it so AI_SEARCH_LLM_MODE decides.
+        if 'fuzzy_confidence' not in resolved.diagnostics:
+            resolved = self._resolve_search_filters(
+                query,
+                fuzzy=fuzzy,
+                explicit_filters={
+                    'organizations': explicit_organizations,
+                    'media_types': explicit_media_types,
+                },
+            )
         # Not `resolved.query or query`: an empty residual is meaningful and
         # becomes a filters-only listing below.
         query = resolved.query
@@ -1106,6 +1118,16 @@ class MediaSearchV2View(APIView):
                 exclude_organizations = []
                 exclude_media_types = []
             resolved.diagnostics['any_of_source'] = 'deterministic'
+        # Once the LLM has answered, its result stands, alternatives or not, as it
+        # does for orgs and media types: undo the deterministic swap above.
+        if (resolved.diagnostics.get('llm_used')
+                and resolved.diagnostics.get('any_of_source') == 'deterministic'):
+            organizations = resolved.organizations
+            media_types = resolved.media_types
+            exclude_organizations = list(resolved.exclude_organizations)
+            exclude_media_types = list(resolved.exclude_media_types)
+            combined_any_of = resolved_any_of
+            resolved.diagnostics.pop('any_of_source')
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
             fuzzy, deterministic_any_of, resolved.diagnostics
         )
@@ -1324,6 +1346,13 @@ class MediaSearchV2View(APIView):
         # No fuzzy result means zero confidence.
         fuzzy = fuzzy or FuzzyFilterResult()
 
+        # Fallback weighs theme names too. The name step accepts them only at
+        # SEARCH_FILTER_THEME_CONFIDENCE_THRESHOLD or above, so that is their score.
+        scores = [fuzzy.confidence] if fuzzy.confidence else []
+        if getattr(self, 'theme_names', None) or getattr(self, 'exclude_theme_names', None):
+            scores.append(_confidence_threshold('theme') / 100.0)
+        confidence = min(scores) if scores else 0.0
+
         # getattr, not attribute access: the deterministic resolver may not carry
         # exclusions yet, and an absent field must read as "found none".
         resolved = ResolvedFilters(
@@ -1336,7 +1365,7 @@ class MediaSearchV2View(APIView):
                 'llm_used': False,
                 # Named for its source: it is the deterministic matcher's score,
                 # and it sits beside the threshold it is compared against.
-                'fuzzy_confidence': fuzzy.confidence,
+                'fuzzy_confidence': confidence,
                 'organizations_source': 'explicit' if explicit_orgs else (
                     'fuzzy' if fuzzy.organizations else 'none'),
                 'media_types_source': 'explicit' if explicit_types else (
@@ -1370,7 +1399,7 @@ class MediaSearchV2View(APIView):
 
             should_call, reason = self._should_call_llm(
                 mode,
-                fuzzy.confidence,
+                confidence,
                 threshold,
                 all_explicit,
                 force_reason=fuzzy.llm_reason,
