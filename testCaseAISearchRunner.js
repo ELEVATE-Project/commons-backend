@@ -359,11 +359,12 @@ function executionPath(metadata) {
  *
  * expected_payload is scored as one whole object -- not decomposed into
  * per-field organizations/file_type/exclude_organizations/exclude_file_type/
- * any_of checks -- so a mismatch anywhere in it surfaces as a single `payload`
- * failure. semantic_query is the one exception: it is verified against the
- * dedicated expected_semantic_query column instead of expected_payload's own
- * semantic_query field, since the two disagree on a handful of rows and the
- * standalone column is the more carefully curated source.
+ * themes/exclude_themes/any_of checks -- so a mismatch anywhere in it
+ * surfaces as a single `payload` failure. semantic_query is the one
+ * exception: it is verified against the dedicated expected_semantic_query
+ * column instead of expected_payload's own semantic_query field, since the two
+ * disagree on a handful of rows and the standalone column is the more
+ * carefully curated source.
  */
 function compareAgainstExpectations(row, payload) {
   const failures = [];
@@ -471,6 +472,8 @@ async function main() {
     "expected_file_types",
     "expected_exclude_organizations",
     "expected_exclude_file_types",
+    "expected_themes",
+    "expected_exclude_themes",
     "expected_any_of",
     "expected_semantic_query",
     "expected_payload",

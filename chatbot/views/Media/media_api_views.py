@@ -1109,6 +1109,12 @@ class MediaSearchV2View(APIView):
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
             fuzzy, deterministic_any_of, resolved.diagnostics
         )
+        # LLM theme codes replace the theme-name step's names, as LLM orgs and
+        # file types replace fuzzy ones; rapidfuzz_filters above keeps the names.
+        if resolved.diagnostics.get('themes_source') == 'llm':
+            self.theme_names = []
+        if resolved.diagnostics.get('exclude_themes_source') == 'llm':
+            self.exclude_theme_names = []
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
@@ -1164,6 +1170,7 @@ class MediaSearchV2View(APIView):
         # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
             tags or organizations or resource_types or media_types
+            or themes or exclude_themes
             or exclude_organizations or exclude_media_types or combined_any_of
             or self.theme_names or self.exclude_theme_names
             or request.query_params.get('theme'))
@@ -1450,8 +1457,13 @@ class MediaSearchV2View(APIView):
         """Resolve filters with the LLM and merge the result."""
         from chatbot.services.search import llm_extractor
 
+        # The theme-name step strips theme names from raw_query; the LLM reads
+        # the user's full query so it returns theme codes, the same way as orgs.
+        request = getattr(self, 'request', None)
+        full_query = request.query_params.get('q', '').strip() if request else ''
+
         llm = llm_extractor.extract_search_filters(
-            raw_query=raw_query,
+            raw_query=full_query or raw_query,
             candidates=fuzzy.candidates,
             bot=bot,
         )
@@ -1522,8 +1534,10 @@ class MediaSearchV2View(APIView):
             resolved.exclude_media_types = llm.exclude_media_types
         if llm.themes is not None:
             resolved.themes = llm.themes
+            resolved.diagnostics['themes_source'] = 'llm'
         if llm.exclude_themes is not None:
             resolved.exclude_themes = llm.exclude_themes
+            resolved.diagnostics['exclude_themes_source'] = 'llm'
 
         # Alternatives need no explicit-UI guard either: they are AND'ed with
         # the fields above, so an explicit UI selection still applies in full
