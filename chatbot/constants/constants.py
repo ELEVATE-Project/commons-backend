@@ -54,5 +54,5 @@ VECTOR_DB_UPLOAD_TIMEOUT_SECONDS = 300
 MAX_BIGINT = (2 ** 63) - 1
 PORTAL_STATIC_PATH = '/chatbot/static/portal/'
 PORTAL_STATIC_PATH_PREFIXES = (PORTAL_STATIC_PATH.lstrip('/'), 'static/portal/')
-THEME_LIST_CACHE_KEY = 'resource_themes:list:v2'
-PRIMARY_THEME_LIST_CACHE_KEY = 'resource_themes:primary:list:v2'
+THEME_LIST_CACHE_KEY = 'resource_themes:list:v1'
+PRIMARY_THEME_LIST_CACHE_KEY = 'resource_themes:primary:list:v1'
