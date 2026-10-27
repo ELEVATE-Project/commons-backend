@@ -34,10 +34,13 @@ class FilterBlock:
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
+    themes: list = field(default_factory=list)
+    exclude_themes: list = field(default_factory=list)
 
     def __post_init__(self):
         self.exclude_organizations = unique(self.exclude_organizations)
         self.exclude_media_types = unique(self.exclude_media_types)
+        self.exclude_themes = unique(self.exclude_themes)
         self.organizations = [
             value for value in unique(self.organizations)
             if value not in self.exclude_organizations
@@ -45,6 +48,10 @@ class FilterBlock:
         self.media_types = [
             value for value in unique(self.media_types)
             if value not in self.exclude_media_types
+        ]
+        self.themes = [
+            value for value in unique(self.themes)
+            if value not in self.exclude_themes
         ]
 
     def is_empty(self):
@@ -54,8 +61,9 @@ class FilterBlock:
         An empty block matches every document, which would make the whole
         ``any_of`` a no-op, so callers drop these rather than send them.
         """
-        return not (self.organizations or self.media_types
-                    or self.exclude_organizations or self.exclude_media_types)
+        return not (self.organizations or self.media_types or self.themes
+                    or self.exclude_organizations or self.exclude_media_types
+                    or self.exclude_themes)
 
     def has_positive_axes(self, organizations=False, media_types=False):
         """True when exactly these positive axes are present, with no exclusions."""
@@ -73,6 +81,8 @@ class FilterBlock:
             media_types=unique(self.media_types),
             exclude_organizations=unique(self.exclude_organizations),
             exclude_media_types=unique(self.exclude_media_types),
+            themes=unique(self.themes),
+            exclude_themes=unique(self.exclude_themes),
         )
 
     def with_expanded_media_types(self, type_vocabulary):
@@ -92,6 +102,8 @@ class FilterBlock:
             exclude_organizations=list(self.exclude_organizations),
             exclude_media_types=expand_aliases(
                 self.exclude_media_types, type_vocabulary),
+            themes=list(self.themes),
+            exclude_themes=list(self.exclude_themes),
         )
 
     def as_payload(self):
@@ -108,6 +120,8 @@ class FilterBlock:
             ('file_type', self.media_types),
             ('exclude_organizations', self.exclude_organizations),
             ('exclude_file_type', self.exclude_media_types),
+            ('themes', self.themes),
+            ('exclude_themes', self.exclude_themes),
         ):
             if values:
                 payload[key] = list(values)

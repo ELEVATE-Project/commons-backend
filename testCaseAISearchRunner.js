@@ -59,7 +59,7 @@ const COOKIE = ""; // Not required: MediaSearchV2View resolves to AllowAny.
 // because switching models here is a manual .env edit + backend restart, not a
 // per-request choice.
 // const MODEL_LABEL = "gemini-3.1-flash-lite";
-const MODEL_LABEL = "gpt-4.1-mini";
+const MODEL_LABEL = "luna";
 
 // ---- QA (commented out while testing LOCAL) -----------------
 // const ENV_NAME = "QA";
@@ -319,7 +319,7 @@ function extractSearchMetadata(response) {
 }
 
 /**
- * The six axes the CSV scores, read from how the filters were *decided*.
+ * The axes the CSV scores, read from how the filters were *decided*.
  *
  * semantic_query falls back to search_metadata.query: the vector branch echoes
  * the residual query there, and a response that resolved nothing has neither.
@@ -332,6 +332,8 @@ function payloadFromMetadata(metadata) {
     file_type: resolution.media_types || [],
     exclude_organizations: resolution.exclude_organizations || [],
     exclude_file_type: resolution.exclude_media_types || [],
+    themes: resolution.themes || [],
+    exclude_themes: resolution.exclude_themes || [],
     any_of: resolution.any_of || [],
     semantic_query:
       resolution.semantic_query ?? (metadata.query || ""),
@@ -376,7 +378,13 @@ function compareAgainstExpectations(row, payload) {
   }
 
   if (wantPayload) {
-    const want = normalizedPayload(wantPayload);
+    // Rows written before themes existed carry no theme keys: read them as
+    // "no theme filter", so a spurious theme still fails the row.
+    const want = normalizedPayload({
+      themes: [],
+      exclude_themes: [],
+      ...wantPayload,
+    });
     const got = normalizedPayload(payload);
 
     if (JSON.stringify(want) !== JSON.stringify(got)) {

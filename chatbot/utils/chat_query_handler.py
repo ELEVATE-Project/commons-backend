@@ -128,6 +128,8 @@ def build_metadata_search_payload(
     exclude_organizations: List[str] = None,
     exclude_file_type: List[str] = None,
     any_of: List[Dict[str, Any]] = None,
+    themes: List[str] = None,
+    exclude_themes: List[str] = None,
 ):
     data = {
         "top_k": top_k,
@@ -144,6 +146,8 @@ def build_metadata_search_payload(
         "exclude_organizations": exclude_organizations,
         "exclude_file_type": exclude_file_type,
         "any_of": any_of,
+        "themes": themes,
+        "exclude_themes": exclude_themes,
     }
     data.update({key: value for key, value in optional_fields.items() if value})
     return data
@@ -161,6 +165,8 @@ def query_database_with_metadata(
     exclude_organizations: List[str] = None,
     exclude_file_type: List[str] = None,
     any_of: List[Dict[str, Any]] = None,
+    themes: List[str] = None,
+    exclude_themes: List[str] = None,
 ):
     """
     Query vector database with metadata filters for media search v2.
@@ -192,6 +198,8 @@ def query_database_with_metadata(
         exclude_organizations=exclude_organizations,
         exclude_file_type=exclude_file_type,
         any_of=any_of,
+        themes=themes,
+        exclude_themes=exclude_themes,
     )
 
     print(f"[query_database_with_metadata] Request Data: {data}")

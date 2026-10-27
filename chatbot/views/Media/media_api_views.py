@@ -75,6 +75,9 @@ class ResolvedFilters:
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
+    # Primary theme codes. Only the LLM resolves these; the fuzzy matcher does not.
+    themes: list = field(default_factory=list)
+    exclude_themes: list = field(default_factory=list)
     any_of: list = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
 
@@ -1072,6 +1075,8 @@ class MediaSearchV2View(APIView):
         media_types = resolved.media_types
         exclude_organizations = list(resolved.exclude_organizations)
         exclude_media_types = list(resolved.exclude_media_types)
+        themes = list(resolved.themes)
+        exclude_themes = list(resolved.exclude_themes)
         resolved_any_of = list(resolved.any_of or [])
         deterministic_any_of = list(any_of or [])
 
@@ -1136,6 +1141,8 @@ class MediaSearchV2View(APIView):
                 qdrant_exclude_file_types if qdrant_exclude_file_types else None
             ),
             "any_of": any_of_blocks if any_of_blocks else None,
+            "themes": themes if themes else None,
+            "exclude_themes": exclude_themes if exclude_themes else None,
         }
 
         # Nothing left to embed once the query reduced to filters only, so serve
@@ -1143,8 +1150,9 @@ class MediaSearchV2View(APIView):
         # Exclusions and alternatives count too: "all files except PDF" leaves no
         # residual query, and is a filter-only listing, not an unfiltered search.
         filters_present = bool(
-            tags or organizations or resource_types or media_types
-            or exclude_organizations or exclude_media_types or combined_any_of)
+            tags or organizations or resource_types or media_types or themes
+            or exclude_organizations or exclude_media_types or exclude_themes
+            or combined_any_of)
         if not query and filters_present:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
@@ -1162,6 +1170,8 @@ class MediaSearchV2View(APIView):
                 media_types=media_types,
                 exclude_organizations=exclude_organizations,
                 exclude_media_types=exclude_media_types,
+                themes=themes,
+                exclude_themes=exclude_themes,
                 any_of_blocks=combined_any_of,
                 diagnostics=resolved.diagnostics,
                 rapidfuzz_filters=rapidfuzz_filters,
@@ -1259,6 +1269,8 @@ class MediaSearchV2View(APIView):
                     file_types=media_types,
                     exclude_organizations=exclude_organizations,
                     exclude_file_types=exclude_media_types,
+                    themes=themes,
+                    exclude_themes=exclude_themes,
                     any_of_blocks=combined_any_of,
                 ),
             },
@@ -1374,11 +1386,15 @@ class MediaSearchV2View(APIView):
             media_types=resolved.media_types,
             exclude_organizations=resolved.exclude_organizations,
             exclude_media_types=resolved.exclude_media_types,
+            themes=resolved.themes,
+            exclude_themes=resolved.exclude_themes,
         )
         resolved.organizations = normalized.organizations
         resolved.media_types = normalized.media_types
         resolved.exclude_organizations = normalized.exclude_organizations
         resolved.exclude_media_types = normalized.exclude_media_types
+        resolved.themes = normalized.themes
+        resolved.exclude_themes = normalized.exclude_themes
         resolved.any_of = [
             block.normalized() if hasattr(block, 'normalized') else block
             for block in resolved.any_of
@@ -1388,6 +1404,8 @@ class MediaSearchV2View(APIView):
             'media_types': resolved.media_types,
             'exclude_organizations': resolved.exclude_organizations,
             'exclude_media_types': resolved.exclude_media_types,
+            'themes': resolved.themes,
+            'exclude_themes': resolved.exclude_themes,
         })
 
     def _should_call_llm(
@@ -1484,6 +1502,10 @@ class MediaSearchV2View(APIView):
             resolved.exclude_organizations = llm.exclude_organizations
         if llm.exclude_media_types is not None:
             resolved.exclude_media_types = llm.exclude_media_types
+        if llm.themes is not None:
+            resolved.themes = llm.themes
+        if llm.exclude_themes is not None:
+            resolved.exclude_themes = llm.exclude_themes
 
         # Alternatives need no explicit-UI guard either: they are AND'ed with
         # the fields above, so an explicit UI selection still applies in full
@@ -1495,6 +1517,8 @@ class MediaSearchV2View(APIView):
 
         resolved.diagnostics['exclude_organizations'] = resolved.exclude_organizations
         resolved.diagnostics['exclude_media_types'] = resolved.exclude_media_types
+        resolved.diagnostics['themes'] = resolved.themes
+        resolved.diagnostics['exclude_themes'] = resolved.exclude_themes
 
         resolved.query = self._clean_filter_search_text(llm.semantic_query)
         resolved.diagnostics['semantic_query'] = resolved.query
@@ -1516,6 +1540,8 @@ class MediaSearchV2View(APIView):
         any_of_blocks=None,
         diagnostics=None,
         rapidfuzz_filters=None,
+        themes=None,
+        exclude_themes=None,
     ):
         queryset = self._build_database_queryset()
         queryset = self._apply_database_filters(
@@ -1527,6 +1553,8 @@ class MediaSearchV2View(APIView):
             exclude_organizations=exclude_organizations,
             exclude_media_types=exclude_media_types,
             any_of_blocks=any_of_blocks,
+            themes=themes,
+            exclude_themes=exclude_themes,
         )
 
         # Built once, then logged and returned, so the two can never disagree.
@@ -1538,6 +1566,8 @@ class MediaSearchV2View(APIView):
             exclude_organizations=exclude_organizations,
             exclude_file_types=exclude_media_types,
             any_of_blocks=any_of_blocks,
+            themes=themes,
+            exclude_themes=exclude_themes,
         )
         print("[MediaSearchV2View] database filters: " + str(applied_filters))
 
@@ -1649,6 +1679,8 @@ class MediaSearchV2View(APIView):
         exclude_organizations=None,
         exclude_media_types=None,
         any_of_blocks=None,
+        themes=None,
+        exclude_themes=None,
     ):
         if tags:
             tag_conditions = Q()
@@ -1683,6 +1715,13 @@ class MediaSearchV2View(APIView):
         if exclude_media_types:
             queryset = queryset.exclude(overridden_media_type__in=exclude_media_types)
 
+        # Theme codes are Media.primary_theme_id, the value the vector service stores as theme.
+        if themes:
+            queryset = queryset.filter(primary_theme_id__in=themes)
+
+        if exclude_themes:
+            queryset = queryset.exclude(primary_theme_id__in=exclude_themes)
+
         if any_of_blocks:
             any_of_conditions = Q()
             for block in any_of_blocks:
@@ -1700,11 +1739,15 @@ class MediaSearchV2View(APIView):
                         or block.get('exclude_file_type')
                         or []
                     )
+                    block_themes = block.get('themes') or []
+                    block_exclude_themes = block.get('exclude_themes') or []
                 else:
                     block_organizations = block.organizations
                     block_media_types = block.media_types
                     block_exclude_organizations = block.exclude_organizations
                     block_exclude_media_types = block.exclude_media_types
+                    block_themes = getattr(block, 'themes', None) or []
+                    block_exclude_themes = getattr(block, 'exclude_themes', None) or []
                 
                 if block_organizations:
                     org_q = Q()
@@ -1725,6 +1768,12 @@ class MediaSearchV2View(APIView):
                     block_conditions &= ~Q(
                         overridden_media_type__in=block_exclude_media_types
                     )
+
+                if block_themes:
+                    block_conditions &= Q(primary_theme_id__in=block_themes)
+
+                if block_exclude_themes:
+                    block_conditions &= ~Q(primary_theme_id__in=block_exclude_themes)
 
                 # A block that recognised nothing is an empty Q(), which matches
                 # every row and would cancel the whole alternative set.
@@ -2023,6 +2072,8 @@ class MediaSearchV2View(APIView):
         exclude_organizations=None,
         exclude_file_types=None,
         any_of_blocks=None,
+        themes=None,
+        exclude_themes=None,
     ):
         """
         Report canonical applied filters for the log and search_metadata.
@@ -2038,6 +2089,8 @@ class MediaSearchV2View(APIView):
             'exclude_organizations': list(exclude_organizations or []),
             'exclude_media_types': [
                 str(value) for value in exclude_file_types or []],
+            'themes': list(themes or []),
+            'exclude_themes': list(exclude_themes or []),
             'any_of': [
                 self._filter_block_payload(block)
                 for block in any_of_blocks or []
