@@ -81,7 +81,7 @@ class ResourceThemeTypeFilter(admin.SimpleListFilter):
 
 @admin.register(ResourceTheme)
 class ResourceThemeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'is_primary', 'status', 'media_count', 'created_by', 'created_at')
+    list_display = ('name', 'code', 'is_primary', 'status', 'created_at')
     list_filter = (ResourceThemeTypeFilter, 'status', CustomAdvanceDateFilter)
     list_editable = ('status',)
     search_fields = ('name', 'code', 'description')
