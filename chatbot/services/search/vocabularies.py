@@ -183,3 +183,14 @@ def canonicalise_all(values, vocabulary):
         elif canonical not in accepted:
             accepted.append(canonical)
     return accepted, rejected
+
+
+def theme_vocabulary():
+    """Primary theme codes mapped to names used for query recognition."""
+    from chatbot.utils.theme_cache import get_theme_list
+
+    return {
+        theme['code']: [theme['name']]
+        for theme in get_theme_list(primary_only=True)['result']
+        if theme.get('name') and theme.get('code')
+    }

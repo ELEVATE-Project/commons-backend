@@ -449,6 +449,8 @@ def build_tool_schema():
                                 'semantic_level=D; normalization=dedupe,keep-any_of.'
                             ),
                         },
+                        'themes': {'type': 'array', 'items': {'type': 'string'}},
+                        'exclude_themes': {'type': 'array', 'items': {'type': 'string'}},
                         'organizations': {
                             'type': 'array',
                             'description': (
@@ -532,6 +534,8 @@ def build_tool_schema():
                             'items': {
                                 'type': 'object',
                                 'properties': {
+                                    'themes': {'type': 'array', 'items': {'type': 'string'}},
+                                    'exclude_themes': {'type': 'array', 'items': {'type': 'string'}},
                                     'organizations': {
                                         'type': 'array',
                                         'items': {'type': 'string'},
@@ -689,3 +693,36 @@ def build_user_message(
 
     layout = (template or '').strip() or USER_MESSAGE_TEMPLATE
     return Template(layout).safe_substitute(values).strip()
+
+THEME_FILTER_INSTRUCTIONS = """
+Themes are a third filter axis alongside organizations and file types. Match
+names against the supplied theme vocabulary and emit canonical codes in themes
+and exclude_themes, both at the top level and inside any_of branches. Apply the
+same inclusion, exclusion, OR, shared-qualifier, and residual-query rules to
+all three axes. Preserve branch-local associations between themes, organizations
+and file types. When any_of is nonempty, top-level themes, organizations and
+file_types must be empty; only explicitly global exclusions remain at top level.
+Do not infer themes from general subject matter or invent codes. An empty theme
+vocabulary means theme extraction is disabled, including inside any_of.
+""".strip()
+
+
+def with_theme_filter_tools(tools, tool_name=TOOL_NAME):
+    """Extend stored search-bot schemas without mutating their configuration."""
+    from copy import deepcopy
+
+    tools = deepcopy(tools)
+    for tool in tools or []:
+        function = tool.get('function', {})
+        if tool_name is not None and function.get('name') != tool_name:
+            continue
+        properties = function.get('parameters', {}).get('properties', {})
+        branches = properties.get('any_of', {}).get('items', {}).get('properties', {})
+        for fields in (properties, branches):
+            for name in ('themes', 'exclude_themes'):
+                fields[name] = {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'description': 'Canonical theme codes from the supplied vocabulary.',
+                }
+    return tools

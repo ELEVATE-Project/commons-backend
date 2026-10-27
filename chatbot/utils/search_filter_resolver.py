@@ -65,6 +65,7 @@ class MatchResult:
 class ResolvedFilters:
     organization: List[MatchResult] = field(default_factory=list)
     file_type: List[MatchResult] = field(default_factory=list)
+    theme: List[MatchResult] = field(default_factory=list)
     search_text: str = ""
     confidence: float = 0.0
     candidates: Dict[str, List[str]] = field(default_factory=dict)
@@ -77,7 +78,9 @@ class CategoryMatcher:
         auto_alias: bool = False,
         auto_alias_leading_word: bool = True,
         excluded_aliases: Optional[set] = None,
+        fuzzy_scorer=fuzz.WRatio,
     ):
+        self._fuzzy_scorer = fuzzy_scorer
         self._lookup = {}  # type: Dict[str, Tuple[str, str]]
         self._all_names = []  # type: List[str]
         excluded_aliases = _normalized_excluded_aliases(
@@ -139,7 +142,7 @@ class CategoryMatcher:
             result = process.extractOne(
                 candidate,
                 self._fuzzy_names,
-                scorer=fuzz.WRatio,
+                scorer=self._fuzzy_scorer,
             )
             if result is None:
                 continue
@@ -277,6 +280,7 @@ def resolve_query_exact(
     query: str,
     organization_vocabulary: Optional[Dict[str, List[str]]] = None,
     file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
+    theme_vocabulary: Optional[Dict[str, List[str]]] = None,
 ) -> ResolvedFilters:
     if re.search(DOES_NOT_EXIST_PATTERN, query or "", flags=re.IGNORECASE):
         return ResolvedFilters(search_text=clean_search_text(query or ""))
@@ -285,13 +289,15 @@ def resolve_query_exact(
     results = {
         ORGANIZATION_FIELD: [],
         FILE_TYPE_FIELD: [],
+        "theme": [],
     }  # type: Dict[str, List[MatchResult]]
     matchers = _build_matchers(
         organization_vocabulary=organization_vocabulary,
         file_type_vocabulary=file_type_vocabulary,
+        theme_vocabulary=theme_vocabulary,
     )
 
-    for field_name in (ORGANIZATION_FIELD, FILE_TYPE_FIELD):
+    for field_name in ("theme", ORGANIZATION_FIELD, FILE_TYPE_FIELD):
         matcher = matchers[field_name]
         matches = matcher.find_all_exact(remaining)
         if field_name == FILE_TYPE_FIELD:
@@ -311,7 +317,7 @@ def resolve_query_exact(
             remaining = _strip_all(remaining, matches)
 
     candidates = {}
-    for field_name in (ORGANIZATION_FIELD, FILE_TYPE_FIELD):
+    for field_name in ("theme", ORGANIZATION_FIELD, FILE_TYPE_FIELD):
         existing_matches = results.get(field_name, [])
         if field_name == FILE_TYPE_FIELD and existing_matches:
             continue
@@ -359,6 +365,7 @@ def resolve_query_exact(
     return ResolvedFilters(
         organization=results[ORGANIZATION_FIELD],
         file_type=results[FILE_TYPE_FIELD],
+        theme=results["theme"],
         search_text=clean_search_text(remaining),
         confidence=confidence,
         candidates=candidates,
@@ -411,6 +418,7 @@ def to_response_dict(query: str, resolved: ResolvedFilters) -> Dict:
         "resolved": {
             ORGANIZATION_FIELD: [_match_to_dict(match) for match in resolved.organization],
             FILE_TYPE_FIELD: [_match_to_dict(match) for match in resolved.file_type],
+            "theme": [_match_to_dict(match) for match in resolved.theme],
         },
         "search_text": resolved.search_text,
         "confidence": resolved.confidence,
@@ -583,8 +591,14 @@ def _clean_fuzzy_candidate(candidate: str) -> str:
 def _build_matchers(
     organization_vocabulary: Optional[Dict[str, List[str]]] = None,
     file_type_vocabulary: Optional[Dict[str, List[str]]] = None,
+    theme_vocabulary: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, CategoryMatcher]:
     return {
+        "theme": CategoryMatcher(
+            [(aliases[0], code, aliases) for code, aliases in (theme_vocabulary or {}).items() if aliases],
+            auto_alias=False,
+            fuzzy_scorer=fuzz.ratio,
+        ),
         ORGANIZATION_FIELD: CategoryMatcher(
             _organization_entries(organization_vocabulary),
             auto_alias=True,

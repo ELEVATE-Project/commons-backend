@@ -51,7 +51,6 @@ class ResourceTheme(models.Model):
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, default='')
-    media_count = models.PositiveIntegerField(default=0)
     icon = models.CharField(max_length=1000, null=True, blank=True, default=None)
     is_primary = models.BooleanField(default=False, db_index=True)
     status = models.CharField(
