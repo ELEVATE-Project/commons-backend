@@ -199,8 +199,6 @@ class LLMFilterResult:
     media_types: list = None
     exclude_organizations: list = None
     exclude_media_types: list = None
-    themes: list = None
-    exclude_themes: list = None
     any_of: list = field(default_factory=list)
     semantic_query: str = ''
     rejected: dict = field(default_factory=dict)
@@ -368,8 +366,6 @@ def _resolve_any_of(
             media_types=media_types or [],
             exclude_organizations=exclude_organizations or [],
             exclude_media_types=exclude_media_types or [],
-            themes=themes or [],
-            exclude_themes=exclude_themes or [],
         )
         if entry_rejected or block.is_empty():
             logger.info(
@@ -534,8 +530,6 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None, include_them
         media_types=media_types,
         exclude_organizations=exclude_organizations,
         exclude_media_types=exclude_media_types,
-        themes=themes,
-        exclude_themes=exclude_themes,
         any_of=any_of,
         semantic_query=_residual_query(
             arguments.get('semantic_query'), raw_query,

@@ -36,15 +36,11 @@ class FilterBlock:
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
-    themes: list = field(default_factory=list)
-    exclude_themes: list = field(default_factory=list)
 
     def __post_init__(self):
         self.exclude_themes = unique(self.exclude_themes)
-        self.themes = [value for value in unique(self.themes) if value not in self.exclude_themes]
         self.exclude_organizations = unique(self.exclude_organizations)
         self.exclude_media_types = unique(self.exclude_media_types)
-        self.exclude_themes = unique(self.exclude_themes)
         self.organizations = [
             value for value in unique(self.organizations)
             if value not in self.exclude_organizations
@@ -83,8 +79,6 @@ class FilterBlock:
     def normalized(self):
         """Return a copy with empty and duplicate values removed."""
         return FilterBlock(
-            themes=list(self.themes),
-            exclude_themes=list(self.exclude_themes),
             organizations=unique(self.organizations),
             media_types=unique(self.media_types),
             exclude_organizations=unique(self.exclude_organizations),
@@ -112,8 +106,6 @@ class FilterBlock:
             exclude_organizations=list(self.exclude_organizations),
             exclude_media_types=expand_aliases(
                 self.exclude_media_types, type_vocabulary),
-            themes=list(self.themes),
-            exclude_themes=list(self.exclude_themes),
         )
 
     def as_payload(self):

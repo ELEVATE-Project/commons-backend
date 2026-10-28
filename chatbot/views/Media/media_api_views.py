@@ -18,7 +18,6 @@ from chatbot.constants.constants import MAX_BIGINT, MIN_ANY_OF_BRANCHES
 from chatbot.filter.media_filters import MediaFilter
 from chatbot.utils.chat_query_handler import query_database_with_metadata
 from chatbot.utils.search_filter_resolver import (
-    _confidence_threshold,
     clean_search_text,
     count_negation_cues,
     included_values,
@@ -80,9 +79,6 @@ class ResolvedFilters:
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
     exclude_media_types: list = field(default_factory=list)
-    # Primary theme codes. Only the LLM resolves these; the fuzzy matcher does not.
-    themes: list = field(default_factory=list)
-    exclude_themes: list = field(default_factory=list)
     any_of: list = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
 
@@ -1136,12 +1132,6 @@ class MediaSearchV2View(APIView):
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
             fuzzy, deterministic_any_of, resolved.diagnostics
         )
-        # LLM theme codes replace the theme-name step's names, as LLM orgs and
-        # file types replace fuzzy ones; rapidfuzz_filters above keeps the names.
-        if resolved.diagnostics.get('themes_source') == 'llm':
-            self.theme_names = []
-        if resolved.diagnostics.get('exclude_themes_source') == 'llm':
-            self.exclude_theme_names = []
 
         print(f"[MediaSearchV2View] resolved query: {query!r}")
         print(f"[MediaSearchV2View] resolved organizations: {organizations}")
@@ -1354,13 +1344,6 @@ class MediaSearchV2View(APIView):
         # No fuzzy result means zero confidence.
         fuzzy = fuzzy or FuzzyFilterResult()
 
-        # Fallback weighs theme names too. The name step accepts them only at
-        # SEARCH_FILTER_THEME_CONFIDENCE_THRESHOLD or above, so that is their score.
-        scores = [fuzzy.confidence] if fuzzy.confidence else []
-        if getattr(self, 'theme_names', None) or getattr(self, 'exclude_theme_names', None):
-            scores.append(_confidence_threshold('theme') / 100.0)
-        confidence = min(scores) if scores else 0.0
-
         # getattr, not attribute access: the deterministic resolver may not carry
         # exclusions yet, and an absent field must read as "found none".
         resolved = ResolvedFilters(
@@ -1411,7 +1394,7 @@ class MediaSearchV2View(APIView):
 
             should_call, reason = self._should_call_llm(
                 mode,
-                confidence,
+                fuzzy.confidence,
                 threshold,
                 all_explicit,
                 force_reason=fuzzy.llm_reason,
@@ -1454,8 +1437,6 @@ class MediaSearchV2View(APIView):
             media_types=resolved.media_types,
             exclude_organizations=resolved.exclude_organizations,
             exclude_media_types=resolved.exclude_media_types,
-            themes=resolved.themes,
-            exclude_themes=resolved.exclude_themes,
         )
         resolved.themes = normalized.themes
         resolved.exclude_themes = normalized.exclude_themes
