@@ -532,9 +532,8 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None, include_them
             # Exclusions count as filters found: an exclusion-only request has
             # no residual either, and must not fall back to the raw query.
             # Alternatives count for the same reason.
-            bool(organizations or media_types or themes
-                 or exclude_organizations or exclude_media_types
-                 or exclude_themes or any_of)),
+            bool(themes or exclude_themes or organizations or media_types
+                 or exclude_organizations or exclude_media_types or any_of)),
         rejected=rejected,
         bot_route=bot.route,
         latency_ms=latency_ms,

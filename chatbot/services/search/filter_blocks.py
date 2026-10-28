@@ -76,12 +76,12 @@ class FilterBlock:
     def normalized(self):
         """Return a copy with empty and duplicate values removed."""
         return FilterBlock(
+            themes=unique(self.themes),
+            exclude_themes=unique(self.exclude_themes),
             organizations=unique(self.organizations),
             media_types=unique(self.media_types),
             exclude_organizations=unique(self.exclude_organizations),
             exclude_media_types=unique(self.exclude_media_types),
-            themes=unique(self.themes),
-            exclude_themes=unique(self.exclude_themes),
         )
 
     def with_expanded_media_types(self, type_vocabulary):
