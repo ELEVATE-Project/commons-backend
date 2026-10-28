@@ -16,7 +16,7 @@ NEGATION_SCOPE_BREAKERS = (
 # Generic file-type categories that map to multiple canonical types.
 # Kept separate from one-to-one aliases; categories are used only as prompt hints.
 # Spreadsheet maps to XLS/XLSX/CSV; Excel stays XLS/XLSX, so CSV is reached
-# through "spreadsheet" or by naming it.
+# through "spreadsheet"
 # PPT/PPTX are not supported because they are not present in FileTypeChoices.
 FILE_TYPE_CATEGORIES = {
     'word': [FileTypeChoices.DOC.value, FileTypeChoices.DOCX.value],
