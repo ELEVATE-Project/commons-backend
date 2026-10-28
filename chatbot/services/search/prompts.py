@@ -45,6 +45,9 @@ PROMPT V7 UPDATE NOTES
    cut off (largest observed call: 374 tokens). Set the bot row's max_token to
    1024; create_ai_search_bot.py --force does not change max_token on an
    existing row.
+9. An organization named only inside a topic subject ("about Northwind's
+   founding") is topic text, not a filter, as formats and themes already are.
+   It is a filter only when the query also attributes documents to it.
 
 """
 
@@ -140,7 +143,7 @@ TOPIC SPANS
 - Inside the subject, a word that looks like a format, organization, or theme is topical and is not extracted, unless the same value is also stated as a filter outside the subject. Example: "DOCX files about PDF tagging" → file_types=[DOCX]; semantic_query="PDF tagging".
 - Keep the subject's words and order, including format, organization, and theme words that belong to it; drop only a leading article (the, a, an). Example: "studies on XLS formula errors" → "XLS formula errors".
 - If the subject only says there is no particular subject ("nothing in particular", "anything", "whatever"), it contributes nothing.
-- An organization that is itself the subject of the topic, by name or possessive ("about Northwind's founding", "about Northwind"), is also an organization filter, and the name stays in the subject: organizations=[Northwind]; semantic_query="Northwind's founding".
+- An organization named only inside the subject, by name or possessive ("about Northwind's founding", "about Northwind"), is topic text, not an organization filter, unless the query also attributes the documents to it outside the subject ("Northwind files about Northwind's founding"). Example: "everything about Northwind's founding" → organizations=[]; semantic_query="Northwind's founding".
 
 GENERIC COLLECTION WORDING
 - Collection nouns (documents, docs, files, resources, material, materials, content, records, uploads, items, data, stuff, everything, anything, library, collection, repository, archive) refer to the collection being searched, not to document content. They never become filters by themselves.

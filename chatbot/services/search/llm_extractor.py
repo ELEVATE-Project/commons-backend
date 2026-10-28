@@ -403,12 +403,13 @@ def _residual_query(returned, raw_query, has_filters):
     """
     Sanity-check the model's semantic_query against the original.
 
-    Falls back to the raw query if the model returned nothing (and no filters
-    were found either) or if it padded rather than reduced the text.
+    An explicit "" is kept: the model found no topic ("documents", "everything
+    from every organization"). The raw query is used only when the model gave
+    no semantic_query at all and found no filter, or padded the text.
     """
-    candidate = (returned or '').strip() if isinstance(returned, str) else ''
-    if not candidate:
+    if not isinstance(returned, str):
         return '' if has_filters else raw_query
+    candidate = returned.strip()
     if len(candidate) > len(raw_query):
         logger.info('ai_search: semantic_query longer than the query, keeping the original')
         return raw_query

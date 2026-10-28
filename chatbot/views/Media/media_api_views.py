@@ -1186,17 +1186,18 @@ class MediaSearchV2View(APIView):
             "exclude_themes": exclude_themes if exclude_themes else None,
         }
 
-        # Nothing left to embed once the query reduced to filters only, so serve
-        # it from the same PostgreSQL path a filters-only request uses.
-        # Exclusions and alternatives count too: "all files except PDF" leaves no
-        # residual query, and is a filter-only listing, not an unfiltered search.
+        # No longer decides the route below: an empty query lists from PostgreSQL
+        # with or without filters. Kept until its theme-name terms can be removed.
         filters_present = bool(
             tags or organizations or resource_types or media_types
             or themes or exclude_themes
             or exclude_organizations or exclude_media_types or combined_any_of
             or self.theme_names or self.exclude_theme_names
             or request.query_params.get('theme'))
-        if not query and filters_present:
+        # Nothing left to embed, so list from PostgreSQL: a filter-only request
+        # gets its filtered listing, and one with no filters either ("documents",
+        # "everything") lists the whole library, as an empty search box does.
+        if not query:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
             db_field, db_reverse = self._parse_ordering(db_ordering)
