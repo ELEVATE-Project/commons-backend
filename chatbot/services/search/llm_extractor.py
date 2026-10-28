@@ -18,6 +18,8 @@ from chatbot.constants.constants import MIN_ANY_OF_BRANCHES
 from chatbot.services.search.config import get_search_llm_setting
 from chatbot.services.search.prompts import (
     SYSTEM_PROMPT,
+    THEME_FILTER_INSTRUCTIONS,
+    with_theme_filter_tools,
     TOOL_NAME,
     build_user_message,
     get_search_bot,
@@ -191,6 +193,8 @@ class LLMFilterResult:
     fields above. Empty is the normal case and means "flat behaviour, exactly
     as before" — only an OR joining two different fields fills it.
     """
+    themes: list = None
+    exclude_themes: list = None
     organizations: list = None
     media_types: list = None
     exclude_organizations: list = None
@@ -354,7 +358,12 @@ def _resolve_any_of(
             entry, 'theme', 'exclude_theme',
             theme_vocabulary, 'themes', entry_rejected)
 
+        themes, exclude_themes = _resolve_field(
+            entry, 'themes', 'exclude_themes',
+            theme_vocabulary or {}, 'themes', entry_rejected)
         block = FilterBlock(
+            themes=themes or [],
+            exclude_themes=exclude_themes or [],
             organizations=organizations or [],
             media_types=media_types or [],
             exclude_organizations=exclude_organizations or [],
@@ -416,7 +425,7 @@ def _residual_query(returned, raw_query, has_filters):
     return candidate
 
 
-def extract_search_filters(*, raw_query, candidates=None, bot=None):
+def extract_search_filters(*, raw_query, candidates=None, bot=None, include_themes=True):
     """
     Return an LLMFilterResult, or None when the LLM could not be consulted
     (no search bot configured, or a cooldown is running).
@@ -439,6 +448,7 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     # plain JSON shape, so the bot still works, just without schema-constrained
     # decoding.
     tools, tool_choice, tool_name = _tool_context(bot)
+    tools = with_theme_filter_tools(tools, tool_name)
     if not tools:
         logger.info(
             'ai_search: bot %s has no tool_context, asking for JSON in the reply instead',
@@ -448,16 +458,15 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
     org_vocabulary = select_organization_vocabulary(
         bot, candidates=candidates.get('organizations'))
     type_vocabulary = file_type_vocabulary()
-    # Through the module, like organization_vocabulary below, so tests patch one place.
-    themes_vocabulary = vocabularies.theme_vocabulary()
+    theme_vocabulary = vocabularies.theme_vocabulary() if include_themes else {}
 
     messages = [
-        {'role': 'system', 'content': bot.context or SYSTEM_PROMPT},
+        {'role': 'system', 'content': (bot.context or SYSTEM_PROMPT) + '\n\n' + THEME_FILTER_INSTRUCTIONS},
         # Both halves of the prompt come from the bot row: context holds the
         # rules, pre_context the per-request layout.
         {'role': 'user', 'content': build_user_message(
             raw_query, org_vocabulary, type_vocabulary,
-            theme=themes_vocabulary, candidates=candidates,
+            theme=theme_vocabulary, candidates=candidates,
             template=bot.pre_context)},
     ]
 
@@ -514,11 +523,13 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None):
         type_vocabulary, 'media_types', rejected)
     themes, exclude_themes = _resolve_field(
         arguments, 'theme', 'exclude_theme',
-        themes_vocabulary, 'themes', rejected)
+        theme_vocabulary, 'themes', rejected)
     any_of = _resolve_any_of(
-        arguments, org_vocabulary, type_vocabulary, themes_vocabulary, rejected)
+        arguments, org_vocabulary, type_vocabulary, theme_vocabulary, rejected)
 
     result = LLMFilterResult(
+        themes=themes,
+        exclude_themes=exclude_themes,
         organizations=organizations,
         media_types=media_types,
         exclude_organizations=exclude_organizations,

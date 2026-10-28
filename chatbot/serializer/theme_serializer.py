@@ -17,7 +17,6 @@ class ResourceThemeSerializer(serializers.Serializer):
     code = serializers.CharField(read_only=True)
     name = serializers.CharField(read_only=True)
     description = serializers.CharField(read_only=True)
-    media_count = serializers.IntegerField(read_only=True)
     icon = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
@@ -93,7 +92,7 @@ class ResourceThemeCreateSerializer(serializers.ModelSerializer):
         model = ResourceTheme
         fields = (
             'id', 'code', 'name', 'description', 'is_primary', 'status',
-            'media_count', 'icon',
+            'icon',
             'created_at', 'updated_at',
         )
         read_only_fields = ('id', 'created_at', 'updated_at')

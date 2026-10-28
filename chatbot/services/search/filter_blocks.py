@@ -30,6 +30,8 @@ class FilterBlock:
     fields, ``exclude_*`` dropping matches. What differs is only how blocks
     combine with each other.
     """
+    themes: list = field(default_factory=list)
+    exclude_themes: list = field(default_factory=list)
     organizations: list = field(default_factory=list)
     media_types: list = field(default_factory=list)
     exclude_organizations: list = field(default_factory=list)
@@ -38,6 +40,8 @@ class FilterBlock:
     exclude_themes: list = field(default_factory=list)
 
     def __post_init__(self):
+        self.exclude_themes = unique(self.exclude_themes)
+        self.themes = [value for value in unique(self.themes) if value not in self.exclude_themes]
         self.exclude_organizations = unique(self.exclude_organizations)
         self.exclude_media_types = unique(self.exclude_media_types)
         self.exclude_themes = unique(self.exclude_themes)
@@ -61,14 +65,16 @@ class FilterBlock:
         An empty block matches every document, which would make the whole
         ``any_of`` a no-op, so callers drop these rather than send them.
         """
-        return not (self.organizations or self.media_types or self.themes
-                    or self.exclude_organizations or self.exclude_media_types
-                    or self.exclude_themes)
 
-    def has_positive_axes(self, organizations=False, media_types=False):
+        return not (self.themes or self.exclude_themes or self.organizations or self.media_types
+                    or self.exclude_organizations or self.exclude_media_types)
+
+    def has_positive_axes(self, organizations=False, media_types=False, themes=False):
         """True when exactly these positive axes are present, with no exclusions."""
         return (
-            bool(self.organizations) == organizations
+            bool(self.themes) == themes
+            and not self.exclude_themes
+            and bool(self.organizations) == organizations
             and bool(self.media_types) == media_types
             and not self.exclude_organizations
             and not self.exclude_media_types
@@ -77,6 +83,8 @@ class FilterBlock:
     def normalized(self):
         """Return a copy with empty and duplicate values removed."""
         return FilterBlock(
+            themes=list(self.themes),
+            exclude_themes=list(self.exclude_themes),
             organizations=unique(self.organizations),
             media_types=unique(self.media_types),
             exclude_organizations=unique(self.exclude_organizations),
@@ -97,6 +105,8 @@ class FilterBlock:
         from chatbot.services.search.vocabularies import expand_aliases
 
         return FilterBlock(
+            themes=list(self.themes),
+            exclude_themes=list(self.exclude_themes),
             organizations=list(self.organizations),
             media_types=expand_aliases(self.media_types, type_vocabulary),
             exclude_organizations=list(self.exclude_organizations),
@@ -116,6 +126,8 @@ class FilterBlock:
         """
         payload = {}
         for key, values in (
+            ('themes', self.themes),
+            ('exclude_themes', self.exclude_themes),
             ('organizations', self.organizations),
             ('file_type', self.media_types),
             ('exclude_organizations', self.exclude_organizations),
@@ -132,52 +144,30 @@ def carry_shared_positive_qualifiers(blocks):
     """Carry one edge branch's shared positive qualifier across alternatives.
 
     Handles compact forms such as ``PDF from A or B`` and ``A or B PDFs``.
-    Only a first or last branch that names both axes can donate a value, every
-    other branch must name exactly the complementary positive axis, and no
+    Only an edge branch naming multiple axes can donate qualifiers; every
+    other branch must name exactly one of those positive axes, and no
     exclusion is ever moved between branches.
     """
     normalized = [block.normalized() for block in blocks if not block.is_empty()]
     if len(normalized) < MIN_ANY_OF_BRANCHES:
         return normalized
 
+    axes = ('organizations', 'media_types', 'themes')
     for source_index in (0, len(normalized) - 1):
         source = normalized[source_index]
-        others = [
-            block for index, block in enumerate(normalized)
-            if index != source_index
-        ]
-        if source.organizations and source.media_types and all(
-            _is_org_only(block) for block in others
-        ):
+        others = [block for index, block in enumerate(normalized) if index != source_index]
+        source_axes = {axis for axis in axes if getattr(source, axis)}
+        if len(source_axes) < 2:
+            continue
+        for varying_axis in source_axes:
+            if not all(block.has_positive_axes(**{varying_axis: True}) for block in others):
+                continue
             return [
-                FilterBlock(
-                    organizations=block.organizations,
-                    media_types=(block.media_types or source.media_types),
-                    exclude_organizations=block.exclude_organizations,
-                    exclude_media_types=block.exclude_media_types,
-                ).normalized()
-                for block in normalized
-            ]
-
-        if source.organizations and source.media_types and all(
-            _is_media_type_only(block) for block in others
-        ):
-            return [
-                FilterBlock(
-                    organizations=(block.organizations or source.organizations),
-                    media_types=block.media_types,
-                    exclude_organizations=block.exclude_organizations,
-                    exclude_media_types=block.exclude_media_types,
-                ).normalized()
+                FilterBlock(**{
+                    **{axis: (getattr(block, axis) or getattr(source, axis)) for axis in axes},
+                    **{f'exclude_{axis}': getattr(block, f'exclude_{axis}') for axis in axes},
+                }).normalized()
                 for block in normalized
             ]
 
     return normalized
-
-
-def _is_org_only(block):
-    return block.has_positive_axes(organizations=True)
-
-
-def _is_media_type_only(block):
-    return block.has_positive_axes(media_types=True)

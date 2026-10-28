@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Count
 from rest_framework import serializers, status
 from rest_framework.generics import CreateAPIView, UpdateAPIView, get_object_or_404
 from rest_framework.response import Response
@@ -12,6 +13,7 @@ from chatbot.serializer.theme_serializer import (
     ResourceThemeCreateSerializer, ResourceThemeUpdateSerializer,
 )
 from chatbot.models.theme_models import ResourceTheme
+from chatbot.models.media_models import Media
 from chatbot.utils.theme_cache import get_theme_list, invalidate_theme_list_cache
 
 
@@ -61,11 +63,25 @@ class ResourceThemeUpdateView(UpdateAPIView):
 
 
 class ResourceThemeListView(APIView):
-    """List resource themes; requires the ResourceTheme model and migration."""
+    """List published primary resource themes."""
 
     def get(self, request):
         try:
-            return Response(get_theme_list())
+            payload = get_theme_list(primary_only=True, published_only=True)
+            media_counts = dict(
+                Media.objects.filter(
+                    primary_theme_id__in=[theme['code'] for theme in payload['result']]
+                ).order_by().values('primary_theme_id').annotate(
+                    media_count=Count('pk')
+                ).values_list('primary_theme_id', 'media_count')
+            )
+            return Response({
+                **payload,
+                'result': [
+                    {**theme, 'media_count': media_counts.get(theme['code'], 0)}
+                    for theme in payload['result']
+                ],
+            })
         except LookupError:
             return Response(
                 {'detail': 'Resource themes are not available yet.'},

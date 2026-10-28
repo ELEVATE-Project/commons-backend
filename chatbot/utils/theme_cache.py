@@ -4,15 +4,21 @@ from django.conf import settings
 from django.core.cache import cache
 
 from chatbot.constants.constants import PRIMARY_THEME_LIST_CACHE_KEY, THEME_LIST_CACHE_KEY
+from chatbot.models.enums import ThemeStatus
 
 
 def invalidate_theme_list_cache():
     if settings.REDIS_CACHE_ENABLED:
-        cache.delete_many([THEME_LIST_CACHE_KEY, PRIMARY_THEME_LIST_CACHE_KEY])
+        cache.delete_many([
+            THEME_LIST_CACHE_KEY, PRIMARY_THEME_LIST_CACHE_KEY,
+            f'{THEME_LIST_CACHE_KEY}:published', f'{PRIMARY_THEME_LIST_CACHE_KEY}:published',
+        ])
 
 
-def get_theme_list(primary_only=False):
+def get_theme_list(primary_only=False, published_only=False):
     cache_key = PRIMARY_THEME_LIST_CACHE_KEY if primary_only else THEME_LIST_CACHE_KEY
+    if published_only:
+        cache_key = f'{cache_key}:published'
     if settings.REDIS_CACHE_ENABLED:
         cached = cache.get(cache_key)
         if cached is not None:
@@ -24,6 +30,8 @@ def get_theme_list(primary_only=False):
     themes = model.objects.order_by('id')
     if primary_only:
         themes = themes.filter(is_primary=True)
+    if published_only:
+        themes = themes.filter(status=ThemeStatus.PUBLISHED)
     result = ResourceThemeSerializer(themes, many=True).data
     payload = {'count': len(result), 'result': result}
     if settings.REDIS_CACHE_ENABLED:
