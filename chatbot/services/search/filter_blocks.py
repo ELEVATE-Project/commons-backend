@@ -39,6 +39,7 @@ class FilterBlock:
 
     def __post_init__(self):
         self.exclude_themes = unique(self.exclude_themes)
+        self.themes = [value for value in unique(self.themes) if value not in self.exclude_themes]
         self.exclude_organizations = unique(self.exclude_organizations)
         self.exclude_media_types = unique(self.exclude_media_types)
         self.organizations = [
@@ -48,10 +49,6 @@ class FilterBlock:
         self.media_types = [
             value for value in unique(self.media_types)
             if value not in self.exclude_media_types
-        ]
-        self.themes = [
-            value for value in unique(self.themes)
-            if value not in self.exclude_themes
         ]
 
     def is_empty(self):
