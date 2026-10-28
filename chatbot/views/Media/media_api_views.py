@@ -939,8 +939,6 @@ class MediaSearchV2View(APIView):
 
         # An explicit theme code retains precedence and its existing DB filtering.
         self.ignore_query_themes = bool(request.query_params.get('theme', '').strip())
-        self.query_themes = []
-        self.exclude_query_themes = []
         if query and self.ignore_query_themes:
             from chatbot.utils.theme_search import resolve_theme_names
             _, _, query = resolve_theme_names(query)
@@ -1077,17 +1075,6 @@ class MediaSearchV2View(APIView):
                     'media_types': explicit_media_types,
                 },
             )
-        # The theme-name shortcut above skips _resolve_search_filters, so neither
-        # the mode nor the threshold is checked; run it so AI_SEARCH_LLM_MODE decides.
-        if 'fuzzy_confidence' not in resolved.diagnostics:
-            resolved = self._resolve_search_filters(
-                query,
-                fuzzy=fuzzy,
-                explicit_filters={
-                    'organizations': explicit_organizations,
-                    'media_types': explicit_media_types,
-                },
-            )
         # Not `resolved.query or query`: an empty residual is meaningful and
         # becomes a filters-only listing below.
         query = resolved.query
@@ -1095,8 +1082,6 @@ class MediaSearchV2View(APIView):
             ordering = ordering_param if ordering_param else '-created_at'
         organizations = resolved.organizations
         media_types = resolved.media_types
-        self.query_themes = resolved.themes
-        self.exclude_query_themes = resolved.exclude_themes
         exclude_organizations = list(resolved.exclude_organizations)
         exclude_media_types = list(resolved.exclude_media_types)
         themes = list(resolved.themes)
@@ -1116,8 +1101,8 @@ class MediaSearchV2View(APIView):
             if not trailing_global_filter:
                 exclude_organizations = []
                 exclude_media_types = []
-                self.exclude_query_themes = []
-            self.query_themes = []
+                exclude_themes = []
+            themes = []
             resolved.diagnostics['any_of_source'] = 'deterministic'
         # Once the LLM has answered, its result stands, alternatives or not, as it
         # does for orgs and media types: undo the deterministic swap above.
@@ -1127,6 +1112,8 @@ class MediaSearchV2View(APIView):
             media_types = resolved.media_types
             exclude_organizations = list(resolved.exclude_organizations)
             exclude_media_types = list(resolved.exclude_media_types)
+            themes = list(resolved.themes)
+            exclude_themes = list(resolved.exclude_themes)
             combined_any_of = resolved_any_of
             resolved.diagnostics.pop('any_of_source')
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
@@ -1166,8 +1153,6 @@ class MediaSearchV2View(APIView):
             "top_k": top_k,
             "filter_score": filter_score,
             "detail_filter_score": detail_filter_score,
-            "themes": self.query_themes or None,
-            "exclude_themes": self.exclude_query_themes or None,
             "categories": tags if tags else None,
             "organizations": organizations if organizations else None,
             "resource_type": resource_types if resource_types else None,
@@ -1189,7 +1174,6 @@ class MediaSearchV2View(APIView):
             tags or organizations or resource_types or media_types
             or themes or exclude_themes
             or exclude_organizations or exclude_media_types or combined_any_of
-            or self.query_themes or self.exclude_query_themes
             or request.query_params.get('theme'))
         # Nothing left to embed, so list from PostgreSQL: a filter-only request
         # gets its filtered listing, and one with no filters either ("documents",
@@ -1444,8 +1428,6 @@ class MediaSearchV2View(APIView):
         resolved.media_types = normalized.media_types
         resolved.exclude_organizations = normalized.exclude_organizations
         resolved.exclude_media_types = normalized.exclude_media_types
-        resolved.themes = normalized.themes
-        resolved.exclude_themes = normalized.exclude_themes
         resolved.any_of = [
             block.normalized() if hasattr(block, 'normalized') else block
             for block in resolved.any_of
@@ -1457,8 +1439,6 @@ class MediaSearchV2View(APIView):
             'media_types': resolved.media_types,
             'exclude_organizations': resolved.exclude_organizations,
             'exclude_media_types': resolved.exclude_media_types,
-            'themes': resolved.themes,
-            'exclude_themes': resolved.exclude_themes,
         })
 
     def _should_call_llm(
@@ -1543,6 +1523,7 @@ class MediaSearchV2View(APIView):
             values = getattr(llm, axis, None)
             if values is not None:
                 setattr(resolved, axis, values)
+                resolved.diagnostics[f'{axis}_source'] = 'llm'
             elif axis == 'themes':
                 resolved.themes = self._remove_unconfirmed_fuzzy_values(resolved, axis)
 
@@ -1568,12 +1549,6 @@ class MediaSearchV2View(APIView):
             resolved.exclude_organizations = llm.exclude_organizations
         if llm.exclude_media_types is not None:
             resolved.exclude_media_types = llm.exclude_media_types
-        if llm.themes is not None:
-            resolved.themes = llm.themes
-            resolved.diagnostics['themes_source'] = 'llm'
-        if llm.exclude_themes is not None:
-            resolved.exclude_themes = llm.exclude_themes
-            resolved.diagnostics['exclude_themes_source'] = 'llm'
 
         # Alternatives need no explicit-UI guard either: they are AND'ed with
         # the fields above, so an explicit UI selection still applies in full
@@ -1617,7 +1592,6 @@ class MediaSearchV2View(APIView):
         theme = request.query_params.get('theme', '').strip()
         if theme:
             queryset = queryset.filter(primary_theme_id=theme)
-        queryset = self._apply_query_theme_filters(queryset)
         queryset = self._apply_database_filters(
             queryset,
             tags=tags,
@@ -1815,11 +1789,7 @@ class MediaSearchV2View(APIView):
                         or block.get('exclude_file_type')
                         or []
                     )
-                    block_themes = block.get('themes') or []
-                    block_exclude_themes = block.get('exclude_themes') or []
                 else:
-                    block_themes = block.themes
-                    block_exclude_themes = block.exclude_themes
                     block_organizations = block.organizations
                     block_media_types = block.media_types
                     block_exclude_organizations = block.exclude_organizations
@@ -1850,12 +1820,6 @@ class MediaSearchV2View(APIView):
                     block_conditions &= ~Q(
                         overridden_media_type__in=block_exclude_media_types
                     )
-
-                if block_themes:
-                    block_conditions &= Q(primary_theme_id__in=block_themes)
-
-                if block_exclude_themes:
-                    block_conditions &= ~Q(primary_theme_id__in=block_exclude_themes)
 
                 # A block that recognised nothing is an empty Q(), which matches
                 # every row and would cancel the whole alternative set.
@@ -1968,15 +1932,6 @@ class MediaSearchV2View(APIView):
             previous_url = f"{base_url}?{urlencode(previous_params, doseq=True)}"
 
         return next_url, previous_url
-
-    def _apply_query_theme_filters(self, queryset):
-        themes = getattr(self, 'query_themes', [])
-        excluded = getattr(self, 'exclude_query_themes', [])
-        if themes:
-            queryset = queryset.filter(primary_theme_id__in=themes)
-        if excluded:
-            queryset = queryset.exclude(primary_theme_id__in=excluded)
-        return queryset
 
     def _apply_theme_filter(self, results, theme):
         """Filter vector hits using primary theme assignments in the database."""
@@ -2198,7 +2153,6 @@ class MediaSearchV2View(APIView):
         str() keeps enum media types serialisable.
         """
         return {
-            **self._theme_filter_metadata(),
             'tags': list(tags or []),
             'organizations': list(organizations or []),
             'resource_types': list(resource_types or []),
@@ -2212,12 +2166,6 @@ class MediaSearchV2View(APIView):
                 self._filter_block_payload(block)
                 for block in any_of_blocks or []
             ],
-        }
-
-    def _theme_filter_metadata(self):
-        return {
-            'themes': list(getattr(self, 'query_themes', [])),
-            'exclude_themes': list(getattr(self, 'exclude_query_themes', [])),
         }
 
     def _rapidfuzz_filter_metadata(

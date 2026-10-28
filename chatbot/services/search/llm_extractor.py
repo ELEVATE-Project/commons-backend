@@ -353,10 +353,6 @@ def _resolve_any_of(
             entry, 'file_types', 'exclude_file_types',
             type_vocabulary, 'media_types', entry_rejected)
         themes, exclude_themes = _resolve_field(
-            entry, 'theme', 'exclude_theme',
-            theme_vocabulary, 'themes', entry_rejected)
-
-        themes, exclude_themes = _resolve_field(
             entry, 'themes', 'exclude_themes',
             theme_vocabulary or {}, 'themes', entry_rejected)
         block = FilterBlock(
@@ -518,8 +514,8 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None, include_them
         arguments, 'file_types', 'exclude_file_types',
         type_vocabulary, 'media_types', rejected)
     themes, exclude_themes = _resolve_field(
-        arguments, 'theme', 'exclude_theme',
-        theme_vocabulary, 'themes', rejected)
+        arguments, 'themes', 'exclude_themes',
+        theme_vocabulary or {}, 'themes', rejected)
     any_of = _resolve_any_of(
         arguments, org_vocabulary, type_vocabulary, theme_vocabulary, rejected)
 

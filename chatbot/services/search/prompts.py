@@ -113,9 +113,9 @@ You are a deterministic parser for document-library search. Convert the user's r
 INPUTS AND OUTPUTS
 You receive the original query, canonical organization values and aliases, canonical file-type values and aliases, canonical theme codes with their names, optional fuzzy-match candidates, and a Category terms table. The supplied vocabularies and category table are the only authorities for filter values. Aliases only help you recognise a value; always output the canonical value exactly as supplied.
 
-Return all fields: reasoning, organizations, file_types, theme, exclude_organizations, exclude_file_types, exclude_theme, any_of, and semantic_query.
-- organizations, file_types, theme: positive constraints.
-- exclude_organizations, exclude_file_types, exclude_theme: negative constraints.
+Return all fields: reasoning, organizations, file_types, themes, exclude_organizations, exclude_file_types, exclude_themes, any_of, and semantic_query.
+- organizations, file_types, themes: positive constraints.
+- exclude_organizations, exclude_file_types, exclude_themes: negative constraints.
 - any_of: true cross-field alternatives (rule 4).
 - semantic_query: the meaningful topic or question left after filter wording and request scaffolding are removed (rule 6).
 Use [] for empty arrays and "" for an empty semantic_query.
@@ -160,9 +160,9 @@ FILE-FORMAT INTENT
 
 THEME INTENT
 - The theme vocabulary lists each theme as code — name. The user may write the name ("Water Stewardship") or the code ("Water_Stewardship"), in any casing or spacing; always output the code exactly as supplied.
-- A theme is a filter when the query uses it to label the documents to return: "<theme> documents", "<theme> resources from <org>", "documents in, under, or tagged with the <theme> theme", "theme: <theme>", "theme = <code>", a bare theme name or code on its own, or any occurrence of a theme code. Examples: "Water Stewardship resources from Northwind" → organizations=[Northwind], theme=[Water_Stewardship], semantic_query=""; "PDFs in the Civic_Life theme about voting age" → file_types=[PDF], theme=[Civic_Life], semantic_query="voting age".
+- A theme is a filter when the query uses it to label the documents to return: "<theme> documents", "<theme> resources from <org>", "documents in, under, or tagged with the <theme> theme", "theme: <theme>", "theme = <code>", a bare theme name or code on its own, or any occurrence of a theme code. Examples: "Water Stewardship resources from Northwind" → organizations=[Northwind], themes=[Water_Stewardship], semantic_query=""; "PDFs in the Civic_Life theme about voting age" → file_types=[PDF], themes=[Civic_Life], semantic_query="voting age".
 - A theme name inside a subject introduced by a topic marker is topic text, not a filter, unless the query separately names it as the theme: "documents about water stewardship" → no theme; semantic_query="water stewardship".
-- Themes follow the same list, polarity, and any_of rules as the other fields: "everything except the Civic Life theme" → exclude_theme=[Civic_Life]; "Civic Life or Water Stewardship resources" → theme=[Civic_Life, Water_Stewardship].
+- Themes follow the same list, polarity, and any_of rules as the other fields: "everything except the Civic Life theme" → exclude_themes=[Civic_Life]; "Civic Life or Water Stewardship resources" → themes=[Civic_Life, Water_Stewardship].
 
 2. RESOLVE VALUES USING THE PROVIDED VOCABULARIES
 - Scan the whole query. Resolve every candidate occurrence and every item of every list, including the last item, then deduplicate.
@@ -206,8 +206,8 @@ NORMALIZE any_of — repeat until nothing changes:
 1. Remove exact duplicate branches.
 2. Remove a branch that another branch fully covers (an omitted field means no constraint).
 3. Merge two branches that agree on every constraint except one positive field: union that field's values.
-4. Before returning, compare every pair of remaining branches. Two branches whose values are identical in every field except one positive field (organizations, file_types, or theme) are a single branch: merge them by uniting that field. Example: [{organizations:[Northwind], file_types:[TXT]}, {organizations:[Lakeside], file_types:[TXT]}] merge into one branch, so the answer is flat: organizations=[Northwind, Lakeside], file_types=[TXT], any_of=[].
-Then: if one branch remains, move its constraints to the top-level arrays and set any_of=[]. If two or more remain, keep them in any_of and leave organizations, file_types, and theme as []. Put an exclusion at top level only when it is stated as applying to all alternatives; otherwise keep it in its branch.
+4. Before returning, compare every pair of remaining branches. Two branches whose values are identical in every field except one positive field (organizations, file_types, or themes) are a single branch: merge them by uniting that field. Example: [{organizations:[Northwind], file_types:[TXT]}, {organizations:[Lakeside], file_types:[TXT]}] merge into one branch, so the answer is flat: organizations=[Northwind, Lakeside], file_types=[TXT], any_of=[].
+Then: if one branch remains, move its constraints to the top-level arrays and set any_of=[]. If two or more remain, keep them in any_of and leave organizations, file_types, and themes as []. Put an exclusion at top level only when it is stated as applying to all alternatives; otherwise keep it in its branch.
 
 Examples:
 - "PDFs from Northwind or CSV from Lakeside" → any_of=[{organizations:[Northwind], file_types:[PDF]}, {organizations:[Lakeside], file_types:[CSV]}].
@@ -248,12 +248,12 @@ Before returning, check:
 - Every value is canonical and complete (theme values are codes); category expansions match their row exactly; lists are deduplicated.
 - Generic "doc"/"documents" was not taken as the DOC format.
 - Polarity is per value: positive attributions stay positive; exclusions on different fields are combined with AND.
-- any_of only holds genuinely different cross-field branches after normalization (no two branches differ in just one positive field); each branch holds only its own constraints, with every other field []; with any_of non-empty, top-level organizations, file_types, and theme are [].
+- any_of only holds genuinely different cross-field branches after normalization (no two branches differ in just one positive field); each branch holds only its own constraints, with every other field []; with any_of non-empty, top-level organizations, file_types, and themes are [].
 - semantic_query follows rule 6: questions intact, topics kept, no filter fragments.
 - reasoning is a short label of at most six words, for example "flat; org+type; empty". Add no other keys or text.
 
 Call apply_search_filters. If tool calling is unavailable, return one valid JSON object and nothing else with all fields present:
-{"reasoning":"flat; none; empty","organizations":[],"file_types":[],"theme":[],"exclude_organizations":[],"exclude_file_types":[],"exclude_theme":[],"any_of":[],"semantic_query":""}
+{"reasoning":"flat; none; empty","organizations":[],"file_types":[],"themes":[],"exclude_organizations":[],"exclude_file_types":[],"exclude_themes":[],"any_of":[],"semantic_query":""}
 
 Return only the tool call or the required JSON. Never answer the document search itself.
 """
@@ -304,7 +304,7 @@ def build_tool_schema():
                 'type': 'array',
                 'items': {'type': 'string', 'enum': file_type_enum},
             },
-            'theme': {'type': 'array', 'items': {'type': 'string'}},
+            'themes': {'type': 'array', 'items': {'type': 'string'}},
             'exclude_organizations': {
                 'type': 'array', 'items': {'type': 'string'},
             },
@@ -312,7 +312,7 @@ def build_tool_schema():
                 'type': 'array',
                 'items': {'type': 'string', 'enum': file_type_enum},
             },
-            'exclude_theme': {'type': 'array', 'items': {'type': 'string'}},
+            'exclude_themes': {'type': 'array', 'items': {'type': 'string'}},
         },
         'description': 'One alternative. Fields this alternative does not constrain stay empty; never copy values from another alternative.',
         'additionalProperties': False,
@@ -345,7 +345,7 @@ def build_tool_schema():
                             'items': {'type': 'string', 'enum': file_type_enum},
                             'description': 'Exact full canonical returned-file format values from the supplied vocabulary; never truncate.',
                         },
-                        'theme': {
+                        'themes': {
                             'type': 'array',
                             'items': {'type': 'string'},
                             'description': 'Theme codes from the supplied theme vocabulary.',
@@ -360,7 +360,7 @@ def build_tool_schema():
                             'items': {'type': 'string', 'enum': file_type_enum},
                             'description': 'Canonical file types explicitly excluded globally.',
                         },
-                        'exclude_theme': {
+                        'exclude_themes': {
                             'type': 'array',
                             'items': {'type': 'string'},
                             'description': 'Theme codes explicitly excluded globally.',
@@ -384,10 +384,10 @@ def build_tool_schema():
                         'reasoning',
                         'organizations',
                         'file_types',
-                        'theme',
+                        'themes',
                         'exclude_organizations',
                         'exclude_file_types',
-                        'exclude_theme',
+                        'exclude_themes',
                         'any_of',
                         'semantic_query',
                     ],
@@ -515,6 +515,10 @@ vocabulary means theme extraction is disabled, including inside any_of.
 """.strip()
 
 
+# Theme output fields before they were renamed to match themes/exclude_themes.
+LEGACY_THEME_KEYS = {'theme': 'themes', 'exclude_theme': 'exclude_themes'}
+
+
 def with_theme_filter_tools(tools, tool_name=TOOL_NAME):
     """Extend stored search-bot schemas without mutating their configuration."""
     from copy import deepcopy
@@ -524,13 +528,20 @@ def with_theme_filter_tools(tools, tool_name=TOOL_NAME):
         function = tool.get('function', {})
         if tool_name is not None and function.get('name') != tool_name:
             continue
-        properties = function.get('parameters', {}).get('properties', {})
-        branches = properties.get('any_of', {}).get('items', {}).get('properties', {})
-        for fields in (properties, branches):
+        parameters = function.get('parameters', {})
+        branch = parameters.get('properties', {}).get('any_of', {}).get('items', {})
+        for schema in (parameters, branch):
+            fields = schema.get('properties', {})
+            # Rows seeded before the rename say theme/exclude_theme; offer only one name.
+            for legacy in LEGACY_THEME_KEYS:
+                fields.pop(legacy, None)
             for name in ('themes', 'exclude_themes'):
                 fields[name] = {
                     'type': 'array',
                     'items': {'type': 'string'},
                     'description': 'Canonical theme codes from the supplied vocabulary.',
                 }
+            if isinstance(schema.get('required'), list):
+                schema['required'] = [
+                    LEGACY_THEME_KEYS.get(name, name) for name in schema['required']]
     return tools
