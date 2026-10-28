@@ -68,7 +68,7 @@ def upsert_single_file(filename, file, metadata, media):
     try:
         response = requests.request(
             "POST",  url, headers=headers, data=payload,
-            files=files, timeout=300
+            files=files, timeout=1200
         )
 
         print(f"Response status code: {response.status_code}")

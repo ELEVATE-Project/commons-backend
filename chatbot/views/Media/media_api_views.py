@@ -1589,9 +1589,10 @@ class MediaSearchV2View(APIView):
         exclude_themes=None,
     ):
         queryset = self._build_database_queryset()
-        theme = request.query_params.get('theme', '').strip()
-        if theme:
-            queryset = queryset.filter(primary_theme_id=theme)
+        themes = self._parse_list_param(request.query_params.get('theme', ''))
+        if themes:
+            queryset = queryset.filter(primary_theme_id__in=themes)
+        queryset = self._apply_query_theme_filters(queryset)
         queryset = self._apply_database_filters(
             queryset,
             tags=tags,
@@ -1944,8 +1945,9 @@ class MediaSearchV2View(APIView):
             if 0 < media_id <= MAX_BIGINT:
                 media_ids.add(media_id)
         queryset = Media.objects.filter(pk__in=media_ids)
-        if theme:
-            queryset = queryset.filter(primary_theme_id=theme)
+        themes = self._parse_list_param(theme)
+        if themes:
+            queryset = queryset.filter(primary_theme_id__in=themes)
         matching_ids = set(str(pk) for pk in queryset.values_list('pk', flat=True))
         return [result for result in results if str(result.get('source_id')) in matching_ids]
 
