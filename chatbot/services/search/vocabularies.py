@@ -12,7 +12,8 @@ case-insensitive matching decide *whether* a value is valid, but
 import logging
 
 from chatbot.constants.search import FILE_TYPE_CATEGORIES, FILE_TYPE_CATEGORY_ALIASES
-from chatbot.models.enums import EntityStatus, FileTypeChoices
+from chatbot.models.enums import EntityStatus, FileTypeChoices, ThemeStatus
+from chatbot.models.theme_models import ResourceTheme
 from chatbot.services.search.config import (
     VOCAB_AUTO,
     VOCAB_CANDIDATES,
@@ -66,6 +67,22 @@ def file_type_vocabulary():
     return vocabulary
 
 
+
+
+def theme_vocabulary():
+    """
+    ``{code: [name, ...]}`` for every published primary theme.
+
+    The code is what Commons sends to the vector service as ``theme``
+    (Media.primary_theme_id), so it is the canonical value; the display name
+    and the code written with spaces are recognition aliases.
+    """
+    vocabulary = {}
+    for theme in ResourceTheme.objects.filter(
+            is_primary=True, status=ThemeStatus.PUBLISHED).order_by('name'):
+        aliases = [theme.name, theme.code.replace('_', ' ')]
+        vocabulary[theme.code] = list(dict.fromkeys(a for a in aliases if a))
+    return vocabulary
 
 
 def file_type_category_vocabulary():

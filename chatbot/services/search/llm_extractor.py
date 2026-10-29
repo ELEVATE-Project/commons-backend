@@ -308,7 +308,8 @@ def _resolve_field(arguments, include_key, exclude_key, vocabulary, name, reject
     return include, exclude
 
 
-def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected, theme_vocabulary=None):
+def _resolve_any_of(
+        arguments, org_vocabulary, type_vocabulary, theme_vocabulary, rejected):
     """
     Validate the model's alternatives, all or nothing.
 
@@ -351,7 +352,6 @@ def _resolve_any_of(arguments, org_vocabulary, type_vocabulary, rejected, theme_
         media_types, exclude_media_types = _resolve_field(
             entry, 'file_types', 'exclude_file_types',
             type_vocabulary, 'media_types', entry_rejected)
-
         themes, exclude_themes = _resolve_field(
             entry, 'themes', 'exclude_themes',
             theme_vocabulary or {}, 'themes', entry_rejected)
@@ -404,12 +404,13 @@ def _residual_query(returned, raw_query, has_filters):
     """
     Sanity-check the model's semantic_query against the original.
 
-    Falls back to the raw query if the model returned nothing (and no filters
-    were found either) or if it padded rather than reduced the text.
+    An explicit "" is kept: the model found no topic ("documents", "everything
+    from every organization"). The raw query is used only when the model gave
+    no semantic_query at all and found no filter, or padded the text.
     """
-    candidate = (returned or '').strip() if isinstance(returned, str) else ''
-    if not candidate:
+    if not isinstance(returned, str):
         return '' if has_filters else raw_query
+    candidate = returned.strip()
     if len(candidate) > len(raw_query):
         logger.info('ai_search: semantic_query longer than the query, keeping the original')
         return raw_query
@@ -456,9 +457,9 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None, include_them
         # Both halves of the prompt come from the bot row: context holds the
         # rules, pre_context the per-request layout.
         {'role': 'user', 'content': build_user_message(
-            raw_query, org_vocabulary, type_vocabulary, candidates,
-            template=bot.pre_context) + '\n\nTheme codes and names:\n' + '\n'.join(
-                f'{code}: {names[0]}' for code, names in theme_vocabulary.items())},
+            raw_query, org_vocabulary, type_vocabulary,
+            theme=theme_vocabulary, candidates=candidates,
+            template=bot.pre_context)},
     ]
 
     print(f"[extract_search_filters] raw_query: {raw_query!r}")
@@ -513,11 +514,10 @@ def extract_search_filters(*, raw_query, candidates=None, bot=None, include_them
         arguments, 'file_types', 'exclude_file_types',
         type_vocabulary, 'media_types', rejected)
     themes, exclude_themes = _resolve_field(
-        arguments, 'themes', 'exclude_themes', theme_vocabulary, 'themes', rejected)
+        arguments, 'themes', 'exclude_themes',
+        theme_vocabulary or {}, 'themes', rejected)
     any_of = _resolve_any_of(
-        arguments, org_vocabulary, type_vocabulary, rejected, theme_vocabulary)
-    if any_of:
-        themes, organizations, media_types = [], [], []
+        arguments, org_vocabulary, type_vocabulary, theme_vocabulary, rejected)
 
     result = LLMFilterResult(
         themes=themes,

@@ -58,6 +58,7 @@ class FilterBlock:
         An empty block matches every document, which would make the whole
         ``any_of`` a no-op, so callers drop these rather than send them.
         """
+
         return not (self.themes or self.exclude_themes or self.organizations or self.media_types
                     or self.exclude_organizations or self.exclude_media_types)
 
@@ -75,8 +76,8 @@ class FilterBlock:
     def normalized(self):
         """Return a copy with empty and duplicate values removed."""
         return FilterBlock(
-            themes=list(self.themes),
-            exclude_themes=list(self.exclude_themes),
+            themes=unique(self.themes),
+            exclude_themes=unique(self.exclude_themes),
             organizations=unique(self.organizations),
             media_types=unique(self.media_types),
             exclude_organizations=unique(self.exclude_organizations),
@@ -120,6 +121,8 @@ class FilterBlock:
             ('file_type', self.media_types),
             ('exclude_organizations', self.exclude_organizations),
             ('exclude_file_type', self.exclude_media_types),
+            ('themes', self.themes),
+            ('exclude_themes', self.exclude_themes),
         ):
             if values:
                 payload[key] = list(values)

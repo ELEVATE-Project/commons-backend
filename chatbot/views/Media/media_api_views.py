@@ -939,8 +939,6 @@ class MediaSearchV2View(APIView):
 
         # An explicit theme code retains precedence and its existing DB filtering.
         self.ignore_query_themes = bool(request.query_params.get('theme', '').strip())
-        self.query_themes = []
-        self.exclude_query_themes = []
         if query and self.ignore_query_themes:
             from chatbot.utils.theme_search import resolve_theme_names
             _, _, query = resolve_theme_names(query)
@@ -1084,10 +1082,10 @@ class MediaSearchV2View(APIView):
             ordering = ordering_param if ordering_param else '-created_at'
         organizations = resolved.organizations
         media_types = resolved.media_types
-        self.query_themes = resolved.themes
-        self.exclude_query_themes = resolved.exclude_themes
         exclude_organizations = list(resolved.exclude_organizations)
         exclude_media_types = list(resolved.exclude_media_types)
+        themes = list(resolved.themes)
+        exclude_themes = list(resolved.exclude_themes)
         resolved_any_of = list(resolved.any_of or [])
         deterministic_any_of = list(any_of or [])
 
@@ -1103,9 +1101,21 @@ class MediaSearchV2View(APIView):
             if not trailing_global_filter:
                 exclude_organizations = []
                 exclude_media_types = []
-                self.exclude_query_themes = []
-            self.query_themes = []
+                exclude_themes = []
+            themes = []
             resolved.diagnostics['any_of_source'] = 'deterministic'
+        # Once the LLM has answered, its result stands, alternatives or not, as it
+        # does for orgs and media types: undo the deterministic swap above.
+        if (resolved.diagnostics.get('llm_used')
+                and resolved.diagnostics.get('any_of_source') == 'deterministic'):
+            organizations = resolved.organizations
+            media_types = resolved.media_types
+            exclude_organizations = list(resolved.exclude_organizations)
+            exclude_media_types = list(resolved.exclude_media_types)
+            themes = list(resolved.themes)
+            exclude_themes = list(resolved.exclude_themes)
+            combined_any_of = resolved_any_of
+            resolved.diagnostics.pop('any_of_source')
         rapidfuzz_filters = self._rapidfuzz_filter_metadata(
             fuzzy, deterministic_any_of, resolved.diagnostics
         )
@@ -1143,8 +1153,6 @@ class MediaSearchV2View(APIView):
             "top_k": top_k,
             "filter_score": filter_score,
             "detail_filter_score": detail_filter_score,
-            "themes": self.query_themes or None,
-            "exclude_themes": self.exclude_query_themes or None,
             "categories": tags if tags else None,
             "organizations": organizations if organizations else None,
             "resource_type": resource_types if resource_types else None,
@@ -1156,18 +1164,21 @@ class MediaSearchV2View(APIView):
                 qdrant_exclude_file_types if qdrant_exclude_file_types else None
             ),
             "any_of": any_of_blocks if any_of_blocks else None,
+            "themes": themes if themes else None,
+            "exclude_themes": exclude_themes if exclude_themes else None,
         }
 
-        # Nothing left to embed once the query reduced to filters only, so serve
-        # it from the same PostgreSQL path a filters-only request uses.
-        # Exclusions and alternatives count too: "all files except PDF" leaves no
-        # residual query, and is a filter-only listing, not an unfiltered search.
+        # No longer decides the route below: an empty query lists from PostgreSQL
+        # with or without filters. Kept until its theme-name terms can be removed.
         filters_present = bool(
             tags or organizations or resource_types or media_types
+            or themes or exclude_themes
             or exclude_organizations or exclude_media_types or combined_any_of
-            or self.query_themes or self.exclude_query_themes
             or request.query_params.get('theme'))
-        if not query and filters_present:
+        # Nothing left to embed, so list from PostgreSQL: a filter-only request
+        # gets its filtered listing, and one with no filters either ("documents",
+        # "everything") lists the whole library, as an empty search box does.
+        if not query:
             # Ordering is 'score' here, which is meaningless without a query.
             db_ordering = ordering_param if ordering_param else '-created_at'
             db_field, db_reverse = self._parse_ordering(db_ordering)
@@ -1184,6 +1195,8 @@ class MediaSearchV2View(APIView):
                 media_types=media_types,
                 exclude_organizations=exclude_organizations,
                 exclude_media_types=exclude_media_types,
+                themes=themes,
+                exclude_themes=exclude_themes,
                 any_of_blocks=combined_any_of,
                 diagnostics=resolved.diagnostics,
                 rapidfuzz_filters=rapidfuzz_filters,
@@ -1285,6 +1298,8 @@ class MediaSearchV2View(APIView):
                     file_types=media_types,
                     exclude_organizations=exclude_organizations,
                     exclude_file_types=exclude_media_types,
+                    themes=themes,
+                    exclude_themes=exclude_themes,
                     any_of_blocks=combined_any_of,
                 ),
             },
@@ -1450,8 +1465,13 @@ class MediaSearchV2View(APIView):
         """Resolve filters with the LLM and merge the result."""
         from chatbot.services.search import llm_extractor
 
+        # The theme-name step strips theme names from raw_query; the LLM reads
+        # the user's full query so it returns theme codes, the same way as orgs.
+        request = getattr(self, 'request', None)
+        full_query = request.query_params.get('q', '').strip() if request else ''
+
         llm = llm_extractor.extract_search_filters(
-            raw_query=raw_query,
+            raw_query=full_query or raw_query,
             candidates=fuzzy.candidates,
             bot=bot,
             include_themes=not getattr(self, 'ignore_query_themes', False),
@@ -1503,6 +1523,7 @@ class MediaSearchV2View(APIView):
             values = getattr(llm, axis, None)
             if values is not None:
                 setattr(resolved, axis, values)
+                resolved.diagnostics[f'{axis}_source'] = 'llm'
             elif axis == 'themes':
                 resolved.themes = self._remove_unconfirmed_fuzzy_values(resolved, axis)
 
@@ -1541,6 +1562,8 @@ class MediaSearchV2View(APIView):
 
         resolved.diagnostics['exclude_organizations'] = resolved.exclude_organizations
         resolved.diagnostics['exclude_media_types'] = resolved.exclude_media_types
+        resolved.diagnostics['themes'] = resolved.themes
+        resolved.diagnostics['exclude_themes'] = resolved.exclude_themes
 
         resolved.query = self._clean_filter_search_text(llm.semantic_query)
         resolved.diagnostics['semantic_query'] = resolved.query
@@ -1562,6 +1585,8 @@ class MediaSearchV2View(APIView):
         any_of_blocks=None,
         diagnostics=None,
         rapidfuzz_filters=None,
+        themes=None,
+        exclude_themes=None,
     ):
         queryset = self._build_database_queryset()
         themes = self._parse_list_param(request.query_params.get('theme', ''))
@@ -1577,6 +1602,8 @@ class MediaSearchV2View(APIView):
             exclude_organizations=exclude_organizations,
             exclude_media_types=exclude_media_types,
             any_of_blocks=any_of_blocks,
+            themes=themes,
+            exclude_themes=exclude_themes,
         )
 
         # Built once, then logged and returned, so the two can never disagree.
@@ -1588,6 +1615,8 @@ class MediaSearchV2View(APIView):
             exclude_organizations=exclude_organizations,
             exclude_file_types=exclude_media_types,
             any_of_blocks=any_of_blocks,
+            themes=themes,
+            exclude_themes=exclude_themes,
         )
         print("[MediaSearchV2View] database filters: " + str(applied_filters))
 
@@ -1699,6 +1728,8 @@ class MediaSearchV2View(APIView):
         exclude_organizations=None,
         exclude_media_types=None,
         any_of_blocks=None,
+        themes=None,
+        exclude_themes=None,
     ):
         if tags:
             tag_conditions = Q()
@@ -1733,6 +1764,13 @@ class MediaSearchV2View(APIView):
         if exclude_media_types:
             queryset = queryset.exclude(overridden_media_type__in=exclude_media_types)
 
+        # Theme codes are Media.primary_theme_id, the value the vector service stores as theme.
+        if themes:
+            queryset = queryset.filter(primary_theme_id__in=themes)
+
+        if exclude_themes:
+            queryset = queryset.exclude(primary_theme_id__in=exclude_themes)
+
         if any_of_blocks:
             any_of_conditions = Q()
             for block in any_of_blocks:
@@ -1753,12 +1791,12 @@ class MediaSearchV2View(APIView):
                         or []
                     )
                 else:
-                    block_themes = block.themes
-                    block_exclude_themes = block.exclude_themes
                     block_organizations = block.organizations
                     block_media_types = block.media_types
                     block_exclude_organizations = block.exclude_organizations
                     block_exclude_media_types = block.exclude_media_types
+                    block_themes = getattr(block, 'themes', None) or []
+                    block_exclude_themes = getattr(block, 'exclude_themes', None) or []
                 
                 if block_themes:
                     block_conditions &= Q(primary_theme_id__in=block_themes)
@@ -1895,15 +1933,6 @@ class MediaSearchV2View(APIView):
             previous_url = f"{base_url}?{urlencode(previous_params, doseq=True)}"
 
         return next_url, previous_url
-
-    def _apply_query_theme_filters(self, queryset):
-        themes = getattr(self, 'query_themes', [])
-        excluded = getattr(self, 'exclude_query_themes', [])
-        if themes:
-            queryset = queryset.filter(primary_theme_id__in=themes)
-        if excluded:
-            queryset = queryset.exclude(primary_theme_id__in=excluded)
-        return queryset
 
     def _apply_theme_filter(self, results, theme):
         """Filter vector hits using primary theme assignments in the database."""
@@ -2116,6 +2145,8 @@ class MediaSearchV2View(APIView):
         exclude_organizations=None,
         exclude_file_types=None,
         any_of_blocks=None,
+        themes=None,
+        exclude_themes=None,
     ):
         """
         Report canonical applied filters for the log and search_metadata.
@@ -2124,7 +2155,6 @@ class MediaSearchV2View(APIView):
         str() keeps enum media types serialisable.
         """
         return {
-            **self._theme_filter_metadata(),
             'tags': list(tags or []),
             'organizations': list(organizations or []),
             'resource_types': list(resource_types or []),
@@ -2132,16 +2162,12 @@ class MediaSearchV2View(APIView):
             'exclude_organizations': list(exclude_organizations or []),
             'exclude_media_types': [
                 str(value) for value in exclude_file_types or []],
+            'themes': list(themes or []),
+            'exclude_themes': list(exclude_themes or []),
             'any_of': [
                 self._filter_block_payload(block)
                 for block in any_of_blocks or []
             ],
-        }
-
-    def _theme_filter_metadata(self):
-        return {
-            'themes': list(getattr(self, 'query_themes', [])),
-            'exclude_themes': list(getattr(self, 'exclude_query_themes', [])),
         }
 
     def _rapidfuzz_filter_metadata(
