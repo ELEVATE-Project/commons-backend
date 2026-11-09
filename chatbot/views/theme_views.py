@@ -14,6 +14,7 @@ from chatbot.serializer.theme_serializer import (
 )
 from chatbot.models.theme_models import ResourceTheme
 from chatbot.models.media_models import Media
+from chatbot.models.enums import FileDisplayMode
 from chatbot.utils.theme_cache import get_theme_list, invalidate_theme_list_cache
 
 
@@ -70,7 +71,8 @@ class ResourceThemeListView(APIView):
             payload = get_theme_list(primary_only=True, published_only=True)
             media_counts = dict(
                 Media.objects.filter(
-                    primary_theme_id__in=[theme['code'] for theme in payload['result']]
+                    primary_theme_id__in=[theme['code'] for theme in payload['result']],
+                    display_mode=FileDisplayMode.VISIBLE,
                 ).order_by().values('primary_theme_id').annotate(
                     media_count=Count('pk')
                 ).values_list('primary_theme_id', 'media_count')
