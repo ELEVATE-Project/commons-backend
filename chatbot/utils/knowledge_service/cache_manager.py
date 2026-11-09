@@ -46,18 +46,30 @@ class CacheManager:
 
     @staticmethod
     def cache_file(file, session_id, file_index):
-        """Cache uploaded file content with sanitized cache key"""
+        """Read an uploaded file and cache its content with a sanitized key."""
+        try:
+            return CacheManager.cache_file_content(
+                content=b''.join(file.chunks()),
+                name=file.name,
+                size=file.size,
+                session_id=session_id,
+                file_index=file_index,
+            )
+        except Exception as e:
+            print(f"Error caching file {file.name}: {e}")
+            traceback.print_exc()
+            return None
+
+    @staticmethod
+    def cache_file_content(content, name, size, session_id, file_index):
+        """Cache existing bytes without splitting or copying them into chunks."""
         try:
             import re
             import hashlib
 
-            file_content = b''
-            for chunk in file.chunks():
-                file_content += chunk
-
             # More aggressive sanitization for memcached compatibility
             # Remove all non-alphanumeric characters except dots, hyphens, underscores
-            sanitized_name = re.sub(r'[^a-zA-Z0-9\-_.]', '_', file.name)
+            sanitized_name = re.sub(r'[^a-zA-Z0-9\-_.]', '_', name)
             # Remove multiple consecutive underscores
             sanitized_name = re.sub(r'_+', '_', sanitized_name)
             # Remove leading/trailing underscores
@@ -65,7 +77,7 @@ class CacheManager:
             # Ensure reasonable length (memcached has 250 char limit for keys)
             if len(sanitized_name) > 30:
                 # Keep first 30 chars and add hash of full name for uniqueness
-                name_hash = hashlib.md5(file.name.encode('utf-8')).hexdigest()[:8]
+                name_hash = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
                 sanitized_name = sanitized_name[:22] + '_' + name_hash
 
             # Generate cache key with additional validation
@@ -86,18 +98,18 @@ class CacheManager:
             cache_key = re.sub(r'[^a-zA-Z0-9\-_.]', '_', cache_key)
 
             cache_data = {
-                'content': file_content,
-                'name': file.name,  # Keep original name
-                'size': file.size,
+                'content': content,
+                'name': name,  # Keep original name
+                'size': size,
                 'type': 'file',
                 'file_index': file_index
             }
 
             cache.set(cache_key, cache_data, timeout=CACHE_TIMEOUT)
-            print(f"Cached file: {cache_key} (original: {file.name})")
+            print(f"Cached file: {cache_key} (original: {name})")
             return cache_key
         except Exception as e:
-            print(f"Error caching file {file.name}: {e}")
+            print(f"Error caching file {name}: {e}")
             import traceback
             traceback.print_exc()
             return None

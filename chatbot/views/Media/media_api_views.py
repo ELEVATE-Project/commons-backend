@@ -1589,10 +1589,9 @@ class MediaSearchV2View(APIView):
         exclude_themes=None,
     ):
         queryset = self._build_database_queryset()
-        themes = self._parse_list_param(request.query_params.get('theme', ''))
-        if themes:
-            queryset = queryset.filter(primary_theme_id__in=themes)
-        queryset = self._apply_query_theme_filters(queryset)
+        explicit_themes = self._parse_list_param(request.query_params.get('theme', ''))
+        if explicit_themes:
+            queryset = queryset.filter(primary_theme_id__in=explicit_themes)
         queryset = self._apply_database_filters(
             queryset,
             tags=tags,

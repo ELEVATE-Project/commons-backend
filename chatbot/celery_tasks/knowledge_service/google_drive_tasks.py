@@ -331,22 +331,13 @@ def process_google_drive_import(
                 tmp.write(content)
                 tmp_path = tmp.name
 
-            class DummyFile:
-                def __init__(self, name, size, content):
-                    self.name = name
-                    self.size = size
-                    self._content = content
-
-                def chunks(self):
-                    chunk_size = 8192
-                    for idx in range(0, len(self._content), chunk_size):
-                        yield self._content[idx:idx + chunk_size]
-
             file_index = int(time.time() * 1000000) + i
-            file_key = CacheManager.cache_file(
-                DummyFile(original_name, len(content), content),
-                session_id,
-                file_index,
+            file_key = CacheManager.cache_file_content(
+                content=content,
+                name=original_name,
+                size=len(content),
+                session_id=session_id,
+                file_index=file_index,
             )
 
             master_tags = TagProcessor.get_master_tags(
