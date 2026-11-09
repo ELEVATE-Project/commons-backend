@@ -30,8 +30,20 @@ def decide_theme_sync(status_code):
 
 def prepare_vector_db_data(media_id, company_slug=None):
     """Helper method to prepare data for vector DB operations"""
-    from chatbot.models import KeyValue, Media, Company
+    from chatbot.models import Media
     media = Media.objects.get(id=media_id)
+    metadata = build_vector_db_metadata(media, company_slug)
+
+    with media.file.open("rb") as file:
+        file_content = file.read()
+    file_name = media.file.name.split("/")[-1]
+
+    return media, file_name, file_content, metadata
+
+
+def build_vector_db_metadata(media, company_slug=None):
+    """Metadata sent with a document to the vector DB; reads no file content"""
+    from chatbot.models import KeyValue, Company
     kvs = KeyValue.objects.filter(media=media)
     company_obj = None
     if company_slug:
@@ -63,12 +75,7 @@ def prepare_vector_db_data(media_id, company_slug=None):
     for kv in kvs:
         metadata[kv.key] = kv.value
     metadata['tags'] = list(media.tags.values_list('name', flat=True))
-
-    with media.file.open("rb") as file:
-        file_content = file.read()
-    file_name = media.file.name.split("/")[-1]
-
-    return media, file_name, file_content, metadata
+    return metadata
 
 
 @shared_task

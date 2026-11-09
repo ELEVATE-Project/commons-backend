@@ -4,13 +4,49 @@ from datetime import datetime
 import requests
 import os
 
-from chatbot.constants.constants import VECTOR_DB_UPLOAD_TIMEOUT_SECONDS, VECTOR_DB_VERIFY_TIMEOUT_SECONDS
+from chatbot.constants.constants import VECTOR_DB_DELETE_TIMEOUT_SECONDS, VECTOR_DB_UPLOAD_TIMEOUT_SECONDS, \
+    VECTOR_DB_VERIFY_TIMEOUT_SECONDS
 
 DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
 
 SEARCH_TOP_K = 3
 
 base_url = os.getenv('VECTOR_DB_BASE_URL')
+
+
+def build_document_fields(media):
+    """Company, title, summary, theme and tags sent with a document next to its metadata"""
+    fields = {}
+
+    # Add company_id if available
+    if hasattr(media, 'organization') and media.organization:
+        fields['company_id'] = media.organization.slug
+
+    # Add title if available (from KeyValue or media name)
+    title = None
+    if hasattr(media, 'key_values'):
+        from chatbot.models import KeyValue
+        title_kv = KeyValue.objects.filter(media=media, key__iexact='TITLE').first()
+        if title_kv:
+            title = title_kv.value
+    if not title:
+        title = media.name
+    if title:
+        fields['title'] = title
+
+    # Add summary if available (from description)
+    if hasattr(media, 'description') and media.description:
+        fields['summary'] = media.description
+
+    if media.primary_theme_id:
+        fields['theme'] = media.primary_theme_id
+
+    # Add tags if available
+    if hasattr(media, 'tags'):
+        tags_list = list(media.tags.values_list('name', flat=True))
+        if tags_list:
+            fields['tags'] = json.dumps(tags_list)
+    return fields
 
 
 def upsert_single_file(filename, file, metadata, media):
@@ -25,38 +61,10 @@ def upsert_single_file(filename, file, metadata, media):
     payload = {
         'metadata': metadata_json,
         'source_id': str(media.id),
-        'priority': media.priority
+        'priority': media.priority,
+        **build_document_fields(media),
     }
-    
-    # Add company_id if available
-    if hasattr(media, 'organization') and media.organization:
-        payload['company_id'] = media.organization.slug
-    
-    # Add title if available (from KeyValue or media name)
-    title = None
-    if hasattr(media, 'key_values'):
-        from chatbot.models import KeyValue
-        title_kv = KeyValue.objects.filter(media=media, key__iexact='TITLE').first()
-        if title_kv:
-            title = title_kv.value
-    if not title:
-        title = media.name
-    if title:
-        payload['title'] = title
-    
-    # Add summary if available (from description)
-    if hasattr(media, 'description') and media.description:
-        payload['summary'] = media.description
 
-    if media.primary_theme_id:
-        payload['theme'] = media.primary_theme_id
-    
-    # Add tags if available
-    if hasattr(media, 'tags'):
-        tags_list = list(media.tags.values_list('name', flat=True))
-        if tags_list:
-            payload['tags'] = json.dumps(tags_list)
-    
     files = [
         ('file', (filename, file, media.media_type))
     ]
@@ -103,7 +111,14 @@ def delete_single_file(media_id, company_slug=None):
     headers = {
         'accept': 'application/json',
     }
-    response = requests.request("DELETE", url, headers=headers, params=params)
+    try:
+        response = requests.request(
+            "DELETE", url, headers=headers, params=params, timeout=VECTOR_DB_DELETE_TIMEOUT_SECONDS
+        )
+    except requests.exceptions.Timeout:
+        return 504, f"Request timeout after {VECTOR_DB_DELETE_TIMEOUT_SECONDS} seconds"
+    except requests.exceptions.ConnectionError as e:
+        return 503, f"Connection error: {str(e)}"
     print("deleted: ", response.json())
     return response.status_code, response.text
 
@@ -124,36 +139,9 @@ def update_single_file(media_id, filename, file, metadata, media):
 
     payload = {
         'metadata': metadata_json,
-        'priority': media.priority
+        'priority': media.priority,
+        **build_document_fields(media),
     }
-
-    if hasattr(media, 'organization') and media.organization:
-        payload['company_id'] = media.organization.slug
-    
-    # Add title if available (from KeyValue or media name)
-    title = None
-    if hasattr(media, 'key_values'):
-        from chatbot.models import KeyValue
-        title_kv = KeyValue.objects.filter(media=media, key__iexact='TITLE').first()
-        if title_kv:
-            title = title_kv.value
-    if not title:
-        title = media.name
-    if title:
-        payload['title'] = title
-    
-    # Add summary if available (from description)
-    if hasattr(media, 'description') and media.description:
-        payload['summary'] = media.description
-
-    if media.primary_theme_id:
-        payload['theme'] = media.primary_theme_id
-    
-    # Add tags if available
-    if hasattr(media, 'tags'):
-        tags_list = list(media.tags.values_list('name', flat=True))
-        if tags_list:
-            payload['tags'] = json.dumps(tags_list)
 
     files = [
         ('file', (filename, file, media.media_type))
