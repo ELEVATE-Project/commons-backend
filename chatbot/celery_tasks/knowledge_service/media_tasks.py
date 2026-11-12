@@ -10,8 +10,9 @@ from chatbot.utils.knowledge_service.openai_vector_store.vector_store_utils impo
 
 logger = logging.getLogger('django')
 S3_BASE_URL = os.getenv('S3_MEDIA_URL')
-THEME_SYNC_MAX_RETRIES = 5
-THEME_SYNC_RETRY_BASE_SECONDS = 15
+# Read once at import, so a changed value needs a Celery worker restart
+THEME_SYNC_MAX_RETRIES = int(os.getenv('THEME_SYNC_MAX_RETRIES', 5))
+THEME_SYNC_RETRY_BASE_SECONDS = int(os.getenv('THEME_SYNC_RETRY_BASE_SECONDS', 15))
 
 
 class ThemeSyncDecision:

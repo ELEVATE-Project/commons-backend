@@ -4,6 +4,9 @@
 
 SECONDARY_THEME_COUNT = 2 // is the maximum number of secondary themes per document(up to 10).
 
+THEME_SYNC_MAX_RETRIES=5 // optional, default 5: retries for syncing a document's theme to the vector DB.
+THEME_SYNC_RETRY_BASE_SECONDS=15 // optional, default 15: wait before the first retry, doubled on each retry (15, 30, 60, 120, 240s). Restart the Celery worker after changing either.
+
 Switch the AI Search LLM to Luna. These replace the `AI_SERVICE_PROVIDER` and `AI_SERVICE_MODEL` values set in release 1.1.0:
 
 AI_SERVICE_PROVIDER=openrouter
