@@ -26,6 +26,9 @@ TITLE_KEY = 'TITLE'
 DOCUMENT_TYPE_KEY = 'DOCUMENT_TYPE'
 KEY_ENTITIES_KEY = 'KEY ENTITIES'
 MEDIA_THEME_FIELDS = ['primary_theme', 'primary_theme_name', 'primary_theme_reasoning', 'needs_review']
+NO_TEXT_FALLBACK_REASONING = (
+    'Assigned automatically because no text could be read: no description, extracted text or readable file.'
+)
 SEARCH_TEXT_MAX_CHARS = 2000
 THEME_CODE_HASH_LENGTH = 12
 NEAR_DUPLICATE_NEIGHBOUR_FLOOR = 0.3
