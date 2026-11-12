@@ -16,7 +16,8 @@ from simple_history.utils import bulk_update_with_history
 
 from chatbot.constants.constants import (
     DOC_TEXT_EXTRACTOR_ROUTE, DOCUMENT_TYPE_KEY, EXTRACTION_PLACEHOLDER_PREFIX, KEY_ENTITIES_KEY, MEDIA_THEME_FIELDS,
-    MISCELLANEOUS_THEME_CODE, NEAR_DUPLICATE_NEIGHBOUR_FLOOR, NEAR_DUPLICATE_NEIGHBOUR_LIMIT, SEARCH_TEXT_MAX_CHARS,
+    MISCELLANEOUS_THEME_CODE, NEAR_DUPLICATE_NEIGHBOUR_FLOOR, NEAR_DUPLICATE_NEIGHBOUR_LIMIT, NO_TEXT_FALLBACK_REASONING,
+    SEARCH_TEXT_MAX_CHARS,
     SECONDARY_THEME_LOCK_KEY, THEME_CLASSIFIER_ROUTE, THEME_CODE_HASH_LENGTH, THEME_WAIT_MAX_POLL_SECONDS, TITLE_KEY,
     VECTOR_THEME_SYNC_DELAY_SECONDS
 )
@@ -36,7 +37,7 @@ logger = logging.getLogger('django')
 class ThemeClassificationStatus:
     CLASSIFIED = 'classified'
     NEEDS_REVIEW = 'needs_review'
-    SKIPPED_NO_SUMMARY = 'skipped_no_summary'
+    NO_TEXT_FALLBACK = 'no_text_fallback'
     SKIPPED_NO_BOT = 'skipped_no_bot'
     SKIPPED_NO_THEMES = 'skipped_no_themes'
     FAILED = 'failed'
@@ -299,14 +300,15 @@ class MediaThemeClassificationService:
             f"tags={list(document.tags)} key_entities={list(document.key_entities)} "
             f"summary_chars={len(document.summary)} summary={document.summary[:300]!r}"
         )
-        if not document.is_classifiable:
-            logger.warning(
-                f"{self.log_prefix} no description, extracted text or file text; skipping classification"
-            )
-            return self._flag_for_review(ThemeClassificationStatus.SKIPPED_NO_SUMMARY)
-
         other_params = load_json_field(company_bot.other_params) or {}
         settings = SecondaryThemeSettings.from_params(other_params)
+        if not document.is_classifiable:
+            logger.warning(
+                f"{self.log_prefix} no description, extracted text or file text; "
+                f"assigning {fallback.code} and flagging for review"
+            )
+            return self._assign_no_text_fallback(fallback, settings, other_params, started_at)
+
         candidates, candidate_total = load_secondary_candidates(document, settings)
         logger.info(
             f"{self.log_prefix} using bot_id={company_bot.id} model={company_bot.llm_model} "
@@ -321,10 +323,7 @@ class MediaThemeClassificationService:
         ).classify(document, log_prefix=self.log_prefix)
         generated = self._generate_new_secondary(document, themes, fallback, classification, candidates, settings)
         links = self.save_classification(classification, generated, settings)
-        if is_enabled(other_params.get('vector_theme_sync_enabled'), default=True):
-            queue_vector_theme_sync(self.media.id)
-        else:
-            logger.info(f"{self.log_prefix} vector theme sync disabled by vector_theme_sync_enabled")
+        self._queue_vector_sync(other_params)
 
         counts = Counter(link.match_type for link in links)
         status = ThemeClassificationStatus.NEEDS_REVIEW if classification.needs_review \
@@ -346,6 +345,35 @@ class MediaThemeClassificationService:
             deduplicated=counts[SecondaryThemeMatchType.DEDUPLICATED],
             created=counts[SecondaryThemeMatchType.CREATED],
         )
+
+    def _assign_no_text_fallback(self, fallback: ThemeOption, settings: SecondaryThemeSettings,
+                                 other_params: Dict[str, Any], started_at: float) -> ThemeClassificationOutcome:
+        # No text means the content is unknown, so the fallback keeps needs_review set for someone to check.
+        classification = ThemeClassification(
+            primary=ClassifiedTheme(
+                name=fallback.name, code=fallback.code, confidence=None, reasoning=NO_TEXT_FALLBACK_REASONING
+            ),
+            needs_review=True,
+        )
+        self.save_classification(classification, [], settings)
+        self._queue_vector_sync(other_params)
+        logger.info(
+            f"{self.log_prefix} classification saved status={ThemeClassificationStatus.NO_TEXT_FALLBACK} "
+            f"primary={fallback.code} needs_review=True duration={time.monotonic() - started_at:.1f}s"
+        )
+        return ThemeClassificationOutcome(
+            media_id=self.media.id,
+            status=ThemeClassificationStatus.NO_TEXT_FALLBACK,
+            primary_theme=fallback.code,
+            primary_theme_name=fallback.name,
+            needs_review=True,
+        )
+
+    def _queue_vector_sync(self, other_params: Dict[str, Any]) -> None:
+        if is_enabled(other_params.get('vector_theme_sync_enabled'), default=True):
+            queue_vector_theme_sync(self.media.id)
+        else:
+            logger.info(f"{self.log_prefix} vector theme sync disabled by vector_theme_sync_enabled")
 
     def _generate_new_secondary(self, document: DocumentMetadata, themes: Sequence[ThemeOption],
                                 fallback: ThemeOption, classification: ThemeClassification,
@@ -521,11 +549,12 @@ def theme_outcome_message(media_name: str, outcome: Optional[Dict[str, Any]]) ->
                 f"{message} It is flagged for review because the classifier was not confident."
             )
         return ThemeMessageLevel.SUCCESS, message
-    if status == ThemeClassificationStatus.SKIPPED_NO_SUMMARY:
+    if status == ThemeClassificationStatus.NO_TEXT_FALLBACK:
+        primary = outcome.get('primary_theme_name') or outcome.get('primary_theme') or '-'
         return ThemeMessageLevel.WARNING, (
-            f"Themes were not mapped for {label}: it has no description or extracted text, and no text "
-            f"could be read from the file. Add a description and save again, or use Upload media to extract one "
-            f"automatically."
+            f"No text could be read for {label}: it has no description or extracted text, and the file has no "
+            f"readable text. It is mapped to {primary} and flagged for review. Add a description and save again "
+            f"to classify it, or use Upload media to extract one automatically."
         )
     if status == ThemeClassificationStatus.SKIPPED_NO_BOT:
         return ThemeMessageLevel.ERROR, (
