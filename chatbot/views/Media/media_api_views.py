@@ -1060,6 +1060,10 @@ class MediaSearchV2View(APIView):
 
         explicit_organizations = list(organizations or [])
         explicit_media_types = list(media_types or [])
+        # An explicit ?theme= is a UI filter like ?organizations=: the LLM must
+        # not override it.
+        explicit_themes = self._parse_list_param(
+            request.query_params.get('theme', ''))
         if not query and request.query_params.get('theme'):
             resolved = ResolvedFilters(
                 query='', organizations=explicit_organizations,
@@ -1073,6 +1077,7 @@ class MediaSearchV2View(APIView):
                 explicit_filters={
                     'organizations': explicit_organizations,
                     'media_types': explicit_media_types,
+                    'themes': explicit_themes,
                 },
             )
         # Not `resolved.query or query`: an empty residual is meaningful and
@@ -1102,7 +1107,8 @@ class MediaSearchV2View(APIView):
                 exclude_organizations = []
                 exclude_media_types = []
                 exclude_themes = []
-            themes = []
+            if not explicit_themes:
+                themes = []
             resolved.diagnostics['any_of_source'] = 'deterministic'
         # Once the LLM has answered, its result stands, alternatives or not, as it
         # does for orgs and media types: undo the deterministic swap above.
@@ -1324,6 +1330,7 @@ class MediaSearchV2View(APIView):
         explicit = explicit_filters or {}
         explicit_orgs = explicit.get('organizations') or []
         explicit_types = explicit.get('media_types') or []
+        explicit_themes = explicit.get('themes') or []
 
         # No fuzzy result means zero confidence.
         fuzzy = fuzzy or FuzzyFilterResult()
@@ -1332,7 +1339,7 @@ class MediaSearchV2View(APIView):
         # exclusions yet, and an absent field must read as "found none".
         resolved = ResolvedFilters(
             query=getattr(fuzzy, 'query', None) if fuzzy.query is not None else raw_query,
-            themes=fuzzy.themes or [],
+            themes=explicit_themes or (fuzzy.themes or []),
             exclude_themes=fuzzy.exclude_themes or [],
             organizations=explicit_orgs or (fuzzy.organizations or []),
             media_types=explicit_types or (fuzzy.media_types or []),
@@ -1343,8 +1350,10 @@ class MediaSearchV2View(APIView):
                 # Named for its source: it is the deterministic matcher's score,
                 # and it sits beside the threshold it is compared against.
                 'fuzzy_confidence': fuzzy.confidence,
-                'themes': fuzzy.themes or [],
+                'themes': explicit_themes or (fuzzy.themes or []),
                 'exclude_themes': fuzzy.exclude_themes or [],
+                'themes_source': 'explicit' if explicit_themes else (
+                    'fuzzy' if fuzzy.themes else 'none'),
                 'organizations_source': 'explicit' if explicit_orgs else (
                     'fuzzy' if fuzzy.organizations else 'none'),
                 'media_types_source': 'explicit' if explicit_types else (
@@ -1396,7 +1405,8 @@ class MediaSearchV2View(APIView):
 
             if should_call:
                 self._resolve_llm_filters(
-                    raw_query, fuzzy, bot, resolved, explicit_orgs, explicit_types)
+                    raw_query, fuzzy, bot, resolved, explicit_orgs, explicit_types,
+                    explicit_themes=explicit_themes)
 
         except Exception as exc:
             logger.exception(
@@ -1461,12 +1471,16 @@ class MediaSearchV2View(APIView):
 
     def _resolve_llm_filters(
         self, raw_query, fuzzy, bot, resolved, explicit_orgs, explicit_types,
+        explicit_themes=None,
     ):
         """Resolve filters with the LLM and merge the result."""
         from chatbot.services.search import llm_extractor
 
         # The theme-name step strips theme names from raw_query; the LLM reads
         # the user's full query so it returns theme codes, the same way as orgs.
+        # The theme vocabulary is sent even with an explicit ?theme=, so a theme
+        # name in the query is recognised as a theme rather than left as search
+        # text; the explicit theme still wins as the filter (_apply_llm_filters).
         request = getattr(self, 'request', None)
         full_query = request.query_params.get('q', '').strip() if request else ''
 
@@ -1474,7 +1488,6 @@ class MediaSearchV2View(APIView):
             raw_query=full_query or raw_query,
             candidates=fuzzy.candidates,
             bot=bot,
-            include_themes=not getattr(self, 'ignore_query_themes', False),
         )
         if llm is None:
             resolved.diagnostics['llm_decision'] = 'no_answer'
@@ -1483,7 +1496,9 @@ class MediaSearchV2View(APIView):
                 resolved.diagnostics['llm_cooldown'] = cooldown
             return
 
-        self._apply_llm_filters(resolved, llm, explicit_orgs, explicit_types)
+        self._apply_llm_filters(
+            resolved, llm, explicit_orgs, explicit_types,
+            explicit_themes=explicit_themes)
 
     def _remove_unconfirmed_fuzzy_values(self, resolved, field_name):
         """
@@ -1508,7 +1523,9 @@ class MediaSearchV2View(APIView):
             resolved.diagnostics[field_name] = confirmed_values
         return confirmed_values
 
-    def _apply_llm_filters(self, resolved, llm, explicit_orgs, explicit_types):
+    def _apply_llm_filters(
+        self, resolved, llm, explicit_orgs, explicit_types, explicit_themes=None,
+    ):
         """Merge LLM filters without overriding explicit UI filters."""
         resolved.diagnostics.update({
             'llm_used': True,
@@ -1520,6 +1537,9 @@ class MediaSearchV2View(APIView):
             resolved.diagnostics['llm_rejected'] = llm.rejected
 
         for axis in ('themes', 'exclude_themes'):
+            if axis == 'themes' and explicit_themes:
+                # An explicit ?theme= wins, as explicit organizations do.
+                continue
             values = getattr(llm, axis, None)
             if values is not None:
                 setattr(resolved, axis, values)
@@ -1554,8 +1574,10 @@ class MediaSearchV2View(APIView):
         # the fields above, so an explicit UI selection still applies in full
         # and can only be narrowed, never overridden.
         if llm.any_of:
-            # Branch-local positives must not also become global constraints.
-            resolved.themes = []
+            # Branch-local positives must not also become global constraints;
+            # an explicit theme is a UI filter, not branch-local, so it stays.
+            if not explicit_themes:
+                resolved.themes = []
             resolved.any_of = llm.any_of
             resolved.diagnostics['any_of'] = [
                 block.as_payload() for block in llm.any_of]
