@@ -123,7 +123,7 @@ def create_ai_search_bot(owner_slug=DEFAULT_OWNER_SLUG, force=False, log=None):
             provider=LLMProvider.AI_SERVICE,
             bot_temperature=0.0,
             # spends hidden reasoning tokens from this budget; 256 cut off any_of calls.
-            max_token=1024,
+            max_token=2048,
             connect_timeout=5.0,
             # Wide enough to absorb a slow gateway; a hung one is cut off by
             # llm_max_elapsed_s and then by the failure cooldown.
