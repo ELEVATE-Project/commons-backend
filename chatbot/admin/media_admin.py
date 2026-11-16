@@ -204,7 +204,8 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
         if 'primary_theme' in form.changed_data:
             return False
         if not change:
-            return True
+            # New subdocuments are not mapped on upload; the theme script maps existing ones.
+            return not form.instance.parent_id
         if THEME_CLASSIFICATION_INPUT_FIELDS.intersection(form.changed_data):
             return True
         return any(formset.model is KeyValue and formset.has_changed() for formset in formsets)

@@ -5,6 +5,9 @@ from typing import Dict, Any
 logger = logging.getLogger('django')
 
 # Default configuration constants
+# Off: uploads extract and save only the main document. Linked documents are not downloaded, extracted
+# or saved as Source Documents / subdocuments. Existing subdocuments are still handled by the theme script.
+FOLLOW_DOCUMENT_LINKS = False
 MAX_DEPTH = 1
 DEFAULT_MAX_SUBDOCS = 10
 DEFAULT_MAIN_DOC_MAX_CHARS = 3000

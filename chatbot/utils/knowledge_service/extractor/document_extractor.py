@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Set, Tuple, Generator
 from pathlib import Path
 from urllib.parse import urlparse
 from chatbot.models import FileTypeChoices
-from chatbot.utils.knowledge_service.base.extraction_config import MAX_DEPTH
+from chatbot.utils.knowledge_service.base.extraction_config import FOLLOW_DOCUMENT_LINKS, MAX_DEPTH
 from .docx_extractor import DOCXExtractor
 from .excel_extractor import ExcelExtractor
 from .markdown_extractor import MarkdownExtractor
@@ -573,6 +573,13 @@ class DocumentExtractor:
 
             # Log all extracted URLs
             logger.info(f"{'  ' * depth}Total URLs extracted from main document: {len(urls)}")
+
+            if not FOLLOW_DOCUMENT_LINKS:
+                logger.info(f"{'  ' * depth}Following document links is off; not downloading linked documents")
+                main_result["subdocument"] = []
+                main_result["failed_links"] = []
+                main_result["source_document"] = []
+                return main_result
 
             # Step 3: Process links
             subdocuments = []

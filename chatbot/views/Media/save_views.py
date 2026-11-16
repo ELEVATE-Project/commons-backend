@@ -13,6 +13,7 @@ import os
 from django.core.cache import cache
 
 from chatbot.utils.knowledge_service.auto_tag_utils import TagProcessor
+from chatbot.utils.knowledge_service.base.extraction_config import FOLLOW_DOCUMENT_LINKS
 from chatbot.utils.knowledge_service.base_task_utils import determine_media_type_from_url
 from chatbot.utils.knowledge_service.cache_manager import CacheManager
 from chatbot.utils.knowledge_service.duplicate_detector import DuplicateDetector
@@ -144,8 +145,6 @@ class BatchMediaSaveView(View):
                 key='DOCUMENT_TYPE',
                 value='Source Document'
             )
-            # Saved without a description or title, so the task extracts them before mapping the theme.
-            enqueue_theme_classification(source_media.id, fill_missing_metadata=True)
 
             # Cache the result
             self._source_doc_cache[source_doc_url] = source_media
@@ -476,8 +475,12 @@ class BatchMediaSaveView(View):
             # Step 5.5: Process source documents if no subdocuments but source_documents exist
             source_document_results = []
             source_documents = item_data.get('source_documents', [])
+            if not FOLLOW_DOCUMENT_LINKS and (source_documents or item_data.get('subdocument')):
+                # A request built from older extraction results can still carry linked documents; they are not saved.
+                print(f"Following document links is off; not saving {len(source_documents)} source documents "
+                      f"and {len(item_data.get('subdocument') or [])} subdocuments for {filename}")
 
-            if not item_data.get('subdocument') and source_documents:
+            if FOLLOW_DOCUMENT_LINKS and not item_data.get('subdocument') and source_documents:
                 print(f"Processing {len(source_documents)} source documents for main document without subdocuments")
 
                 for source_doc in source_documents:
@@ -527,7 +530,7 @@ class BatchMediaSaveView(View):
 
             # Step 6: Process subdocuments recursively
             subdocument_results = []
-            if item_data.get('subdocument'):
+            if FOLLOW_DOCUMENT_LINKS and item_data.get('subdocument'):
                 # Cache subdocuments before processing
                 self._cache_subdocuments_recursive(
                     item_data['subdocument'],
@@ -978,14 +981,10 @@ class BatchMediaSaveView(View):
                 for index, img_data in enumerate(subdoc_data['images']):
                     self.save_media_image(img_data, subdoc_media, index)
 
-            # Queued after tags and key-values are saved, since the classifier reads them.
-            theme_task_id = enqueue_theme_classification(subdoc_media.id, fill_missing_metadata=True)
-
             return {
                 'success': True,
                 'subdoc_media_id': subdoc_media.id,
-                'title': subdoc_media.name,
-                'theme_task_id': theme_task_id,
+                'title': subdoc_media.name
             }
 
         except Exception as e:
@@ -1233,6 +1232,12 @@ class BatchMediaRetrySaveView(View):
                 user_profile = Profile.objects.get(email=request.user.email)
             except Profile.DoesNotExist:
                 user_profile = None
+
+            if is_subdocument and not FOLLOW_DOCUMENT_LINKS:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Linked documents are no longer saved on upload, so this subdocument was not saved.'
+                }, status=400)
 
             if is_subdocument and parent_media_id:
                 # Retry subdocument save
