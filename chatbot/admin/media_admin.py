@@ -201,8 +201,6 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
 
     @staticmethod
     def needs_theme_classification(form, formsets, change):
-        if form.instance.parent_id:
-            return False
         if 'primary_theme' in form.changed_data:
             return False
         if not change:
@@ -255,7 +253,7 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             }),
         ]
 
-        if obj and obj.pk and not obj.parent_id:
+        if obj and obj.pk:
             fieldsets.insert(1, ('Theme', {
                 'fields': ('primary_theme',),
                 'description': 'Mapped automatically on upload; pick another primary theme to override it.'

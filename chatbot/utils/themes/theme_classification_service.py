@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import os
 import re
 import time
 import unicodedata
@@ -78,6 +77,7 @@ class ThemeClassificationOutcome:
     matched: int = 0
     deduplicated: int = 0
     created: int = 0
+    metadata_filled: Tuple[str, ...] = ()
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -90,6 +90,7 @@ class ThemeClassificationOutcome:
             'secondary_reuse': {
                 'matched': self.matched, 'deduplicated': self.deduplicated, 'created': self.created,
             },
+            'metadata_filled': list(self.metadata_filled),
         }
 
 
@@ -224,28 +225,15 @@ def _clean_summary(summary: Optional[str]) -> str:
     return '' if summary.startswith(EXTRACTION_PLACEHOLDER_PREFIX) else summary
 
 
+def get_extractor_bot(media: Media) -> Optional[CompanyBot]:
+    return get_company_bot(DOC_TEXT_EXTRACTOR_ROUTE, media.company_bot.company) or media.company_bot
+
+
 def extract_text_from_media_file(media: Media) -> str:
-    from chatbot.utils.knowledge_service.base.extraction_config import parse_extractor_config
-    from chatbot.utils.knowledge_service.extractor.document_extractor import DocumentExtractor
+    from chatbot.utils.knowledge_service.metadata_backfill import build_extractor, read_media_file
 
-    if not media.file:
-        return ''
-    extension = os.path.splitext(media.file.name)[1].lstrip('.').lower()
-    if not extension:
-        return ''
-
-    extractor_bot = get_company_bot(DOC_TEXT_EXTRACTOR_ROUTE, media.company_bot.company) or media.company_bot
-    try:
-        extractor = DocumentExtractor(**parse_extractor_config(extractor_bot))
-        with media.file.open('rb') as file:
-            extracted = extractor.extract_text_from_file(file, extension)
-    except Exception as e:
-        logger.warning(
-            f"[ThemeClassifier] media_id={media.id} could not read text from file {media.file.name!r}: {e}"
-        )
-        return ''
-    text = extracted[0] if extracted else ''
-    return (text or '').strip()
+    extractor = build_extractor(get_extractor_bot(media))
+    return read_media_file(media, extractor, log_prefix=f"[ThemeClassifier] media_id={media.id}").text
 
 
 def build_document_metadata(media: Media) -> DocumentMetadata:
@@ -265,10 +253,13 @@ def build_document_metadata(media: Media) -> DocumentMetadata:
 
 class MediaThemeClassificationService:
 
-    def __init__(self, media: Media, invoke: Callable[..., Any] = handle_bedrock_model, use_file_text: bool = False):
+    def __init__(self, media: Media, invoke: Callable[..., Any] = handle_bedrock_model, use_file_text: bool = False,
+                 fill_missing_metadata: bool = False):
         self.media = media
         self.invoke = invoke
         self.use_file_text = use_file_text
+        self.fill_missing_metadata = fill_missing_metadata
+        self.metadata_filled: Tuple[str, ...] = ()
         self.log_prefix = f"[ThemeClassifier] media_id={media.id}"
 
     def run(self) -> ThemeClassificationOutcome:
@@ -287,6 +278,11 @@ class MediaThemeClassificationService:
                 f"fallback={'yes' if fallback else 'no'}); skipping"
             )
             return self._flag_for_review(ThemeClassificationStatus.SKIPPED_NO_THEMES)
+
+        if self.fill_missing_metadata:
+            from chatbot.utils.knowledge_service.metadata_backfill import fill_missing_metadata
+
+            self.metadata_filled = fill_missing_metadata(self.media, get_extractor_bot(self.media), self.log_prefix)
 
         document = build_document_metadata(self.media)
         if self.use_file_text or not document.is_classifiable:
@@ -344,6 +340,7 @@ class MediaThemeClassificationService:
             matched=counts[SecondaryThemeMatchType.MATCHED],
             deduplicated=counts[SecondaryThemeMatchType.DEDUPLICATED],
             created=counts[SecondaryThemeMatchType.CREATED],
+            metadata_filled=self.metadata_filled,
         )
 
     def _assign_no_text_fallback(self, fallback: ThemeOption, settings: SecondaryThemeSettings,
@@ -367,6 +364,7 @@ class MediaThemeClassificationService:
             primary_theme=fallback.code,
             primary_theme_name=fallback.name,
             needs_review=True,
+            metadata_filled=self.metadata_filled,
         )
 
     def _queue_vector_sync(self, other_params: Dict[str, Any]) -> None:
@@ -504,13 +502,14 @@ class MediaThemeClassificationService:
         return ThemeClassificationOutcome(media_id=media.id, status=status, needs_review=True)
 
 
-def enqueue_theme_classification(media_id: int, use_file_text: bool = False) -> str:
+def enqueue_theme_classification(media_id: int, use_file_text: bool = False,
+                                 fill_missing_metadata: bool = False) -> str:
     from chatbot.celery_tasks.knowledge_service.theme_tasks import classify_media_themes
 
     task_id = str(uuid.uuid4())
     _queue_after_commit(
         classify_media_themes, media_id, 'classification task', task_id=task_id,
-        kwargs={'use_file_text': use_file_text},
+        kwargs={'use_file_text': use_file_text, 'fill_missing_metadata': fill_missing_metadata},
     )
     return task_id
 

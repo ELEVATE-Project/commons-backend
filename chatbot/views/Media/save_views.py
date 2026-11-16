@@ -144,6 +144,8 @@ class BatchMediaSaveView(View):
                 key='DOCUMENT_TYPE',
                 value='Source Document'
             )
+            # Saved without a description or title, so the task extracts them before mapping the theme.
+            enqueue_theme_classification(source_media.id, fill_missing_metadata=True)
 
             # Cache the result
             self._source_doc_cache[source_doc_url] = source_media
@@ -976,10 +978,14 @@ class BatchMediaSaveView(View):
                 for index, img_data in enumerate(subdoc_data['images']):
                     self.save_media_image(img_data, subdoc_media, index)
 
+            # Queued after tags and key-values are saved, since the classifier reads them.
+            theme_task_id = enqueue_theme_classification(subdoc_media.id, fill_missing_metadata=True)
+
             return {
                 'success': True,
                 'subdoc_media_id': subdoc_media.id,
-                'title': subdoc_media.name
+                'title': subdoc_media.name,
+                'theme_task_id': theme_task_id,
             }
 
         except Exception as e:
