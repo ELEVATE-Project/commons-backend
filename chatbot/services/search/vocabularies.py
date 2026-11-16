@@ -11,6 +11,7 @@ case-insensitive matching decide *whether* a value is valid, but
 
 import logging
 
+from chatbot.constants.constants import ORGANIZATION_ALIASES
 from chatbot.constants.search import FILE_TYPE_CATEGORIES, FILE_TYPE_CATEGORY_ALIASES
 from chatbot.models.enums import EntityStatus, FileTypeChoices, ThemeStatus
 from chatbot.models.theme_models import ResourceTheme
@@ -27,14 +28,16 @@ logger = logging.getLogger('django')
 
 def organization_vocabulary(scope=None):
     """
-    ``{slug: [display name]}`` for every active organization.
+    ``{slug: [display name, aliases...]}`` for every active organization.
 
     The organization list comes from Vishwa's Redis-backed company cache
     (`get_all_companies`) instead of SEARCH_FILTER_ORGANIZATIONS. When the Redis
     cache is cold, that helper hydrates it from the database.
     """
     return {
-        company.slug: [company.name]
+        company.slug: list(dict.fromkeys(
+            [company.name] + ORGANIZATION_ALIASES.get(company.slug, [])
+        ))
         for company in get_all_companies()
         if (
             company.slug
