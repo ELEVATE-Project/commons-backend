@@ -6,7 +6,7 @@ logger = logging.getLogger('django')
 
 
 @shared_task
-def classify_media_themes(media_id, use_file_text=False):
+def classify_media_themes(media_id, use_file_text=False, fill_missing_metadata=False):
     from chatbot.models import Media
     from chatbot.utils.themes.theme_classification_service import MediaThemeClassificationService
 
@@ -16,7 +16,9 @@ def classify_media_themes(media_id, use_file_text=False):
         return None
 
     try:
-        return MediaThemeClassificationService(media, use_file_text=use_file_text).run().as_dict()
+        return MediaThemeClassificationService(
+            media, use_file_text=use_file_text, fill_missing_metadata=fill_missing_metadata
+        ).run().as_dict()
     except Exception as e:
         logger.exception(f"[ThemeClassifier] media_id={media_id} classification failed: {e}")
         raise

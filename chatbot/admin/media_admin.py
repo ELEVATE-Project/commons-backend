@@ -201,12 +201,11 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
 
     @staticmethod
     def needs_theme_classification(form, formsets, change):
-        if form.instance.parent_id:
-            return False
         if 'primary_theme' in form.changed_data:
             return False
         if not change:
-            return True
+            # New subdocuments are not mapped on upload; the theme script maps existing ones.
+            return not form.instance.parent_id
         if THEME_CLASSIFICATION_INPUT_FIELDS.intersection(form.changed_data):
             return True
         return any(formset.model is KeyValue and formset.has_changed() for formset in formsets)
@@ -255,7 +254,7 @@ class MediaAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
             }),
         ]
 
-        if obj and obj.pk and not obj.parent_id:
+        if obj and obj.pk:
             fieldsets.insert(1, ('Theme', {
                 'fields': ('primary_theme',),
                 'description': 'Mapped automatically on upload; pick another primary theme to override it.'
