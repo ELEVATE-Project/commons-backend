@@ -73,6 +73,10 @@ class ResourceThemeListView(APIView):
                 Media.objects.filter(
                     primary_theme_id__in=[theme['code'] for theme in payload['result']],
                     display_mode=FileDisplayMode.VISIBLE,
+                ).exclude(
+                    # Match the media list's database queryset exclusion.
+                    key_values__key__iregex=r'^document[_ ]type$',
+                    key_values__value__icontains='source document',
                 ).order_by().values('primary_theme_id').annotate(
                     media_count=Count('pk')
                 ).values_list('primary_theme_id', 'media_count')
