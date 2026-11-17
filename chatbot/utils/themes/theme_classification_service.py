@@ -24,6 +24,7 @@ from chatbot.llm_models.llm_script import handle_bedrock_model
 from chatbot.models import (
     CompanyBot, KeyValue, Media, MediaSecondaryTheme, ResourceTheme, SecondaryThemeMatchType, ThemeStatus
 )
+from chatbot.utils.knowledge_service.metadata_backfill import build_extractor, fill_missing_metadata, read_media_file
 from chatbot.utils.themes.theme_classifier import (
     ClassifiedTheme, DocumentMetadata, SecondaryCandidate, SecondaryThemeGenerator, SecondaryThemeSettings,
     ThemeClassification, ThemeClassifier, ThemeOption, describe_theme, is_token_variant, load_json_field,
@@ -230,8 +231,6 @@ def get_extractor_bot(media: Media) -> Optional[CompanyBot]:
 
 
 def extract_text_from_media_file(media: Media) -> str:
-    from chatbot.utils.knowledge_service.metadata_backfill import build_extractor, read_media_file
-
     extractor = build_extractor(get_extractor_bot(media))
     return read_media_file(media, extractor, log_prefix=f"[ThemeClassifier] media_id={media.id}").text
 
@@ -280,8 +279,6 @@ class MediaThemeClassificationService:
             return self._flag_for_review(ThemeClassificationStatus.SKIPPED_NO_THEMES)
 
         if self.fill_missing_metadata:
-            from chatbot.utils.knowledge_service.metadata_backfill import fill_missing_metadata
-
             self.metadata_filled = fill_missing_metadata(self.media, get_extractor_bot(self.media), self.log_prefix)
 
         document = build_document_metadata(self.media)

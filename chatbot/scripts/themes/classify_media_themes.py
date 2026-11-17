@@ -117,7 +117,10 @@ class Command(BaseCommand):
             queryset = queryset.filter(parent__isnull=True)
         if not options['all']:
             queryset = queryset.filter(primary_theme__isnull=True, needs_review=False)
-        if options['limit']:
+        if options['limit'] is not None:
+            # 0 would otherwise mean "no limit" and a negative value crashes the slice.
+            if options['limit'] < 1:
+                raise CommandError('--limit must be 1 or more.')
             queryset = queryset[:options['limit']]
         return queryset
 

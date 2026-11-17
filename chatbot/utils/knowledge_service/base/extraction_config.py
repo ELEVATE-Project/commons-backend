@@ -1,13 +1,15 @@
 import logging
+import os
 from typing import Dict, Any
 
 # Set up logging
 logger = logging.getLogger('django')
 
 # Default configuration constants
-# Off: uploads extract and save only the main document. Linked documents are not downloaded, extracted
+# Off (default): uploads extract and save only the main document. Linked documents are not downloaded, extracted
 # or saved as Source Documents / subdocuments. Existing subdocuments are still handled by the theme script.
-FOLLOW_DOCUMENT_LINKS = False
+# Read once here; the extractor and the upload save views import it from this module.
+FOLLOW_DOCUMENT_LINKS = os.getenv('FOLLOW_DOCUMENT_LINKS', 'False').strip().lower() == 'true'
 MAX_DEPTH = 1
 DEFAULT_MAX_SUBDOCS = 10
 DEFAULT_MAIN_DOC_MAX_CHARS = 3000
