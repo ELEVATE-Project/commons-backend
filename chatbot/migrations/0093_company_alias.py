@@ -24,7 +24,7 @@ def seed_aliases(apps, schema_editor):
     Company = apps.get_model('chatbot', 'Company')
     companies = Company.objects.using(schema_editor.connection.alias)
     for slug, aliases in INITIAL_ALIASES.items():
-        companies.filter(slug=slug).update(alias=aliases)
+        companies.filter(slug=slug).update(aliases=aliases)
 
 
 class Migration(migrations.Migration):
@@ -35,7 +35,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='company',
-            name='alias',
+            name='aliases',
             field=ArrayField(
                 base_field=models.CharField(max_length=100),
                 default=list,

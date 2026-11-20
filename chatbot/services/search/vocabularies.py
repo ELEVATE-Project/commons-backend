@@ -34,7 +34,7 @@ def organization_vocabulary(scope=None):
     cache is cold, that helper hydrates it from the database.
     """
     return {
-        company.slug: list(dict.fromkeys([company.name] + company.alias))
+        company.slug: list(dict.fromkeys([company.name] + company.aliases))
         for company in get_all_companies()
         if (
             company.slug

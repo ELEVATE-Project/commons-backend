@@ -22,7 +22,7 @@ def get_all_companies():
     if (
         not keys
         or len(companies) != len(keys)
-        or any('alias' not in company.__dict__ for company in companies)
+        or any('aliases' not in company.__dict__ for company in companies)
     ):
         companies = list(Company.objects.order_by("name"))
         for company in companies:
@@ -37,7 +37,7 @@ def get_company_by_slug(slug):
         return Company.objects.filter(slug=slug).first()
 
     company = cache.get(_org_key(slug))
-    if company is None or 'alias' not in company.__dict__:
+    if company is None or 'aliases' not in company.__dict__:
         company = Company.objects.filter(slug=slug).first()
         if company is not None:
             cache.set(_org_key(slug), company, CACHE_TIMEOUT)

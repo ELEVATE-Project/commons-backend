@@ -33,7 +33,7 @@ class Company(models.Model):
 
     name = models.CharField(max_length=100)
     slug = models.CharField(max_length=100, unique=True)
-    alias = ArrayField(models.CharField(max_length=100), default=list, blank=True)
+    aliases = ArrayField(models.CharField(max_length=100), default=list, blank=True)
     status = models.CharField(max_length=20, choices=EntityStatus.choices)
     url = models.URLField(blank=True, null=True)
     logo = models.ImageField(upload_to=get_file_upload_path, max_length=1000, null=True, blank=True)
