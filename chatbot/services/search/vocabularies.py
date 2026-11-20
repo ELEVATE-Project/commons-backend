@@ -27,14 +27,14 @@ logger = logging.getLogger('django')
 
 def organization_vocabulary(scope=None):
     """
-    ``{slug: [display name]}`` for every active organization.
+    ``{slug: [display name, aliases...]}`` for every active organization.
 
     The organization list comes from Vishwa's Redis-backed company cache
     (`get_all_companies`) instead of SEARCH_FILTER_ORGANIZATIONS. When the Redis
     cache is cold, that helper hydrates it from the database.
     """
     return {
-        company.slug: [company.name]
+        company.slug: list(dict.fromkeys([company.name] + company.aliases))
         for company in get_all_companies()
         if (
             company.slug

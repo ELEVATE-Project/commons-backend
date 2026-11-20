@@ -19,7 +19,11 @@ def get_all_companies():
 
     keys = cache.keys(ORG_KEY_PATTERN) or []
     companies = list(cache.get_many(keys).values()) if keys else []
-    if not keys or len(companies) != len(keys):
+    if (
+        not keys
+        or len(companies) != len(keys)
+        or any('aliases' not in company.__dict__ for company in companies)
+    ):
         companies = list(Company.objects.order_by("name"))
         for company in companies:
             cache.set(_org_key(company.slug), company, CACHE_TIMEOUT)
@@ -33,7 +37,7 @@ def get_company_by_slug(slug):
         return Company.objects.filter(slug=slug).first()
 
     company = cache.get(_org_key(slug))
-    if company is None:
+    if company is None or 'aliases' not in company.__dict__:
         company = Company.objects.filter(slug=slug).first()
         if company is not None:
             cache.set(_org_key(slug), company, CACHE_TIMEOUT)
