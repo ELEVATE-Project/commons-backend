@@ -862,8 +862,13 @@ class MediaSearchV2View(APIView):
         'media_type', 'organization', 'title', 'score'
     ]
     
+    @staticmethod
+    def _sanitize_search_query(query):
+        """Remove special characters while preserving words and whitespace."""
+        return re.sub(r'[^\w\s]|_', '', query).strip()
+
     def get(self, request, format=None):
-        query = request.query_params.get('q', '').strip()
+        query = self._sanitize_search_query(request.query_params.get('q', ''))
         vector_search_requested = bool(query)
         
         try:
@@ -1485,7 +1490,10 @@ class MediaSearchV2View(APIView):
         # name in the query is recognised as a theme rather than left as search
         # text; the explicit theme still wins as the filter (_apply_llm_filters).
         request = getattr(self, 'request', None)
-        full_query = request.query_params.get('q', '').strip() if request else ''
+        full_query = (
+            self._sanitize_search_query(request.query_params.get('q', ''))
+            if request else ''
+        )
 
         llm = llm_extractor.extract_search_filters(
             raw_query=full_query or raw_query,
