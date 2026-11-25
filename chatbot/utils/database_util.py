@@ -11,6 +11,7 @@ DATABASE_INTERFACE_BEARER_TOKEN = os.getenv('DATABASE_INTERFACE_BEARER_TOKEN')
 SEARCH_TOP_K = 3
 
 base_url = os.getenv('VECTOR_DB_BASE_URL')
+INTERNAL_ACCESS_TOKEN = os.getenv('INTERNAL_ACCESS_TOKEN', '')
 
 
 def upsert_single_file(filename, file, metadata, media):
@@ -62,6 +63,7 @@ def upsert_single_file(filename, file, metadata, media):
     ]
     headers = {
         'accept': 'application/json',
+        'internal_access_token': INTERNAL_ACCESS_TOKEN,
     }
     print("payload: ", payload)
 
@@ -102,6 +104,7 @@ def delete_single_file(media_id, company_slug=None):
 
     headers = {
         'accept': 'application/json',
+        'internal_access_token': INTERNAL_ACCESS_TOKEN,
     }
     response = requests.request("DELETE", url, headers=headers, params=params)
     print("deleted: ", response.json())
@@ -160,6 +163,7 @@ def update_single_file(media_id, filename, file, metadata, media):
     ]
     headers = {
         'accept': 'application/json',
+        'internal_access_token': INTERNAL_ACCESS_TOKEN,
     }
 
     print("update payload: ", payload)
