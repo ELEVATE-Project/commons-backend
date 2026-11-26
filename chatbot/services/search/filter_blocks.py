@@ -38,18 +38,13 @@ class FilterBlock:
     exclude_media_types: list = field(default_factory=list)
 
     def __post_init__(self):
-        self.exclude_themes = unique(self.exclude_themes)
-        self.themes = [value for value in unique(self.themes) if value not in self.exclude_themes]
-        self.exclude_organizations = unique(self.exclude_organizations)
-        self.exclude_media_types = unique(self.exclude_media_types)
-        self.organizations = [
-            value for value in unique(self.organizations)
-            if value not in self.exclude_organizations
-        ]
-        self.media_types = [
-            value for value in unique(self.media_types)
-            if value not in self.exclude_media_types
-        ]
+        # Keep positive constraints even when exclusions cancel every value.
+        # An empty positive list means unrestricted, so subtracting here would
+        # turn "PDF AND NOT PDF" into "all non-PDF files".
+        for axis in ('themes', 'organizations', 'media_types'):
+            setattr(self, axis, unique(getattr(self, axis)))
+            excluded = f'exclude_{axis}'
+            setattr(self, excluded, unique(getattr(self, excluded)))
 
     def is_empty(self):
         """
